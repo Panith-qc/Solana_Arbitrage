@@ -1,0 +1,98 @@
+name: Deploy to GCP Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: solana-mev-bot
+  REGION: us-central1
+  
+jobs:
+  deploy:
+    name: Build and Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Configure Docker for GCP
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+      
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest \
+            .
+      
+      - name: Push Docker image to Artifact Registry
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest
+      
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            --platform=managed \
+            --region=${{ env.REGION }} \
+            --allow-unauthenticated \
+            --port=8080 \
+            --memory=2Gi \
+            --cpu=2 \
+            --timeout=300 \
+            --max-instances=10 \
+            --min-instances=1 \
+            --set-env-vars="NODE_ENV=production,PORT=8080" \
+            --set-secrets="HELIUS_API_KEY=helius-api-key:latest,SUPABASE_ANON_KEY=supabase-anon-key:latest" \
+            --labels="app=solana-mev-bot,env=production,version=${{ github.sha }}"
+      
+      - name: Get Cloud Run URL
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --platform=managed \
+            --region=${{ env.REGION }} \
+            --format='value(status.url)')
+          echo "Service deployed to: $SERVICE_URL"
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
+      
+      - name: Run health check
+        run: |
+          sleep 10
+          curl -f ${{ env.SERVICE_URL }} || exit 1
+      
+      - name: Deployment summary
+        run: |
+          echo "✅ Deployment successful!"
+          echo "🔗 Service URL: ${{ env.SERVICE_URL }}"
+          echo "📦 Image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          echo "🏷️  Git SHA: ${{ github.sha }}"
