@@ -3,7 +3,6 @@
 
 import { tradingConfigManager } from '../config/tradingConfig';
 import { advancedMEVScanner, MEVOpportunity } from '../services/advancedMEVScanner';
-import { fastMEVEngine } from '../services/fastMEVEngine';
 import { crossDexArbitrageService } from '../services/crossDexArbitrageService';
 import { capitalOptimizer } from '../services/capitalOptimizer';
 import { realJupiterTrading } from '../services/realJupiterTrading';
@@ -241,36 +240,8 @@ export class StrategyEngine {
   }
 
   private async startMemeCoinStrategy(capital: number): Promise<void> {
-    const strategy = this.activeStrategies.get('MEME_MEV')!;
-    if (!strategy.enabled || capital < strategy.minCapitalSol) return;
-
-    console.log('🚀 Starting Meme Coin MEV Strategy...');
-    
-    // Use fast MEV engine for meme coin opportunities
-    setInterval(async () => {
-      if (!this.isRunning) return;
-      
-      try {
-        const memeOpportunities = await fastMEVEngine.scanForMEVOpportunities(
-          Math.min(capital, strategy.maxCapitalSol),
-          0.005, // Higher gas estimate for memes
-          0.1,   // Base amount
-          2.0,   // Higher slippage for memes
-          0.002  // Higher priority fee
-        );
-        
-        const enhancedMemeOpps = memeOpportunities
-          .filter(opp => opp.type === 'MEME_ARBITRAGE')
-          .map(opp => this.enhanceOpportunityWithStrategy(opp, 'MEME_MEV'));
-        
-        if (enhancedMemeOpps.length > 0) {
-          console.log(`🚀 Found ${enhancedMemeOpps.length} meme coin opportunities`);
-          this.addToExecutionQueue(enhancedMemeOpps);
-        }
-      } catch (error) {
-        console.error('❌ Meme coin strategy error:', error);
-      }
-    }, 3000); // Check every 3 seconds
+    // DISABLED: Meme coin strategy requires fastMEVEngine which has been removed
+    console.log("⚠️ Meme coin strategy is disabled");
   }
 
   private async startJitoBundleStrategy(capital: number): Promise<void> {
@@ -424,7 +395,8 @@ export class StrategyEngine {
 
   private async executeFastMEV(opportunity: StrategyOpportunity): Promise<StrategyResult> {
     const config = tradingConfigManager.getConfig();
-    const tradeResult = await fastMEVEngine.executeArbitrage(opportunity, config.trading.priorityFeeLamports / 1e9);
+    // Disabled: const tradeResult = await fastMEVEngine.executeArbitrage(opportunity, config.trading.priorityFeeLamports / 1e9);
+      const tradeResult = { success: false, error: "fastMEVEngine disabled" };
     
     return {
       strategyName: opportunity.strategyName,
