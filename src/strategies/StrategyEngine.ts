@@ -50,19 +50,79 @@ export class StrategyEngine {
   private useJitoBundles = true; // Enable Jito bundles for better success rates
   private useDynamicFees = true; // Enable dynamic priority fee optimization
   private mempoolMonitoringActive = false;
+  
+  // PHASE 2: High-Frequency MEV flags
+  private jitLiquidityActive = false;
+  private cyclicArbitrageActive = false;
+  private backrunActive = false;
+  private longTailArbitrageActive = false;
 
   constructor() {
     this.initializeStrategies();
     console.log('🚀 STRATEGY ENGINE INITIALIZED - All MEV strategies loaded');
-    console.log('🎯 PHASE 1 ENHANCED: Jito Bundles + Priority Fees + Mempool Monitor');
+    console.log('🎯 PHASE 1: Jito Bundles + Priority Fees + Mempool Monitor');
+    console.log('🔄 PHASE 2: JIT + Cyclic + Backrun + Long-Tail');
+    console.log('💎 CORE PRINCIPLE: All trades SOL → ... → SOL (round-trip)');
   }
 
   private initializeStrategies(): void {
-    // STRATEGY 1: MICRO ARBITRAGE - Small, frequent profits
+    // PHASE 2 STRATEGIES (Highest Priority - SOL Round-Trip)
+    
+    // STRATEGY 1: JIT LIQUIDITY - Add liquidity atomically, capture fees
+    this.activeStrategies.set('JIT_LIQUIDITY', {
+      name: 'JIT Liquidity',
+      enabled: true,
+      priority: 1,
+      minCapitalSol: 0.5,
+      maxCapitalSol: 10.0,
+      minProfitUsd: 0.02,
+      riskLevel: 'MEDIUM',
+      executionDelayMs: 100
+    });
+
+    // STRATEGY 2: CYCLIC ARBITRAGE - Multi-hop SOL → ... → SOL
+    this.activeStrategies.set('CYCLIC_ARBITRAGE', {
+      name: 'Cyclic Arbitrage',
+      enabled: true,
+      priority: 2,
+      minCapitalSol: 0.5,
+      maxCapitalSol: 5.0,
+      minProfitUsd: 0.02,
+      riskLevel: 'MEDIUM',
+      executionDelayMs: 300
+    });
+
+    // STRATEGY 3: BACK-RUNNING - Ride price momentum back to SOL
+    this.activeStrategies.set('BACKRUN', {
+      name: 'Back-Running',
+      enabled: true,
+      priority: 3,
+      minCapitalSol: 0.1,
+      maxCapitalSol: 2.0,
+      minProfitUsd: 0.005,
+      riskLevel: 'MEDIUM',
+      executionDelayMs: 200
+    });
+
+    // STRATEGY 4: LONG-TAIL ARBITRAGE - Less competitive tokens
+    this.activeStrategies.set('LONG_TAIL_ARBITRAGE', {
+      name: 'Long-Tail Arbitrage',
+      enabled: true,
+      priority: 4,
+      minCapitalSol: 0.1,
+      maxCapitalSol: 3.0,
+      minProfitUsd: 0.01,
+      riskLevel: 'LOW',
+      executionDelayMs: 400
+    });
+    
+    // EXISTING STRATEGIES (Lower Priority)
+    
+    // STRATEGY 5: MICRO ARBITRAGE - Small, frequent profits
     this.activeStrategies.set('MICRO_ARBITRAGE', {
       name: 'Micro Arbitrage',
       enabled: true,
-      priority: 1,
+      priority: 5,
       minCapitalSol: 0.1,
       maxCapitalSol: 1.0,
       minProfitUsd: 0.01,
@@ -281,6 +341,66 @@ export class StrategyEngine {
     this.mempoolMonitoringActive = true;
     
     console.log('✅ Mempool monitoring active for sandwich detection');
+  }
+  
+  /**
+   * PHASE 2: Start JIT Liquidity Strategy (SOL pairs only)
+   */
+  private async startJITLiquidityStrategy(capital: number): Promise<void> {
+    const strategy = this.activeStrategies.get('JIT_LIQUIDITY')!;
+    if (!strategy.enabled || capital < strategy.minCapitalSol) return;
+
+    console.log('💧 Starting JIT Liquidity Strategy (SOL pairs only)...');
+    
+    await jitLiquidityService.startMonitoring();
+    this.jitLiquidityActive = true;
+    
+    console.log('✅ JIT Liquidity active - Will add/remove liquidity for SOL pairs');
+  }
+  
+  /**
+   * PHASE 2: Start Cyclic Arbitrage Strategy (SOL → ... → SOL)
+   */
+  private async startCyclicArbitrageStrategy(capital: number): Promise<void> {
+    const strategy = this.activeStrategies.get('CYCLIC_ARBITRAGE')!;
+    if (!strategy.enabled || capital < strategy.minCapitalSol) return;
+
+    console.log('🔄 Starting Cyclic Arbitrage Strategy (SOL round-trips)...');
+    
+    await cyclicArbitrageService.startScanning();
+    this.cyclicArbitrageActive = true;
+    
+    console.log('✅ Cyclic Arbitrage active - Finding SOL → Token → Token → SOL paths');
+  }
+  
+  /**
+   * PHASE 2: Start Back-Running Strategy (SOL → Token → SOL)
+   */
+  private async startBackrunStrategy(capital: number): Promise<void> {
+    const strategy = this.activeStrategies.get('BACKRUN')!;
+    if (!strategy.enabled || capital < strategy.minCapitalSol) return;
+
+    console.log('⚡ Starting Back-Running Strategy (SOL round-trips)...');
+    
+    await backrunService.startMonitoring();
+    this.backrunActive = true;
+    
+    console.log('✅ Back-Running active - Riding price momentum back to SOL');
+  }
+  
+  /**
+   * PHASE 2: Start Long-Tail Arbitrage Strategy (SOL round-trips)
+   */
+  private async startLongTailArbitrageStrategy(capital: number): Promise<void> {
+    const strategy = this.activeStrategies.get('LONG_TAIL_ARBITRAGE')!;
+    if (!strategy.enabled || capital < strategy.minCapitalSol) return;
+
+    console.log('🎯 Starting Long-Tail Arbitrage Strategy (SOL round-trips)...');
+    
+    await longTailArbitrageService.startScanning();
+    this.longTailArbitrageActive = true;
+    
+    console.log('✅ Long-Tail Arbitrage active - Less competitive tokens, SOL round-trips');
   }
 
   private async startLiquidationStrategy(capital: number): Promise<void> {
