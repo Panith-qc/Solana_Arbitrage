@@ -17,7 +17,7 @@ interface TradeRecommendation {
 }
 
 class CapitalOptimizer {
-  private isActive = false;
+  private active = false; // Changed from isActive to active to avoid conflict
   private strategies: Record<string, CapitalStrategy> = {
     'MICRO_MEV': {
       strategy: 'MICRO_MEV',
@@ -51,13 +51,13 @@ class CapitalOptimizer {
 
   async start(): Promise<void> {
     console.log('🚀 STARTING CAPITAL OPTIMIZER...');
-    this.isActive = true;
+    this.active = true;
     console.log('✅ CAPITAL OPTIMIZER ACTIVE');
   }
 
   async stop(): Promise<void> {
     console.log('🛑 STOPPING CAPITAL OPTIMIZER...');
-    this.isActive = false;
+    this.active = false;
     console.log('✅ CAPITAL OPTIMIZER STOPPED');
   }
 
@@ -124,7 +124,7 @@ class CapitalOptimizer {
   }
 
   isActive(): boolean {
-    return this.isActive;
+    return this.active; // Fixed: now returns the correct property
   }
 }
 

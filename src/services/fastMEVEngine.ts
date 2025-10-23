@@ -256,7 +256,10 @@ export class FastMEVEngine {
   ): Promise<TradeResult> {
     const startTime = Date.now();
     console.log(`🚀 SAFE SOL ARBITRAGE EXECUTION: ${opportunity.pair}`);
-    console.log(`💰 Expected profit: $${opportunity.netProfitUsd.toFixed(6)} (${opportunity.type})`);
+    
+    // CRITICAL FIX: Validate netProfitUsd exists before using toFixed
+    const netProfitValue = Number(opportunity.netProfitUsd) || Number(opportunity.profitUsd) || 0;
+    console.log(`💰 Expected profit: $${netProfitValue.toFixed(6)} (${opportunity.type})`);
     console.log(`🛡️ Using UI Priority Fee: ${priorityFeeSol} SOL (NO HARDCODING)`);
     console.log(`✅ GUARANTEED CYCLE: SOL → ${opportunity.pair.split('/')[1]} → SOL`);
 
@@ -311,7 +314,7 @@ export class FastMEVEngine {
       console.log(`✅ Reverse transaction confirmed: ${reverseTx}`);
       
       const executionTime = Date.now() - startTime;
-      const estimatedProfitUsd = opportunity.netProfitUsd * (0.85 + Math.random() * 0.25);
+      const estimatedProfitUsd = netProfitValue * (0.85 + Math.random() * 0.25);
       
       console.log(`⚡ SAFE SOL ARBITRAGE SUCCESS: ${executionTime}ms`);
       console.log(`💵 Estimated SOL profit: $${estimatedProfitUsd.toFixed(6)}`);

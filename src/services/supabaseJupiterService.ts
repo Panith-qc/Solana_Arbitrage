@@ -1,4 +1,5 @@
-import { supabase } from './supabaseClient';
+// SUPABASE JUPITER SERVICE - Updated to use WORKING fallback proxy
+// Uses app_19a63e71b8_jupiter_fallback_proxy which actually works
 
 export interface JupiterQuote {
   inputMint: string;
@@ -8,89 +9,65 @@ export interface JupiterQuote {
   otherAmountThreshold: string;
   swapMode: string;
   slippageBps: number;
-  platformFee: null;
   priceImpactPct: string;
-  routePlan: Array<{
-    swapInfo: {
-      ammKey: string;
-      label: string;
-      inputMint: string;
-      outputMint: string;
-      inAmount: string;
-      outAmount: string;
-      feeAmount: string;
-      feeMint: string;
-    };
-  }>;
+  routePlan: any[];
 }
 
-export interface JupiterSwapResult {
+export interface JupiterSwapResponse {
   swapTransaction: string;
-  lastValidBlockHeight: number;
 }
 
-interface SupabaseResponse {
-  success: boolean;
-  data?: JupiterQuote | JupiterSwapResult;
-  error?: string;
-}
-
-export class SupabaseJupiterService {
+class SupabaseJupiterService {
   private supabaseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co';
-
-  constructor() {
-    console.log('🚀 Supabase Jupiter Service initialized - CORS-free trading');
-  }
+  private supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4d3luenN4eXh6b2hsaGtxbXB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMjEyNDQsImV4cCI6MjA3MjU5NzI0NH0.69aj1AhvM0k7N788A7MRenHLBayd8aYjTs6UOYYvILY';
 
   async getQuote(
     inputMint: string,
     outputMint: string,
     amount: number,
-    slippageBps: number = 100
+    slippageBps: number = 50
   ): Promise<JupiterQuote | null> {
+    console.log(`🔍 Jupiter Quote Request: ${inputMint.substring(0, 8)}... → ${outputMint.substring(0, 8)}... | Amount: ${amount}`);
+    
     try {
-      console.log(`🔍 Getting Jupiter quote via Supabase:`, {
-        inputMint: inputMint.slice(0, 8) + '...',
-        outputMint: outputMint.slice(0, 8) + '...',
-        amount
-      });
-
-      const response = await fetch(`${this.supabaseUrl}/functions/v1/app_6b054c109e_jupiter_quote`, {
+      // Use the WORKING fallback proxy
+      const response = await fetch(`${this.supabaseUrl}/functions/v1/app_19a63e71b8_jupiter_fallback_proxy`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4d3luenN4eXh6b2hsaGtxbXB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMjEyNDQsImV4cCI6MjA3MjU5NzI0NH0.69aj1AhvM0k7N788A7MRenHLBayd8aYjTs6UOYYvILY`
+          'Authorization': `Bearer ${this.supabaseKey}`
         },
         body: JSON.stringify({
+          action: 'quote',
           inputMint,
           outputMint,
-          amount,
+          amount: amount.toString(),
           slippageBps
         })
       });
 
       if (!response.ok) {
-        console.error('❌ Supabase Jupiter quote failed:', response.statusText);
+        console.error(`❌ Jupiter quote error: ${response.status}`);
         return null;
       }
 
-      const result = await response.json() as SupabaseResponse;
+      const result = await response.json();
       
-      if (!result.success) {
-        console.error('❌ Jupiter quote error via Supabase:', result.error);
+      if (result.success && result.data) {
+        console.log(`✅ Jupiter quote received via WORKING proxy:`, {
+          inputAmount: result.data.inAmount,
+          outputAmount: result.data.outAmount,
+          priceImpact: result.data.priceImpactPct,
+          exchangeRate: result.exchangeRate,
+          dataSource: result.dataSource
+        });
+        return result.data;
+      } else {
+        console.error('❌ Jupiter quote failed:', result.error);
         return null;
       }
-
-      const quote = result.data as JupiterQuote;
-      console.log('✅ Jupiter quote received via Supabase:', {
-        inputAmount: quote.inAmount,
-        outputAmount: quote.outAmount,
-        priceImpact: quote.priceImpactPct
-      });
-
-      return quote;
     } catch (error) {
-      console.error('❌ Failed to get Jupiter quote via Supabase:', error);
+      console.error('❌ Jupiter quote request failed:', error);
       return null;
     }
   }
@@ -98,43 +75,64 @@ export class SupabaseJupiterService {
   async getSwapTransaction(
     quote: JupiterQuote,
     userPublicKey: string,
-    prioritizationFeeLamports: number = 1000000
+    priorityFeeLamports: number = 1000
   ): Promise<string | null> {
+    console.log(`🔄 Getting swap transaction for ${userPublicKey.substring(0, 8)}...`);
+    
     try {
-      console.log('🔄 Creating Jupiter swap via Supabase...');
-
-      const response = await fetch(`${this.supabaseUrl}/functions/v1/app_6b054c109e_jupiter_swap`, {
+      const response = await fetch(`${this.supabaseUrl}/functions/v1/app_19a63e71b8_jupiter_fallback_proxy`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4d3luenN4eXh6b2hsaGtxbXB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMjEyNDQsImV4cCI6MjA3MjU5NzI0NH0.69aj1AhvM0k7N788A7MRenHLBayd8aYjTs6UOYYvILY`
+          'Authorization': `Bearer ${this.supabaseKey}`
         },
         body: JSON.stringify({
-          quoteResponse: quote,
+          action: 'swap',
+          quote,
           userPublicKey,
-          wrapAndUnwrapSol: true,
-          prioritizationFeeLamports
+          priorityFeeLamports
         })
       });
 
       if (!response.ok) {
-        console.error('❌ Supabase Jupiter swap failed:', response.statusText);
+        console.error(`❌ Jupiter swap transaction error: ${response.status}`);
         return null;
       }
 
-      const result = await response.json() as SupabaseResponse;
+      const result = await response.json();
       
-      if (!result.success) {
-        console.error('❌ Jupiter swap error via Supabase:', result.error);
+      if (result.success && result.data?.swapTransaction) {
+        console.log(`✅ Swap transaction received via WORKING proxy`);
+        return result.data.swapTransaction;
+      } else {
+        console.error('❌ Jupiter swap transaction failed:', result.error);
         return null;
       }
-
-      const swapResult = result.data as JupiterSwapResult;
-      console.log('✅ Jupiter swap transaction created via Supabase');
-      return swapResult.swapTransaction;
     } catch (error) {
-      console.error('❌ Failed to get swap transaction via Supabase:', error);
+      console.error('❌ Jupiter swap transaction request failed:', error);
       return null;
+    }
+  }
+
+  // Health check method
+  async healthCheck(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.supabaseUrl}/functions/v1/app_19a63e71b8_jupiter_fallback_proxy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.supabaseKey}`
+        },
+        body: JSON.stringify({
+          action: 'health'
+        })
+      });
+
+      const result = await response.json();
+      return response.ok && result.success;
+    } catch (error) {
+      console.error('❌ Jupiter health check failed:', error);
+      return false;
     }
   }
 }

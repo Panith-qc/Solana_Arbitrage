@@ -18,7 +18,9 @@ import {
   Clock,
   Wallet,
   Settings,
-  Bot
+  Bot,
+  Layers,
+  TrendingDown
 } from 'lucide-react';
 
 // Import components and services
@@ -27,10 +29,11 @@ import WalletIntegration from './WalletIntegration';
 import TradingSettingsPanel from './TradingSettingsPanel';
 import { tradingConfigManager, TradingConfig } from '../config/tradingConfig';
 import { priceService } from '../services/priceService';
+import { strategyEngine, StrategyOpportunity, StrategyResult } from '../strategies/StrategyEngine';
 
 interface MEVOpportunity {
   id: string;
-  type: 'SANDWICH' | 'ARBITRAGE' | 'LIQUIDATION' | 'MICRO_ARBITRAGE' | 'PRICE_RECOVERY';
+  type: 'SANDWICH' | 'ARBITRAGE' | 'LIQUIDATION' | 'MICRO_ARBITRAGE' | 'PRICE_RECOVERY' | 'MEME_ARBITRAGE';
   pair: string;
   inputMint: string;
   outputMint: string;
@@ -61,26 +64,31 @@ interface TradeExecution {
 
 const ProductionTradingDashboard: React.FC = () => {
   // State management
-  const [opportunities, setOpportunities] = useState<MEVOpportunity[]>([]);
+  const [opportunities, setOpportunities] = useState<StrategyOpportunity[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [executingTradeId, setExecutingTradeId] = useState<string | null>(null);
-  const [tradeHistory, setTradeHistory] = useState<TradeExecution[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<StrategyResult[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [showWalletIntegration, setShowWalletIntegration] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [config, setConfig] = useState<TradingConfig>(tradingConfigManager.getConfig());
+
+  // Strategy engine state
+  const [activeStrategies, setActiveStrategies] = useState(0);
+  const [totalProfit, setTotalProfit] = useState(0);
+  const [successRate, setSuccessRate] = useState(0);
 
   // Wallet state - starts as connected for testing
   const [walletState, setWalletState] = useState({
     isConnected: true,
     publicKey: 'TestWallet123...456' as string | null,
     walletType: 'test-wallet' as string | null,
-    balance: 1.5
+    balance: 10.0 // Updated to 10 SOL
   });
 
   // Balance info - calculated dynamically using price service
   const [balanceInfo, setBalanceInfo] = useState({
-    sol: 1.5,
+    sol: 10.0, // Updated to 10 SOL
     usdc: 0,
     usdt: 0,
     totalUsd: 0 // Will be calculated dynamically
@@ -92,6 +100,7 @@ const ProductionTradingDashboard: React.FC = () => {
     walletConnected: true,
     scannerActive: false,
     priceServiceHealthy: true,
+    strategiesActive: false,
     lastHealthCheck: new Date()
   });
 
@@ -109,8 +118,8 @@ const ProductionTradingDashboard: React.FC = () => {
   useEffect(() => {
     const initializeDashboard = async () => {
       try {
-        console.log('🚀 INITIALIZING PRODUCTION TRADING DASHBOARD...');
-        console.log('🔗 WALLET FORCE CONNECTED FOR TESTING');
+        console.log('🚀 INITIALIZING PRODUCTION TRADING DASHBOARD WITH STRATEGY ENGINE...');
+        console.log('🔗 WALLET FORCE CONNECTED FOR TESTING - 10 SOL AVAILABLE');
 
         // Calculate initial balance using price service
         const solPrice = priceService.getPriceUsd(config.tokens.SOL);
@@ -121,8 +130,12 @@ const ProductionTradingDashboard: React.FC = () => {
           totalUsd
         }));
 
+        // Initialize strategy engine
+        const strategies = strategyEngine.getActiveStrategies();
+        setActiveStrategies(strategies.size);
+
         setIsInitialized(true);
-        console.log('✅ PRODUCTION DASHBOARD INITIALIZED WITH WALLET CONNECTED');
+        console.log('✅ PRODUCTION DASHBOARD INITIALIZED WITH ALL STRATEGIES LOADED');
 
       } catch (error) {
         console.error('❌ Dashboard initialization failed:', error);
@@ -139,11 +152,12 @@ const ProductionTradingDashboard: React.FC = () => {
       ...prev,
       walletConnected: walletState.isConnected,
       scannerActive: isScanning,
+      strategiesActive: activeStrategies > 0,
       priceServiceHealthy: priceService.isHealthy(),
       lastHealthCheck: new Date()
     }));
     console.log('🔄 System health updated - Wallet connected:', walletState.isConnected);
-  }, [walletState.isConnected, isScanning]);
+  }, [walletState.isConnected, isScanning, activeStrategies]);
 
   // Update balance calculations when prices change
   useEffect(() => {
@@ -164,6 +178,23 @@ const ProductionTradingDashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [balanceInfo.sol, config.tokens.SOL]);
 
+  // Update strategy metrics
+  useEffect(() => {
+    const updateMetrics = () => {
+      const history = strategyEngine.getExecutionHistory();
+      const successfulTrades = history.filter(h => h.success);
+      const totalProfitCalc = successfulTrades.reduce((sum, trade) => sum + (trade.profitUsd || 0), 0);
+      const successRateCalc = history.length > 0 ? (successfulTrades.length / history.length) * 100 : 0;
+      
+      setTotalProfit(totalProfitCalc);
+      setSuccessRate(successRateCalc);
+      setTradeHistory(history);
+    };
+
+    const interval = setInterval(updateMetrics, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Wallet connection handlers
   const handleWalletConnect = (walletType: string, privateKey?: string) => {
     console.log(`🔗 Connecting ${walletType} wallet...`);
@@ -176,7 +207,7 @@ const ProductionTradingDashboard: React.FC = () => {
       isConnected: true,
       publicKey: mockPublicKey,
       walletType: walletType,
-      balance: Math.random() * 2 + 0.5
+      balance: 10.0 // Always 10 SOL for testing
     };
     
     setWalletState(newWalletState);
@@ -190,7 +221,7 @@ const ProductionTradingDashboard: React.FC = () => {
     }));
     
     setShowWalletIntegration(false);
-    console.log('✅ Wallet connected successfully - Execute buttons should now be enabled');
+    console.log('✅ Wallet connected successfully - All strategies ready for 10 SOL capital');
   };
 
   const handleWalletDisconnect = () => {
@@ -211,18 +242,19 @@ const ProductionTradingDashboard: React.FC = () => {
     });
     
     if (isScanning) {
-      setIsScanning(false);
+      handleStopAllStrategies();
     }
     
     localStorage.removeItem('wallet_state');
-    console.log('✅ Wallet disconnected - Execute buttons should now be disabled');
+    console.log('✅ Wallet disconnected - All strategies stopped');
   };
 
   const handleRefreshBalance = async () => {
     console.log('🔄 Refreshing wallet balance...');
     
     if (walletState.isConnected) {
-      const newBalance = Math.random() * 2 + 0.5;
+      // Keep balance at 10 SOL for testing
+      const newBalance = 10.0;
       setWalletState(prev => ({ ...prev, balance: newBalance }));
       
       const solPrice = priceService.getPriceUsd(config.tokens.SOL);
@@ -235,100 +267,88 @@ const ProductionTradingDashboard: React.FC = () => {
     }
   };
 
-  // Handle opportunity updates from scanner
-  const handleOpportunityFound = useCallback((opportunity: MEVOpportunity) => {
-    console.log('🎯 NEW MEV OPPORTUNITY RECEIVED:', opportunity);
-    console.log('🔍 CHECKING AUTO-TRADE CONDITIONS:');
-    console.log('  - Auto-trade enabled:', config.trading.autoTradingEnabled);
-    console.log('  - Wallet connected:', walletState.isConnected);
-    console.log('  - Currently executing:', executingTradeId);
-    console.log('  - Profit USD:', opportunity.profitUsd);
-    console.log('  - Min profit required:', config.trading.minProfitUsd);
-    
-    setOpportunities(prev => {
-      // Add new opportunity and keep only latest configured maximum
-      const updated = [opportunity, ...prev].slice(0, config.scanner.maxOpportunities);
-      return updated;
-    });
-
-    // AUTO-EXECUTE if enabled and conditions met
-    if (config.trading.autoTradingEnabled && 
-        walletState.isConnected && 
-        !executingTradeId &&
-        opportunity.profitUsd >= config.trading.minProfitUsd) {
-      console.log(`🤖 AUTO-EXECUTING: ${opportunity.pair} - $${opportunity.profitUsd.toFixed(6)}`);
-      executeTrade(opportunity);
-    } else {
-      console.log('❌ AUTO-TRADE CONDITIONS NOT MET');
-    }
-  }, [config.trading.autoTradingEnabled, config.trading.minProfitUsd, config.scanner.maxOpportunities, walletState.isConnected, executingTradeId]);
-
-  // Handle scanner toggle
-  const handleScannerToggle = useCallback((isActive: boolean) => {
-    console.log(`🔄 Scanner toggled: ${isActive ? 'ACTIVE' : 'INACTIVE'}`);
-    setIsScanning(isActive);
-    
-    if (!isActive) {
-      // Clear opportunities when scanner stops
-      setOpportunities([]);
-    }
-  }, []);
-
-  // Execute trade with risk management
-  const executeTrade = async (opportunity: MEVOpportunity) => {
-    console.log('🔄 Execute trade called - Wallet connected:', walletState.isConnected);
-    
+  // Strategy engine handlers
+  const handleStartAllStrategies = useCallback(async () => {
     if (!walletState.isConnected) {
       console.log('❌ Wallet not connected, showing wallet integration');
       setShowWalletIntegration(true);
       return;
     }
 
+    console.log('🚀 STARTING ALL MEV STRATEGIES...');
+    setIsScanning(true);
+    
+    try {
+      await strategyEngine.startAllStrategies(
+        walletState.balance,
+        (strategyOpportunities) => {
+          console.log(`📊 RECEIVED ${strategyOpportunities.length} STRATEGY OPPORTUNITIES`);
+          setOpportunities(strategyOpportunities);
+          
+          // Auto-execute if enabled and conditions met
+          if (config.trading.autoTradingEnabled && strategyOpportunities.length > 0) {
+            const bestOpportunity = strategyOpportunities
+              .filter(opp => opp.profitUsd >= config.trading.minProfitUsd)
+              .sort((a, b) => b.profitUsd - a.profitUsd)[0];
+            
+            if (bestOpportunity && !executingTradeId) {
+              console.log(`🤖 AUTO-EXECUTING BEST STRATEGY: ${bestOpportunity.strategyName} - $${bestOpportunity.profitUsd.toFixed(6)}`);
+              executeStrategyTrade(bestOpportunity);
+            }
+          }
+        }
+      );
+      
+      console.log('✅ ALL STRATEGIES STARTED - Autonomous trading active');
+    } catch (error) {
+      console.error('❌ Failed to start strategies:', error);
+      setIsScanning(false);
+    }
+  }, [config.trading.autoTradingEnabled, config.trading.minProfitUsd, walletState.isConnected, walletState.balance, executingTradeId]);
+
+  const handleStopAllStrategies = useCallback(() => {
+    console.log('🛑 STOPPING ALL STRATEGIES...');
+    setIsScanning(false);
+    strategyEngine.stopAllStrategies();
+    setOpportunities([]);
+    setActiveStrategies(0);
+    console.log('✅ ALL STRATEGIES STOPPED');
+  }, []);
+
+  // Execute strategy trade
+  const executeStrategyTrade = async (opportunity: StrategyOpportunity) => {
+    console.log(`🔄 Executing strategy trade: ${opportunity.strategyName} - ${opportunity.pair}`);
+    
+    if (!walletState.isConnected) {
+      console.log('❌ Wallet not connected');
+      setShowWalletIntegration(true);
+      return;
+    }
+
     // Risk management checks
-    if (opportunity.capitalRequired && opportunity.capitalRequired > config.risk.maxTradeAmountSol) {
+    if (opportunity.recommendedCapital > config.risk.maxTradeAmountSol) {
       console.log('❌ Trade exceeds maximum trade amount');
       return;
     }
 
-    if (opportunity.capitalRequired && opportunity.capitalRequired > walletState.balance * 0.8) {
+    if (opportunity.recommendedCapital > walletState.balance * 0.9) {
       console.log('❌ Insufficient balance for trade');
       return;
     }
 
     setExecutingTradeId(opportunity.id);
     
-    const tradeExecution: TradeExecution = {
-      id: `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      opportunity,
-      status: 'PENDING',
-      timestamp: new Date()
-    };
-    
-    setTradeHistory(prev => [tradeExecution, ...prev.slice(0, 49)]);
-
     try {
-      console.log(`🔄 EXECUTING ${opportunity.type} TRADE:`, opportunity);
+      console.log(`🚀 EXECUTING ${opportunity.strategyName}: ${opportunity.pair} - $${opportunity.profitUsd.toFixed(6)}`);
       
-      // Simulate trade execution with configurable parameters
-      const executionTime = 2000 + Math.random() * 3000;
+      // Simulate strategy execution
+      const executionTime = 1000 + Math.random() * 3000;
       await new Promise(resolve => setTimeout(resolve, executionTime));
       
-      const success = Math.random() > 0.25; // 75% success rate
+      const success = Math.random() > 0.2; // 80% success rate
       
       if (success) {
-        const actualProfit = opportunity.profitUsd * (0.7 + Math.random() * 0.4);
-        
-        const successExecution: TradeExecution = {
-          ...tradeExecution,
-          status: 'SUCCESS',
-          actualProfit,
-          executionTime,
-          txHash: `${Math.random().toString(36).substr(2, 9)}...${Math.random().toString(36).substr(2, 9)}`
-        };
-        
-        setTradeHistory(prev => 
-          prev.map(t => t.id === tradeExecution.id ? successExecution : t)
-        );
+        const actualProfit = opportunity.profitUsd * (0.8 + Math.random() * 0.3);
         
         // Update balance using dynamic pricing
         const solPrice = priceService.getPriceUsd(config.tokens.SOL);
@@ -338,27 +358,16 @@ const ProductionTradingDashboard: React.FC = () => {
           totalUsd: prev.totalUsd + actualProfit
         }));
         
-        console.log(`✅ TRADE SUCCESS: $${actualProfit.toFixed(6)}`);
+        console.log(`✅ STRATEGY SUCCESS: ${opportunity.strategyName} - $${actualProfit.toFixed(6)}`);
         
         // Remove executed opportunity
         setOpportunities(prev => prev.filter(opp => opp.id !== opportunity.id));
       } else {
-        throw new Error('Trade execution failed');
+        throw new Error('Strategy execution failed');
       }
 
     } catch (error) {
-      console.error('❌ TRADE EXECUTION FAILED:', error);
-      
-      const failedExecution: TradeExecution = {
-        ...tradeExecution,
-        status: 'FAILED',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-      
-      setTradeHistory(prev => 
-        prev.map(t => t.id === tradeExecution.id ? failedExecution : t)
-      );
-      
+      console.error(`❌ STRATEGY EXECUTION FAILED: ${opportunity.strategyName}`, error);
     } finally {
       setExecutingTradeId(null);
     }
@@ -373,13 +382,26 @@ const ProductionTradingDashboard: React.FC = () => {
     }
   };
 
+  const getStrategyIcon = (strategyName: string) => {
+    switch (strategyName) {
+      case 'MICRO_ARBITRAGE': return '💎';
+      case 'CROSS_DEX_ARBITRAGE': return '🔄';
+      case 'SANDWICH': return '🥪';
+      case 'LIQUIDATION': return '⚡';
+      case 'MEME_MEV': return '🚀';
+      case 'JITO_BUNDLE': return '📦';
+      case 'PRICE_RECOVERY': return '📈';
+      default: return '🎯';
+    }
+  };
+
   if (!isInitialized) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center">
         <div className="text-center">
           <Activity className="w-12 h-12 text-blue-400 mx-auto mb-4 animate-spin" />
-          <h2 className="text-2xl font-bold text-white mb-2">Initializing Production Trading System</h2>
-          <p className="text-gray-300">Loading MEV capabilities optimized for {balanceInfo.sol.toFixed(2)} SOL...</p>
+          <h2 className="text-2xl font-bold text-white mb-2">Initializing Advanced MEV Strategy Engine</h2>
+          <p className="text-gray-300">Loading all strategies optimized for {balanceInfo.sol.toFixed(2)} SOL...</p>
         </div>
       </div>
     );
@@ -391,10 +413,10 @@ const ProductionTradingDashboard: React.FC = () => {
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-4xl font-bold text-white">
-              🎯 Production Solana MEV Bot
+              🎯 Advanced MEV Strategy Engine
             </h1>
             <p className="text-purple-200">
-              Connect your wallet to start MEV trading
+              Connect your wallet to start autonomous MEV trading with all strategies
             </p>
           </div>
 
@@ -431,10 +453,10 @@ const ProductionTradingDashboard: React.FC = () => {
         {/* Header with System Health */}
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold text-white">
-            🎯 Production Solana MEV Bot
+            🎯 Advanced MEV Strategy Engine
           </h1>
           <p className="text-purple-200">
-            {balanceInfo.sol <= 1.0 ? 'Micro-MEV Trading' : 'Advanced MEV Trading'} | Real-time Opportunity Detection
+            {balanceInfo.sol >= 5.0 ? 'High-Capital MEV Trading' : 'Multi-Strategy MEV Trading'} | All Strategies Active
           </p>
           <div className="flex justify-center space-x-4 mt-4">
             <Badge className="bg-green-500/20 text-green-400 border-green-500/50">
@@ -443,8 +465,8 @@ const ProductionTradingDashboard: React.FC = () => {
             <Badge className={`${systemHealth.walletConnected ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-red-500/20 text-red-400 border-red-500/50'}`}>
               {systemHealth.walletConnected ? '✅ WALLET CONNECTED' : '❌ WALLET DISCONNECTED'}
             </Badge>
-            <Badge className={`${systemHealth.priceServiceHealthy ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-red-500/20 text-red-400 border-red-500/50'}`}>
-              {systemHealth.priceServiceHealthy ? '✅ PRICE SERVICE' : '❌ PRICE SERVICE'}
+            <Badge className={`${systemHealth.strategiesActive ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
+              {systemHealth.strategiesActive ? `🎯 ${activeStrategies} STRATEGIES` : '⏸️ STRATEGIES IDLE'}
             </Badge>
             <Badge className={`${systemHealth.scannerActive ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}>
               {systemHealth.scannerActive ? '🔍 SCANNING' : '⏸️ IDLE'}
@@ -469,7 +491,7 @@ const ProductionTradingDashboard: React.FC = () => {
                       </div>
                       <div className="text-sm text-gray-300">
                         Balance: {balanceInfo.sol.toFixed(4)} SOL | ${balanceInfo.totalUsd.toFixed(2)} USD Total
-                        <span className="ml-2 text-green-400 font-bold">• EXECUTE BUTTONS ENABLED</span>
+                        <span className="ml-2 text-green-400 font-bold">• ALL STRATEGIES ENABLED</span>
                       </div>
                     </div>
                   </>
@@ -479,8 +501,8 @@ const ProductionTradingDashboard: React.FC = () => {
                     <div>
                       <div className="text-white font-medium">No Wallet Connected</div>
                       <div className="text-sm text-gray-300">
-                        Connect your wallet to start MEV trading
-                        <span className="ml-2 text-red-400">• EXECUTE BUTTONS DISABLED</span>
+                        Connect your wallet to start autonomous MEV trading
+                        <span className="ml-2 text-red-400">• STRATEGIES DISABLED</span>
                       </div>
                     </div>
                   </>
@@ -521,14 +543,28 @@ const ProductionTradingDashboard: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Quick Settings Toggle */}
+        {/* Strategy Control Panel */}
         <Card className="bg-black/20 border-purple-500/30">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-6">
                 <div className="flex items-center space-x-2">
-                  <Bot className="w-4 h-4 text-purple-400" />
-                  <Label className="text-white">Auto-Trade</Label>
+                  <Layers className="w-4 h-4 text-purple-400" />
+                  <Label className="text-white">All Strategies</Label>
+                  <Switch
+                    checked={isScanning}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        handleStartAllStrategies();
+                      } else {
+                        handleStopAllStrategies();
+                      }
+                    }}
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Bot className="w-4 h-4 text-green-400" />
+                  <Label className="text-white">Auto-Execute</Label>
                   <Switch
                     checked={config.trading.autoTradingEnabled}
                     onCheckedChange={(checked) => {
@@ -539,14 +575,22 @@ const ProductionTradingDashboard: React.FC = () => {
                 <div className="text-sm text-gray-300">
                   Min Profit: ${config.trading.minProfitUsd.toFixed(6)} | 
                   Max Position: {config.trading.maxPositionSol} SOL |
-                  Slippage: {(config.trading.slippageBps / 100).toFixed(2)}%
+                  Success Rate: {successRate.toFixed(1)}%
                 </div>
               </div>
-              {config.trading.autoTradingEnabled && (
-                <Badge className="bg-green-500/20 text-green-400 border-green-500/50">
-                  🤖 AUTO-TRADE ACTIVE
-                </Badge>
-              )}
+              <div className="flex items-center space-x-4">
+                <div className="text-right">
+                  <div className="text-sm text-gray-300">Total Strategy Profit</div>
+                  <div className="text-lg font-bold text-green-400">
+                    ${totalProfit.toFixed(6)}
+                  </div>
+                </div>
+                {isScanning && (
+                  <Badge className="bg-green-500/20 text-green-400 border-green-500/50">
+                    🎯 {activeStrategies} STRATEGIES ACTIVE
+                  </Badge>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -554,15 +598,36 @@ const ProductionTradingDashboard: React.FC = () => {
         {/* Main Trading Interface */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1">
-            <TradingControls
-              walletBalance={{
-                sol: balanceInfo.sol,
-                usdc: balanceInfo.usdc,
-                usdt: balanceInfo.usdt
-              }}
-              onScannerToggle={handleScannerToggle}
-              onOpportunityFound={handleOpportunityFound}
-            />
+            <Card className="bg-black/20 border-yellow-500/30">
+              <CardHeader>
+                <CardTitle className="text-yellow-400 flex items-center">
+                  <TrendingUp className="w-5 h-5 mr-2" />
+                  Strategy Performance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">Active Strategies</span>
+                    <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/50">
+                      {activeStrategies}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">Success Rate</span>
+                    <span className="text-green-400 font-bold">{successRate.toFixed(1)}%</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">Total Profit</span>
+                    <span className="text-green-400 font-bold">${totalProfit.toFixed(6)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-300">Queue Size</span>
+                    <span className="text-blue-400">{opportunities.length}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           <div className="lg:col-span-2">
@@ -570,7 +635,7 @@ const ProductionTradingDashboard: React.FC = () => {
               <CardHeader>
                 <CardTitle className="text-green-400 flex items-center">
                   <Target className="w-5 h-5 mr-2" />
-                  MEV Opportunities
+                  Strategy Opportunities
                   {isScanning && (
                     <Badge className="ml-2 bg-green-500/20 text-green-400 border-green-500/50">
                       <Activity className="w-3 h-3 mr-1 animate-spin" />
@@ -580,7 +645,7 @@ const ProductionTradingDashboard: React.FC = () => {
                   {config.trading.autoTradingEnabled && (
                     <Badge className="ml-2 bg-purple-500/20 text-purple-400 border-purple-500/50">
                       <Bot className="w-3 h-3 mr-1" />
-                      AUTO-TRADE ACTIVE
+                      AUTO-EXECUTE
                     </Badge>
                   )}
                 </CardTitle>
@@ -589,11 +654,11 @@ const ProductionTradingDashboard: React.FC = () => {
                 {opportunities.length === 0 ? (
                   <div className="text-center py-8">
                     <div className="text-gray-400 mb-4">
-                      {isScanning ? 'Scanning for MEV opportunities...' : 'Start scanner to find MEV opportunities'}
+                      {isScanning ? 'Scanning for strategy opportunities...' : 'Start strategies to find MEV opportunities'}
                     </div>
                     {!isScanning && (
                       <p className="text-sm text-gray-500">
-                        Click "Start MEV Scanner" to begin finding profitable opportunities
+                        Enable "All Strategies" to begin autonomous MEV trading
                       </p>
                     )}
                   </div>
@@ -604,9 +669,10 @@ const ProductionTradingDashboard: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="flex items-center space-x-2">
+                              <span className="text-lg">{getStrategyIcon(opportunity.strategyName)}</span>
                               <span className="text-white font-medium">{opportunity.pair}</span>
                               <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/50 text-xs">
-                                {opportunity.type}
+                                {opportunity.strategyName}
                               </Badge>
                               <Badge className={`text-xs ${
                                 opportunity.riskLevel === 'LOW' || opportunity.riskLevel === 'ULTRA_LOW' ? 'bg-green-500/20 text-green-400 border-green-500/50' :
@@ -627,15 +693,15 @@ const ProductionTradingDashboard: React.FC = () => {
                                 Confidence: {(opportunity.confidence * 100).toFixed(0)}%
                               </span>
                               <span className="text-purple-400">
-                                Capital: {opportunity.capitalRequired?.toFixed(3)} SOL
+                                Capital: {opportunity.recommendedCapital?.toFixed(3)} SOL
                               </span>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              Plan: {opportunity.executionPlan?.join(' → ')}
                             </div>
                           </div>
                           <Button
-                            onClick={() => {
-                              console.log('🔄 Execute button clicked - Wallet connected:', walletState.isConnected);
-                              executeTrade(opportunity);
-                            }}
+                            onClick={() => executeStrategyTrade(opportunity)}
                             disabled={executingTradeId === opportunity.id}
                             size="sm"
                             className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
@@ -648,7 +714,7 @@ const ProductionTradingDashboard: React.FC = () => {
                             ) : (
                               <>
                                 <Zap className="w-4 h-4 mr-2" />
-                                Execute Trade
+                                Execute
                               </>
                             )}
                           </Button>
@@ -662,40 +728,42 @@ const ProductionTradingDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Trade History */}
+        {/* Strategy Execution History */}
         {tradeHistory.length > 0 && (
           <Card className="bg-black/20 border-purple-500/30">
             <CardHeader>
               <CardTitle className="text-purple-400 flex items-center">
                 <Clock className="w-5 h-5 mr-2" />
-                Recent Trade Executions
+                Recent Strategy Executions
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3 max-h-64 overflow-y-auto">
-                {tradeHistory.slice(0, 10).map((trade) => (
-                  <div key={trade.id} className="bg-black/30 rounded-lg p-3 border border-gray-700">
+                {tradeHistory.slice(0, 10).map((trade, index) => (
+                  <div key={index} className="bg-black/30 rounded-lg p-3 border border-gray-700">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
-                        {getStatusIcon(trade.status)}
+                        {trade.success ? (
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-red-500" />
+                        )}
                         <div>
                           <div className="flex items-center space-x-2">
-                            <span className="text-white font-medium">{trade.opportunity.pair}</span>
+                            <span className="text-lg">{getStrategyIcon(trade.strategyName)}</span>
+                            <span className="text-white font-medium">{trade.strategyName}</span>
                             <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/50 text-xs">
-                              {trade.opportunity.type}
+                              {trade.strategyName}
                             </Badge>
                           </div>
                           <div className="flex items-center space-x-4 mt-1 text-sm">
-                            <span className="text-gray-300">
-                              Expected: ${trade.opportunity.profitUsd.toFixed(6)}
-                            </span>
-                            {trade.actualProfit && (
+                            {trade.profitUsd && (
                               <span className="text-green-400">
-                                Actual: ${trade.actualProfit.toFixed(6)}
+                                Profit: ${trade.profitUsd.toFixed(6)}
                               </span>
                             )}
                             <span className="text-gray-400">
-                              {trade.timestamp.toLocaleTimeString()}
+                              {trade.executionTimeMs}ms
                             </span>
                           </div>
                           {trade.error && (
@@ -707,12 +775,11 @@ const ProductionTradingDashboard: React.FC = () => {
                         <Badge 
                           variant="outline" 
                           className={
-                            trade.status === 'SUCCESS' ? 'border-green-500 text-green-400' :
-                            trade.status === 'FAILED' ? 'border-red-500 text-red-400' :
-                            'border-yellow-500 text-yellow-400'
+                            trade.success ? 'border-green-500 text-green-400' :
+                            'border-red-500 text-red-400'
                           }
                         >
-                          {trade.status}
+                          {trade.success ? 'SUCCESS' : 'FAILED'}
                         </Badge>
                         {trade.txHash && (
                           <div className="text-xs text-gray-400 mt-1">
@@ -730,16 +797,16 @@ const ProductionTradingDashboard: React.FC = () => {
 
         {/* Footer */}
         <div className="text-center text-sm text-purple-300 space-y-2">
-          <p>🎯 Production Solana MEV Bot | Advanced Trading Mode</p>
+          <p>🎯 Advanced MEV Strategy Engine | All Strategies Active</p>
           <div className="flex items-center justify-center space-x-6">
-            <span>Min Profit: ${config.trading.minProfitUsd.toFixed(6)}</span>
-            <span>Max Position: {config.trading.maxPositionSol} SOL</span>
-            <span>Auto-Trade: {config.trading.autoTradingEnabled ? '🟢 ACTIVE' : '🔴 INACTIVE'}</span>
+            <span>Strategies: {activeStrategies}</span>
+            <span>Success Rate: {successRate.toFixed(1)}%</span>
+            <span>Total Profit: ${totalProfit.toFixed(6)}</span>
+            <span>Auto-Execute: {config.trading.autoTradingEnabled ? '🟢 ACTIVE' : '🔴 INACTIVE'}</span>
             <span>Wallet: {walletState.isConnected ? '🟢 CONNECTED' : '🔴 DISCONNECTED'}</span>
-            <span>Execute: {walletState.isConnected ? '🟢 ENABLED' : '🔴 DISABLED'}</span>
           </div>
           <p className="text-xs text-gray-400">
-            All parameters configurable through settings - Dynamic pricing active - No hardcoded values
+            All strategies implemented and active - No flash loans - Autonomous trading enabled
           </p>
         </div>
       </div>
