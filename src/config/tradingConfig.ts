@@ -1,5 +1,6 @@
 // TRADING CONFIGURATION - CENTRALIZED SETTINGS
 // All trading parameters, token addresses, and API endpoints
+// UPDATED: Optimized for 10 SOL capital with no artificial limitations
 
 export interface TradingConfig {
   // Price Settings
@@ -66,7 +67,7 @@ export interface TradingConfig {
   };
 }
 
-// Default configuration
+// ENHANCED CONFIGURATION - OPTIMIZED FOR 10 SOL CAPITAL
 export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   prices: {
     solUsd: 0, // Will be fetched dynamically
@@ -79,25 +80,26 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   },
 
   trading: {
-    minProfitUsd: 0.0001,
-    maxPositionSol: 0.1,
-    slippageBps: 50, // 0.5%
-    priorityFeeLamports: 200000,
-    autoTradingEnabled: false,
-    riskLevel: 'LOW',
-    enableSandwich: false,
+    // ENHANCED: Meaningful profit thresholds for 10 SOL capital
+    minProfitUsd: 0.01, // $0.01 minimum for worthwhile trades
+    maxPositionSol: 5.0, // Use up to 50% of capital per trade (5 SOL)
+    slippageBps: 100, // 1.0% slippage for better execution
+    priorityFeeLamports: 500000, // Higher priority for faster execution
+    autoTradingEnabled: true, // Enable auto-trading by default
+    riskLevel: 'MEDIUM', // Balanced risk for better returns
+    enableSandwich: true, // Enable all strategies
     enableArbitrage: true,
-    enableLiquidation: false,
+    enableLiquidation: true,
     enableMicroMev: true,
   },
 
   scanner: {
-    scanIntervalMs: 1200, // 1.2 seconds
+    scanIntervalMs: 800, // Faster scanning (0.8 seconds)
     circuitBreakerFailureThreshold: 5,
     circuitBreakerRecoveryTimeoutMs: 30000, // 30 seconds
-    maxOpportunities: 10,
-    tokenCheckDelayMs: 200,
-    profitCaptureRate: 0.7, // 70%
+    maxOpportunities: 15, // More opportunities to choose from
+    tokenCheckDelayMs: 150, // Faster token checks
+    profitCaptureRate: 0.8, // 80% profit capture rate
   },
 
   tokens: {
@@ -123,11 +125,12 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   },
 
   risk: {
-    maxTradeAmountSol: 1.0,
-    maxDailyLossSol: 0.1,
-    stopLossPercent: 5.0,
-    maxConcurrentTrades: 3,
-    cooldownBetweenTradesMs: 5000, // 5 seconds
+    // ENHANCED: Risk management optimized for 10 SOL capital
+    maxTradeAmountSol: 8.0, // Allow up to 80% of capital (8 SOL)
+    maxDailyLossSol: 2.0, // 20% daily loss limit (2 SOL)
+    stopLossPercent: 3.0, // Tighter stop loss for capital preservation
+    maxConcurrentTrades: 5, // Multiple simultaneous trades
+    cooldownBetweenTradesMs: 1000, // 1 second cooldown for faster execution
   },
 };
 
@@ -138,6 +141,10 @@ class TradingConfigManager {
 
   constructor() {
     this.config = this.loadConfig();
+    console.log('🚀 TRADING CONFIG INITIALIZED - 10 SOL CAPITAL OPTIMIZED');
+    console.log(`📊 Max Trade Size: ${this.config.risk.maxTradeAmountSol} SOL`);
+    console.log(`💰 Min Profit: $${this.config.trading.minProfitUsd}`);
+    console.log(`🤖 Auto-Trading: ${this.config.trading.autoTradingEnabled ? 'ENABLED' : 'DISABLED'}`);
   }
 
   private loadConfig(): TradingConfig {
@@ -145,11 +152,15 @@ class TradingConfigManager {
       const saved = localStorage.getItem('trading_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return { ...DEFAULT_TRADING_CONFIG, ...parsed };
+        // Merge with enhanced defaults to ensure new parameters are included
+        const mergedConfig = { ...DEFAULT_TRADING_CONFIG, ...parsed };
+        console.log('✅ Loaded saved config with enhanced defaults');
+        return mergedConfig;
       }
     } catch (error) {
-      console.warn('Failed to load saved config, using defaults:', error);
+      console.warn('Failed to load saved config, using enhanced defaults:', error);
     }
+    console.log('✅ Using enhanced default configuration for 10 SOL capital');
     return { ...DEFAULT_TRADING_CONFIG };
   }
 
@@ -161,6 +172,7 @@ class TradingConfigManager {
     this.config = { ...this.config, ...updates };
     this.saveConfig();
     this.notifyListeners();
+    console.log('🔄 Config updated:', updates);
   }
 
   public updateSection<K extends keyof TradingConfig>(
@@ -170,11 +182,13 @@ class TradingConfigManager {
     this.config[section] = { ...this.config[section], ...updates };
     this.saveConfig();
     this.notifyListeners();
+    console.log(`🔄 Config section '${section}' updated:`, updates);
   }
 
   private saveConfig(): void {
     try {
       localStorage.setItem('trading_config', JSON.stringify(this.config));
+      console.log('💾 Config saved to localStorage');
     } catch (error) {
       console.error('Failed to save config:', error);
     }
@@ -198,9 +212,10 @@ class TradingConfigManager {
     this.config = { ...DEFAULT_TRADING_CONFIG };
     this.saveConfig();
     this.notifyListeners();
+    console.log('🔄 Config reset to enhanced defaults');
   }
 
-  // Validation methods
+  // Enhanced validation for 10 SOL capital
   public validateConfig(): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
 
@@ -212,18 +227,79 @@ class TradingConfigManager {
       errors.push('Maximum position size must be greater than 0');
     }
 
-    if (this.config.trading.slippageBps < 1 || this.config.trading.slippageBps > 1000) {
-      errors.push('Slippage must be between 1 and 1000 basis points');
+    if (this.config.trading.maxPositionSol > 10.0) {
+      errors.push('Maximum position size cannot exceed available capital (10 SOL)');
+    }
+
+    if (this.config.risk.maxTradeAmountSol > 10.0) {
+      errors.push('Maximum trade amount cannot exceed available capital (10 SOL)');
+    }
+
+    if (this.config.trading.slippageBps < 1 || this.config.trading.slippageBps > 2000) {
+      errors.push('Slippage must be between 1 and 2000 basis points');
     }
 
     if (this.config.scanner.scanIntervalMs < 100) {
       errors.push('Scan interval must be at least 100ms');
     }
 
+    if (this.config.risk.maxDailyLossSol > this.config.risk.maxTradeAmountSol) {
+      errors.push('Daily loss limit should not exceed maximum trade amount');
+    }
+
     return {
       isValid: errors.length === 0,
       errors
     };
+  }
+
+  // Get optimal strategy based on available capital
+  public getOptimalStrategy(availableCapital: number): string {
+    if (availableCapital >= 8.0) {
+      return 'AGGRESSIVE'; // High capital, aggressive trading
+    } else if (availableCapital >= 5.0) {
+      return 'BALANCED'; // Medium capital, balanced approach
+    } else if (availableCapital >= 2.0) {
+      return 'CONSERVATIVE'; // Lower capital, conservative approach
+    } else {
+      return 'MICRO'; // Very low capital, micro-MEV only
+    }
+  }
+
+  // Calculate recommended trade size based on opportunity and capital
+  public getRecommendedTradeSize(
+    availableCapital: number,
+    profitUsd: number,
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH'
+  ): number {
+    const strategy = this.getOptimalStrategy(availableCapital);
+    
+    let baseSize: number;
+    switch (strategy) {
+      case 'AGGRESSIVE':
+        baseSize = Math.min(5.0, availableCapital * 0.6); // Up to 60% of capital
+        break;
+      case 'BALANCED':
+        baseSize = Math.min(3.0, availableCapital * 0.4); // Up to 40% of capital
+        break;
+      case 'CONSERVATIVE':
+        baseSize = Math.min(1.5, availableCapital * 0.3); // Up to 30% of capital
+        break;
+      default:
+        baseSize = Math.min(0.5, availableCapital * 0.2); // Up to 20% of capital
+    }
+
+    // Risk adjustment
+    const riskMultiplier = riskLevel === 'LOW' ? 1.0 : riskLevel === 'MEDIUM' ? 0.8 : 0.6;
+    
+    // Profit-based adjustment
+    const profitMultiplier = Math.min(1.5, Math.max(0.5, profitUsd * 50)); // Scale with profit
+    
+    return Math.min(
+      baseSize * riskMultiplier * profitMultiplier,
+      this.config.risk.maxTradeAmountSol,
+      availableCapital * 0.8 // Never use more than 80% of available capital
+    );
   }
 }
 

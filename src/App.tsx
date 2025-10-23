@@ -1,10 +1,10 @@
 import React from 'react';
-import PrivateKeyTradingDashboard from './components/PrivateKeyTradingDashboard';
+import ProductionTradingDashboard from './components/ProductionTradingDashboard';
 
 function App() {
   return (
     <div className="App">
-      <PrivateKeyTradingDashboard />
+      <ProductionTradingDashboard />
     </div>
   );
 }
