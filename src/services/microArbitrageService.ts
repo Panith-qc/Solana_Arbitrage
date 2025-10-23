@@ -18,7 +18,7 @@ export interface ArbitrageOpportunity {
 class MicroArbitrageService {
   public async executeArbitrage(opportunity: ArbitrageOpportunity): Promise<ArbitrageResult> {
     const startTime = Date.now();
-    console.log(`🚀 EXECUTING Micro Arbitrage: ${opportunity.pair} - $${(opportunity.profit || 0).toFixed(6)}`);
+    console.log(`🚀 EXECUTING Micro Arbitrage: ${opportunity.pair} - $${((opportunity.profit || 0) != null && !isNaN(opportunity.profit || 0) && typeof (opportunity.profit || 0) === 'number' ? (opportunity.profit || 0).toFixed(6) : '0.000000')}`);
     console.log(`🚀 SAFE SOL ARBITRAGE EXECUTION: ${opportunity.pair}`);
 
     try {
@@ -43,7 +43,7 @@ class MicroArbitrageService {
         const txHash = `arb_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
         const executionTimeMs = Date.now() - startTime;
 
-        console.log(`✅ Micro Arbitrage SUCCESS: ${opportunity.pair} - $${actualProfit.toFixed(6)} profit in ${executionTimeMs}ms`);
+        console.log(`✅ Micro Arbitrage SUCCESS: ${opportunity.pair} - $${(actualProfit != null && !isNaN(actualProfit) && typeof actualProfit === 'number' ? actualProfit.toFixed(6) : '0.000000')} profit in ${executionTimeMs}ms`);
 
         return {
           success: true,

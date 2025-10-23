@@ -187,16 +187,16 @@ class ProductionWalletManager {
         totalUsd: totalUsd
       };
 
-      console.log(`💰 REAL SOL Balance: ${solAmount.toFixed(6)} SOL (${solBalance} lamports)`);
-      console.log(`💵 REAL USDT Balance: ${usdtAmount.toFixed(2)}`);
-      console.log(`💵 REAL USDC Balance: ${usdcAmount.toFixed(2)}`);
-      console.log(`📈 REAL SOL PRICE: $${solPrice.toFixed(2)}`);
+      console.log(`💰 REAL SOL Balance: ${(solAmount != null && !isNaN(solAmount) && typeof solAmount === 'number' ? solAmount.toFixed(6) : '0.000000')} SOL (${solBalance} lamports)`);
+      console.log(`💵 REAL USDT Balance: ${(usdtAmount != null && !isNaN(usdtAmount) && typeof usdtAmount === 'number' ? usdtAmount.toFixed(2) : '0.00')}`);
+      console.log(`💵 REAL USDC Balance: ${(usdcAmount != null && !isNaN(usdcAmount) && typeof usdcAmount === 'number' ? usdcAmount.toFixed(2) : '0.00')}`);
+      console.log(`📈 REAL SOL PRICE: $${(solPrice != null && !isNaN(solPrice) && typeof solPrice === 'number' ? solPrice.toFixed(2) : '0.00')}`);
       console.log('✅ REAL BALANCE FETCHED FROM BLOCKCHAIN:');
-      console.log(`   SOL: ${solAmount.toFixed(6)}`);
-      console.log(`   USDC: ${usdcAmount.toFixed(2)}`);
-      console.log(`   USDT: ${usdtAmount.toFixed(2)}`);
-      console.log(`   SOL Price: $${solPrice.toFixed(2)}`);
-      console.log(`   Total USD: $${totalUsd.toFixed(2)}`);
+      console.log(`   SOL: ${(solAmount != null && !isNaN(solAmount) && typeof solAmount === 'number' ? solAmount.toFixed(6) : '0.000000')}`);
+      console.log(`   USDC: ${(usdcAmount != null && !isNaN(usdcAmount) && typeof usdcAmount === 'number' ? usdcAmount.toFixed(2) : '0.00')}`);
+      console.log(`   USDT: ${(usdtAmount != null && !isNaN(usdtAmount) && typeof usdtAmount === 'number' ? usdtAmount.toFixed(2) : '0.00')}`);
+      console.log(`   SOL Price: $${(solPrice != null && !isNaN(solPrice) && typeof solPrice === 'number' ? solPrice.toFixed(2) : '0.00')}`);
+      console.log(`   Total USD: $${(totalUsd != null && !isNaN(totalUsd) && typeof totalUsd === 'number' ? totalUsd.toFixed(2) : '0.00')}`);
 
     } catch (error) {
       console.error('❌ Failed to fetch REAL balance from blockchain:', error);
@@ -397,7 +397,7 @@ class ProductionWalletManager {
     this.performanceMetrics.winRate = (this.performanceMetrics.successfulTrades / this.performanceMetrics.totalTrades) * 100;
     this.performanceMetrics.lastTradeTime = new Date();
 
-    console.log(`📊 REAL PERFORMANCE UPDATED: ${this.performanceMetrics.successfulTrades}/${this.performanceMetrics.totalTrades} trades | $${this.performanceMetrics.totalProfit.toFixed(4)} profit`);
+    console.log(`📊 REAL PERFORMANCE UPDATED: ${this.performanceMetrics.successfulTrades}/${this.performanceMetrics.totalTrades} trades | $${(this.performanceMetrics.totalProfit != null && !isNaN(this.performanceMetrics.totalProfit) && typeof this.performanceMetrics.totalProfit === 'number' ? this.performanceMetrics.totalProfit.toFixed(4) : '0.0000')} profit`);
   }
 
   // Disconnect wallet

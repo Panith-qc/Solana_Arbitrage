@@ -268,7 +268,7 @@ class StrategyEngine {
     }
 
     try {
-      console.log(`🚀 Executing opportunity: ${opportunity.pair} - $${opportunity.profit.toFixed(6)}`);
+      console.log(`🚀 Executing opportunity: ${opportunity.pair} - $${(opportunity.profit != null && !isNaN(opportunity.profit) && typeof opportunity.profit === 'number' ? opportunity.profit.toFixed(6) : '0.000000')}`);
       
       let success = false;
       if ('mevType' in opportunity) {

@@ -228,7 +228,7 @@ export class PrivateKeyJupiterTrading {
             initial: initialAmount,
             final: finalAmount,
             profit: profit,
-            profitPercent: profitPercent.toFixed(6) + '%'
+            profitPercent: (profitPercent != null && !isNaN(profitPercent) && typeof profitPercent === 'number' ? profitPercent.toFixed(6) : '0.000000') + '%'
           });
 
           // Look for ANY positive arbitrage opportunity
@@ -254,12 +254,12 @@ export class PrivateKeyJupiterTrading {
 
             opportunities.push(opportunity);
             console.log(`💎 REAL PROFIT OPPORTUNITY FOUND: ${pair.name}`, {
-              profit: `$${profitUsd.toFixed(6)}`,
-              percent: `${profitPercent.toFixed(6)}%`,
-              confidence: `${(opportunity.confidence * 100).toFixed(1)}%`
+              profit: `$${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')}`,
+              percent: `${(profitPercent != null && !isNaN(profitPercent) && typeof profitPercent === 'number' ? profitPercent.toFixed(6) : '0.000000')}%`,
+              confidence: `${((opportunity.confidence * 100) != null && !isNaN(opportunity.confidence * 100) && typeof (opportunity.confidence * 100) === 'number' ? (opportunity.confidence * 100).toFixed(1) : '0.0')}%`
             });
           } else {
-            console.log(`📉 ${pair.name}: No profitable arbitrage (${profitPercent.toFixed(6)}%)`);
+            console.log(`📉 ${pair.name}: No profitable arbitrage (${(profitPercent != null && !isNaN(profitPercent) && typeof profitPercent === 'number' ? profitPercent.toFixed(6) : '0.000000')}%)`);
           }
         } catch (error) {
           console.warn(`⚠️ Failed to check ${pair.name}:`, error);
@@ -323,8 +323,8 @@ export class PrivateKeyJupiterTrading {
       const signature = await this.executeSwap(opportunity.quote);
       
       console.log('🎉 REAL MEV PROFIT TRADE EXECUTED SUCCESSFULLY:', signature);
-      console.log('💵 Expected profit:', `$${opportunity.profitUsd.toFixed(6)}`);
-      console.log('📈 Profit percentage:', `${opportunity.profitPercent.toFixed(6)}%`);
+      console.log('💵 Expected profit:', `$${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')}`);
+      console.log('📈 Profit percentage:', `${(opportunity.profitPercent != null && !isNaN(opportunity.profitPercent) && typeof opportunity.profitPercent === 'number' ? opportunity.profitPercent.toFixed(6) : '0.000000')}%`);
       
       return signature;
     } catch (error) {

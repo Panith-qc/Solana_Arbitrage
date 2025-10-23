@@ -209,7 +209,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
       const result = await tokenCleanupService.cleanupAllTokens(0.001);
       
       if (result.success) {
-        setCleanupStatus(`✅ Cleanup complete! Converted ${result.tokensCleaned} tokens. Recovered ~$${result.totalValueRecovered.toFixed(4)}`);
+        setCleanupStatus(`✅ Cleanup complete! Converted ${result.tokensCleaned} tokens. Recovered ~$${(result.totalValueRecovered != null && !isNaN(result.totalValueRecovered) && typeof result.totalValueRecovered === 'number' ? result.totalValueRecovered.toFixed(4) : '0.0000')}`);
         
         // Refresh balance
         setTimeout(async () => {
@@ -265,7 +265,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                 opportunity.confidence >= autoTradeSettings.minConfidence &&
                 opportunity.riskLevel === autoTradeSettings.maxRiskLevel) {
               
-              console.log(`🤖 AUTO-EXECUTING SAFE MEV TRADE: ${opportunity.pair} - $${opportunity.netProfitUsd.toFixed(6)}`);
+              console.log(`🤖 AUTO-EXECUTING SAFE MEV TRADE: ${opportunity.pair} - $${(opportunity.netProfitUsd != null && !isNaN(opportunity.netProfitUsd) && typeof opportunity.netProfitUsd === 'number' ? opportunity.netProfitUsd.toFixed(6) : '0.000000')}`);
               
               // Small delay for execution timing
               setTimeout(() => {
@@ -340,7 +340,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
           successRate: ((prev.successfulTrades + 1) / (prev.totalTrades + 1)) * 100
         }));
         
-        console.log(`✅ SAFE ARBITRAGE SUCCESS: $${result.actualProfitUsd?.toFixed(6)} profit in ${result.executionTimeMs}ms`);
+        console.log(`✅ SAFE ARBITRAGE SUCCESS: $${(result.actualProfitUsd != null && !isNaN(result.actualProfitUsd) && typeof result.actualProfitUsd === 'number' ? result.actualProfitUsd.toFixed(6) : '0.000000')} profit in ${result.executionTimeMs}ms`);
         
         // Update balance
         try {
@@ -421,15 +421,15 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                   <div className="text-sm text-gray-400">Total Trades</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-green-400">${performanceStats.totalProfitUsd.toFixed(4)}</div>
+                  <div className="text-2xl font-bold text-green-400">${(performanceStats.totalProfitUsd != null && !isNaN(performanceStats.totalProfitUsd) && typeof performanceStats.totalProfitUsd === 'number' ? performanceStats.totalProfitUsd.toFixed(4) : '0.0000')}</div>
                   <div className="text-sm text-gray-400">Total Profit</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-400">{performanceStats.successRate.toFixed(1)}%</div>
+                  <div className="text-2xl font-bold text-blue-400">{(performanceStats.successRate != null && !isNaN(performanceStats.successRate) && typeof performanceStats.successRate === 'number' ? performanceStats.successRate.toFixed(1) : '0.0')}%</div>
                   <div className="text-sm text-gray-400">Success Rate</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-400">{performanceStats.avgExecutionTime.toFixed(0)}ms</div>
+                  <div className="text-2xl font-bold text-purple-400">{(performanceStats.avgExecutionTime != null && !isNaN(performanceStats.avgExecutionTime) && typeof performanceStats.avgExecutionTime === 'number' ? performanceStats.avgExecutionTime.toFixed(0) : '0')}ms</div>
                   <div className="text-sm text-gray-400">Avg Speed</div>
                 </div>
                 <div className="text-center">
@@ -507,7 +507,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                 <Alert className="border-green-500/50 bg-green-500/10">
                   <Shield className="h-4 w-4" />
                   <AlertDescription className="text-green-400">
-                    <strong>Safe MEV Trading:</strong> All parameters from UI. Priority fee: {(autoTradeSettings.priorityFeeLamports / 1e9).toFixed(3)} SOL. Max capital: {autoTradeSettings.maxCapitalSol} SOL
+                    <strong>Safe MEV Trading:</strong> All parameters from UI. Priority fee: {((autoTradeSettings.priorityFeeLamports / 1e9) != null && !isNaN(autoTradeSettings.priorityFeeLamports / 1e9) && typeof (autoTradeSettings.priorityFeeLamports / 1e9) === 'number' ? (autoTradeSettings.priorityFeeLamports / 1e9).toFixed(3) : '0.000')} SOL. Max capital: {autoTradeSettings.maxCapitalSol} SOL
                   </AlertDescription>
                 </Alert>
               </div>
@@ -520,7 +520,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                       Safe MEV Wallet: {walletState.publicKey?.toBase58().slice(0, 8)}...{walletState.publicKey?.toBase58().slice(-4)}
                     </div>
                     <div className="text-sm text-gray-300">
-                      Balance: {walletState.balance.toFixed(4)} SOL | ${(walletState.balance * 240).toFixed(2)} USD
+                      Balance: {(walletState.balance != null && !isNaN(walletState.balance) && typeof walletState.balance === 'number' ? walletState.balance.toFixed(4) : '0.0000')} SOL | ${((walletState.balance * 240) != null && !isNaN(walletState.balance * 240) && typeof (walletState.balance * 240) === 'number' ? (walletState.balance * 240).toFixed(2) : '0.00')} USD
                       <span className="ml-2 text-green-400 font-bold">• SAFE TRADING READY</span>
                     </div>
                   </div>
@@ -739,7 +739,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                 <Alert className="border-green-500/50 bg-green-500/10">
                   <Shield className="h-4 w-4" />
                   <AlertDescription className="text-green-400">
-                    <strong>Safe Auto-Trading Active:</strong> System will execute arbitrage trades above ${autoTradeSettings.minProfitUsd.toFixed(3)} with max {autoTradeSettings.maxCapitalSol} SOL capital. Priority fee: {(autoTradeSettings.priorityFeeLamports / 1e9).toFixed(3)} SOL
+                    <strong>Safe Auto-Trading Active:</strong> System will execute arbitrage trades above ${(autoTradeSettings.minProfitUsd != null && !isNaN(autoTradeSettings.minProfitUsd) && typeof autoTradeSettings.minProfitUsd === 'number' ? autoTradeSettings.minProfitUsd.toFixed(3) : '0.000')} with max {autoTradeSettings.maxCapitalSol} SOL capital. Priority fee: {((autoTradeSettings.priorityFeeLamports / 1e9) != null && !isNaN(autoTradeSettings.priorityFeeLamports / 1e9) && typeof (autoTradeSettings.priorityFeeLamports / 1e9) === 'number' ? (autoTradeSettings.priorityFeeLamports / 1e9).toFixed(3) : '0.000')} SOL
                   </AlertDescription>
                 </Alert>
               )}
@@ -841,19 +841,19 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                         </div>
                         <div className="flex items-center space-x-4 mt-1 text-sm">
                           <span className="text-green-400">
-                            Net Profit: ${opportunity.netProfitUsd.toFixed(6)}
+                            Net Profit: ${(opportunity.netProfitUsd != null && !isNaN(opportunity.netProfitUsd) && typeof opportunity.netProfitUsd === 'number' ? opportunity.netProfitUsd.toFixed(6) : '0.000000')}
                           </span>
                           <span className="text-blue-400">
-                            {opportunity.profitPercent.toFixed(4)}%
+                            {(opportunity.profitPercent != null && !isNaN(opportunity.profitPercent) && typeof opportunity.profitPercent === 'number' ? opportunity.profitPercent.toFixed(4) : '0.0000')}%
                           </span>
                           <span className="text-gray-400">
-                            Confidence: {(opportunity.confidence * 100).toFixed(0)}%
+                            Confidence: {((opportunity.confidence * 100) != null && !isNaN(opportunity.confidence * 100) && typeof (opportunity.confidence * 100) === 'number' ? (opportunity.confidence * 100).toFixed(0) : '0')}%
                           </span>
                           <span className="text-purple-400">
-                            Capital: {opportunity.capitalRequired.toFixed(3)} SOL
+                            Capital: {(opportunity.capitalRequired != null && !isNaN(opportunity.capitalRequired) && typeof opportunity.capitalRequired === 'number' ? opportunity.capitalRequired.toFixed(3) : '0.000')} SOL
                           </span>
                           <span className="text-orange-400">
-                            Gas: {opportunity.gasFeeSol.toFixed(4)} SOL
+                            Gas: {(opportunity.gasFeeSol != null && !isNaN(opportunity.gasFeeSol) && typeof opportunity.gasFeeSol === 'number' ? opportunity.gasFeeSol.toFixed(4) : '0.0000')} SOL
                           </span>
                         </div>
                       </div>
@@ -908,7 +908,7 @@ const PrivateKeyTradingDashboard: React.FC = () => {
                           </div>
                           <div className="flex items-center space-x-4 mt-1 text-sm">
                             <span className="text-gray-300">
-                              Expected: ${trade.opportunity.netProfitUsd.toFixed(6)}
+                              Expected: ${(trade.opportunity.netProfitUsd != null && !isNaN(trade.opportunity.netProfitUsd) && typeof trade.opportunity.netProfitUsd === 'number' ? trade.opportunity.netProfitUsd.toFixed(6) : '0.000000')}
                             </span>
                             {trade.result.actualProfitUsd && (
                               <span className="text-green-400">
@@ -961,12 +961,12 @@ const PrivateKeyTradingDashboard: React.FC = () => {
         <div className="text-center text-sm text-purple-300 space-y-2">
           <p>🛡️ Safe MEV Arbitrage Bot | Zero Loss Trading | UI Parameters Only</p>
           <div className="flex items-center justify-center space-x-6">
-            <span>Min Profit: ${autoTradeSettings.minProfitUsd.toFixed(3)}</span>
+            <span>Min Profit: ${(autoTradeSettings.minProfitUsd != null && !isNaN(autoTradeSettings.minProfitUsd) && typeof autoTradeSettings.minProfitUsd === 'number' ? autoTradeSettings.minProfitUsd.toFixed(3) : '0.000')}</span>
             <span>Max Capital: {autoTradeSettings.maxCapitalSol} SOL</span>
-            <span>Priority Fee: {(autoTradeSettings.priorityFeeLamports / 1e9).toFixed(3)} SOL</span>
+            <span>Priority Fee: {((autoTradeSettings.priorityFeeLamports / 1e9) != null && !isNaN(autoTradeSettings.priorityFeeLamports / 1e9) && typeof (autoTradeSettings.priorityFeeLamports / 1e9) === 'number' ? (autoTradeSettings.priorityFeeLamports / 1e9).toFixed(3) : '0.000')} SOL</span>
             <span>Auto-Trade: {autoTradeSettings.enabled ? '🟢 SAFE ACTIVE' : '🔴 INACTIVE'}</span>
-            <span>Balance: {walletState.balance.toFixed(4)} SOL</span>
-            <span>Total Profit: ${performanceStats.totalProfitUsd.toFixed(4)}</span>
+            <span>Balance: {(walletState.balance != null && !isNaN(walletState.balance) && typeof walletState.balance === 'number' ? walletState.balance.toFixed(4) : '0.0000')} SOL</span>
+            <span>Total Profit: ${(performanceStats.totalProfitUsd != null && !isNaN(performanceStats.totalProfitUsd) && typeof performanceStats.totalProfitUsd === 'number' ? performanceStats.totalProfitUsd.toFixed(4) : '0.0000')}</span>
           </div>
           <p className="text-xs text-gray-400">
             🛡️ SAFE ARBITRAGE - All parameters from UI, no hardcoding, sequential execution, balance verification

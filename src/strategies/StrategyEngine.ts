@@ -362,7 +362,7 @@ export class StrategyEngine {
     }
 
     const profitValue = Number(opportunity.profitUsd) || 0;
-    console.log(`🚀 EXECUTING ${strategy.name}: ${opportunity.pair} - ${profitValue.toFixed(6)}`);
+    console.log(`🚀 EXECUTING ${strategy.name}: ${opportunity.pair} - ${(profitValue != null && !isNaN(profitValue) && typeof profitValue === 'number' ? profitValue.toFixed(6) : '0.000000')}`);
     
     try {
       let result: StrategyResult;

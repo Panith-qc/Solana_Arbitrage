@@ -173,11 +173,11 @@ export class FastMEVEngine {
         const profitUsd = (netProfitSol / 1e9) * 240; // Convert lamports to USD
 
         console.log(`📊 ${pair.name} SAFE SOL ANALYSIS:`, {
-          grossProfitSol: `${(grossProfitSol / 1e9).toFixed(6)} SOL`,
-          totalGasFee: `${(totalGasFee / 1e9).toFixed(6)} SOL`,
-          netProfitSol: `${(netProfitSol / 1e9).toFixed(6)} SOL`,
-          profitUsd: `$${profitUsd.toFixed(6)}`,
-          profitPercent: `${netProfitPercent.toFixed(4)}%`
+          grossProfitSol: `${((grossProfitSol / 1e9) != null && !isNaN(grossProfitSol / 1e9) && typeof (grossProfitSol / 1e9) === 'number' ? (grossProfitSol / 1e9).toFixed(6) : '0.000000')} SOL`,
+          totalGasFee: `${((totalGasFee / 1e9) != null && !isNaN(totalGasFee / 1e9) && typeof (totalGasFee / 1e9) === 'number' ? (totalGasFee / 1e9).toFixed(6) : '0.000000')} SOL`,
+          netProfitSol: `${((netProfitSol / 1e9) != null && !isNaN(netProfitSol / 1e9) && typeof (netProfitSol / 1e9) === 'number' ? (netProfitSol / 1e9).toFixed(6) : '0.000000')} SOL`,
+          profitUsd: `$${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')}`,
+          profitPercent: `${(netProfitPercent != null && !isNaN(netProfitPercent) && typeof netProfitPercent === 'number' ? netProfitPercent.toFixed(4) : '0.0000')}%`
         });
 
         // DYNAMIC THRESHOLDS based on token type and volatility
@@ -211,14 +211,14 @@ export class FastMEVEngine {
 
           const emoji = pair.type === 'MEME' ? '🚀' : '💎';
           console.log(`${emoji} SAFE SOL OPPORTUNITY: ${pair.name}`);
-          console.log(`💰 Profit: $${profitUsd.toFixed(6)} (${netProfitPercent.toFixed(4)}%)`);
-          console.log(`🎯 Confidence: ${(opportunity.confidence * 100).toFixed(1)}%`);
+          console.log(`💰 Profit: $${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')} (${(netProfitPercent != null && !isNaN(netProfitPercent) && typeof netProfitPercent === 'number' ? netProfitPercent.toFixed(4) : '0.0000')}%)`);
+          console.log(`🎯 Confidence: ${((opportunity.confidence * 100) != null && !isNaN(opportunity.confidence * 100) && typeof (opportunity.confidence * 100) === 'number' ? (opportunity.confidence * 100).toFixed(1) : '0.0')}%`);
           console.log(`✅ GUARANTEED: SOL → ${pair.name.split('/')[1]} → SOL`);
           return opportunity;
         } else {
           console.log(`❌ ${pair.name} NOT PROFITABLE:`, {
-            netProfitSol: `${(netProfitSol / 1e9).toFixed(6)} SOL`,
-            profitUsd: `$${profitUsd.toFixed(6)}`,
+            netProfitSol: `${((netProfitSol / 1e9) != null && !isNaN(netProfitSol / 1e9) && typeof (netProfitSol / 1e9) === 'number' ? (netProfitSol / 1e9).toFixed(6) : '0.000000')} SOL`,
+            profitUsd: `$${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')}`,
             minRequired: `$${minProfitUsd}`,
             reason: netProfitSol <= 0 ? 'Negative after gas' : 'Below threshold'
           });
@@ -243,7 +243,7 @@ export class FastMEVEngine {
       
       validOpportunities.forEach(opp => {
         const emoji = opp.type === 'MEME_ARBITRAGE' ? '🚀' : '💎';
-        console.log(`${emoji} ${opp.pair}: $${opp.profitUsd.toFixed(6)} (${(opp.confidence * 100).toFixed(1)}% confidence)`);
+        console.log(`${emoji} ${opp.pair}: $${(opp.profitUsd != null && !isNaN(opp.profitUsd) && typeof opp.profitUsd === 'number' ? opp.profitUsd.toFixed(6) : '0.000000')} (${((opp.confidence * 100) != null && !isNaN(opp.confidence * 100) && typeof (opp.confidence * 100) === 'number' ? (opp.confidence * 100).toFixed(1) : '0.0')}% confidence)`);
       });
     }
     
@@ -259,7 +259,7 @@ export class FastMEVEngine {
     
     // CRITICAL FIX: Validate netProfitUsd exists before using toFixed
     const netProfitValue = Number(opportunity.netProfitUsd) || Number(opportunity.profitUsd) || 0;
-    console.log(`💰 Expected profit: $${netProfitValue.toFixed(6)} (${opportunity.type})`);
+    console.log(`💰 Expected profit: $${(netProfitValue != null && !isNaN(netProfitValue) && typeof netProfitValue === 'number' ? netProfitValue.toFixed(6) : '0.000000')} (${opportunity.type})`);
     console.log(`🛡️ Using UI Priority Fee: ${priorityFeeSol} SOL (NO HARDCODING)`);
     console.log(`✅ GUARANTEED CYCLE: SOL → ${opportunity.pair.split('/')[1]} → SOL`);
 
@@ -274,10 +274,10 @@ export class FastMEVEngine {
       const requiredBalance = opportunity.capitalRequired + opportunity.gasFeeSol + 0.01; // 0.01 SOL buffer
       
       if (currentBalance < requiredBalance) {
-        throw new Error(`Insufficient balance: ${currentBalance.toFixed(4)} SOL < ${requiredBalance.toFixed(4)} SOL required`);
+        throw new Error(`Insufficient balance: ${(currentBalance != null && !isNaN(currentBalance) && typeof currentBalance === 'number' ? currentBalance.toFixed(4) : '0.0000')} SOL < ${(requiredBalance != null && !isNaN(requiredBalance) && typeof requiredBalance === 'number' ? requiredBalance.toFixed(4) : '0.0000')} SOL required`);
       }
       
-      console.log(`✅ Balance check passed: ${currentBalance.toFixed(4)} SOL >= ${requiredBalance.toFixed(4)} SOL required`);
+      console.log(`✅ Balance check passed: ${(currentBalance != null && !isNaN(currentBalance) && typeof currentBalance === 'number' ? currentBalance.toFixed(4) : '0.0000')} SOL >= ${(requiredBalance != null && !isNaN(requiredBalance) && typeof requiredBalance === 'number' ? requiredBalance.toFixed(4) : '0.0000')} SOL required`);
 
       // CRITICAL FIX 2: Sequential execution (NO PARALLEL)
       console.log(`⚡ EXECUTING SEQUENTIAL TRADES with ${priorityFeeSol} SOL priority fee...`);
@@ -317,7 +317,7 @@ export class FastMEVEngine {
       const estimatedProfitUsd = netProfitValue * (0.85 + Math.random() * 0.25);
       
       console.log(`⚡ SAFE SOL ARBITRAGE SUCCESS: ${executionTime}ms`);
-      console.log(`💵 Estimated SOL profit: $${estimatedProfitUsd.toFixed(6)}`);
+      console.log(`💵 Estimated SOL profit: $${(estimatedProfitUsd != null && !isNaN(estimatedProfitUsd) && typeof estimatedProfitUsd === 'number' ? estimatedProfitUsd.toFixed(6) : '0.000000')}`);
       console.log(`🔗 SOL→Token: https://solscan.io/tx/${forwardTx}`);
       console.log(`🔗 Token→SOL: https://solscan.io/tx/${reverseTx}`);
       console.log(`✅ CYCLE SAFELY COMPLETE: Started SOL, Ended SOL`);

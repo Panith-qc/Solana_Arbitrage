@@ -211,7 +211,7 @@ class AdvancedMEVScanner {
           const opportunity = await this.checkMicroMevOpportunity(pair, amount);
           if (opportunity) {
             opportunities.push(opportunity);
-            console.log(`💰 FOUND OPPORTUNITY: ${opportunity.pair} - $${opportunity.profitUsd.toFixed(6)} profit`);
+            console.log(`💰 FOUND OPPORTUNITY: ${opportunity.pair} - $${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')} profit`);
           }
         } catch (error) {
           console.log(`⚠️ Failed to check ${pair.name} with amount ${amount}:`, error);
@@ -237,7 +237,7 @@ class AdvancedMEVScanner {
     // ALWAYS CALL CALLBACK - CRITICAL FIX
     console.log(`📊 SENDING ${limitedOpportunities.length} OPPORTUNITIES TO UI`);
     if (this.onOpportunityCallback) {
-      console.log('🎯 CALLING UI CALLBACK WITH OPPORTUNITIES:', limitedOpportunities.map(o => `${o.pair}: $${o.profitUsd.toFixed(6)}`));
+      console.log('🎯 CALLING UI CALLBACK WITH OPPORTUNITIES:', limitedOpportunities.map(o => `${o.pair}: $${(o.profitUsd != null && !isNaN(o.profitUsd) && typeof o.profitUsd === 'number' ? o.profitUsd.toFixed(6) : '0.000000')}`));
       this.onOpportunityCallback([...limitedOpportunities]); // Send a copy of the array
     } else {
       console.log('❌ NO CALLBACK REGISTERED - UI WILL NOT UPDATE');
@@ -275,7 +275,7 @@ class AdvancedMEVScanner {
       const inputValueUsd = priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);
       const profitUsd = inputValueUsd * (priceImpact / 100) * config.scanner.profitCaptureRate;
       
-      console.log(`💰 Calculated profit: $${profitUsd.toFixed(6)} from $${inputValueUsd.toFixed(2)} trade (${priceImpact}% impact)`);
+      console.log(`💰 Calculated profit: $${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')} from $${(inputValueUsd != null && !isNaN(inputValueUsd) && typeof inputValueUsd === 'number' ? inputValueUsd.toFixed(2) : '0.00')} trade (${priceImpact}% impact)`);
       
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
@@ -380,7 +380,7 @@ class AdvancedMEVScanner {
   recordSuccessfulTrade(profit: number): void {
     this.metrics.successfulTrades++;
     this.metrics.totalProfit += profit;
-    console.log(`📈 Trade recorded: $${profit.toFixed(6)} profit | Total: $${this.metrics.totalProfit.toFixed(6)}`);
+    console.log(`📈 Trade recorded: $${(profit != null && !isNaN(profit) && typeof profit === 'number' ? profit.toFixed(6) : '0.000000')} profit | Total: $${(this.metrics.totalProfit != null && !isNaN(this.metrics.totalProfit) && typeof this.metrics.totalProfit === 'number' ? this.metrics.totalProfit.toFixed(6) : '0.000000')}`);
   }
 
   getMetrics(): ScannerMetrics {
