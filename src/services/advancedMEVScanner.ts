@@ -272,11 +272,12 @@ class AdvancedMEVScanner {
       const priceImpact = parseFloat(quote.priceImpactPct || '0');
       
       // Calculate potential profit from price impact using dynamic pricing
-      const inputValueUsd = priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);
-      const profitUsd = inputValueUsd * (priceImpact / 100) * config.scanner.profitCaptureRate;
-      
-      console.log(`💰 Calculated profit: $${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')} from $${(inputValueUsd != null && !isNaN(inputValueUsd) && typeof inputValueUsd === 'number' ? inputValueUsd.toFixed(2) : '0.00')} trade (${priceImpact}% impact)`);
-      
+      const inputValueUsd = priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);      const outputSol = outputAmount / 1e9;
+      const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+      const outputValueUsd = outputSol * solPrice;
+      const profitUsd = outputValueUsd - inputValueUsd;
+      console.log(`💰 INPUT: $${inputValueUsd.toFixed(2)} | OUTPUT: $${outputValueUsd.toFixed(2)} | PROFIT: $${profitUsd.toFixed(2)}`);
+      console.log(`💰 INPUT: $${inputValueUsd.toFixed(2)} | OUTPUT: $${outputValueUsd.toFixed(2)} | PROFIT: $${profitUsd.toFixed(2)}`);
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
         return null;
@@ -289,7 +290,6 @@ class AdvancedMEVScanner {
       const riskLevel = priceImpact > 0.01 ? 'HIGH' : priceImpact > 0.005 ? 'MEDIUM' : 'LOW';
 
       // Calculate capital required in SOL
-      const solPrice = priceService.getPriceUsd(config.tokens.SOL);
       const capitalRequired = inputValueUsd / solPrice;
 
       const opportunity: MEVOpportunity = {
