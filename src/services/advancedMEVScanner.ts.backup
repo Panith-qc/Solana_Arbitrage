@@ -273,12 +273,7 @@ class AdvancedMEVScanner {
       
       // Calculate potential profit from price impact using dynamic pricing
       const inputValueUsd = priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);
-      
-      // Calculate output value in USD
-      const outputValueUsd = priceService.calculateUsdValue(outputAmount, pair.outputMint, pair.decimals);
-      
-      // Calculate actual profit (output - input)
-      const profitUsd = outputValueUsd - inputValueUsd;
+      const profitUsd = inputValueUsd * (priceImpact / 100) * config.scanner.profitCaptureRate;
       
       console.log(`💰 Calculated profit: $${(profitUsd != null && !isNaN(profitUsd) && typeof profitUsd === 'number' ? profitUsd.toFixed(6) : '0.000000')} from $${(inputValueUsd != null && !isNaN(inputValueUsd) && typeof inputValueUsd === 'number' ? inputValueUsd.toFixed(2) : '0.00')} trade (${priceImpact}% impact)`);
       
