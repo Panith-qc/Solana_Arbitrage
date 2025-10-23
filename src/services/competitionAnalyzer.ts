@@ -71,7 +71,7 @@ export class CompetitionAnalyzer {
         })
       }
 
-      console.log(`✅ Analyzed ${competitors.length} REAL competitors based on market volatility: ${marketVolatility.toFixed(2)}%`)
+      console.log(`✅ Analyzed ${competitors.length} REAL competitors based on market volatility: ${(marketVolatility != null && !isNaN(marketVolatility) && typeof marketVolatility === 'number' ? marketVolatility.toFixed(2) : '0.00')}%`)
       
       return competitors
 
@@ -116,7 +116,7 @@ export class CompetitionAnalyzer {
         recommendation = 'Below average - review risk management and strategy'
       }
 
-      console.log(`✅ REAL market position: Rank ${rank}/${competitors.length + 1}, ${percentile.toFixed(1)}th percentile`)
+      console.log(`✅ REAL market position: Rank ${rank}/${competitors.length + 1}, ${(percentile != null && !isNaN(percentile) && typeof percentile === 'number' ? percentile.toFixed(1) : '0.0')}th percentile`)
 
       return { rank, percentile, recommendation }
 

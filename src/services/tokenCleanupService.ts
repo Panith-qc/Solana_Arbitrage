@@ -73,7 +73,7 @@ export class TokenCleanupService {
           valueUsd
         });
 
-        console.log(`💰 Found ${symbol}: ${uiAmount} tokens (~$${valueUsd.toFixed(4)})`);
+        console.log(`💰 Found ${symbol}: ${uiAmount} tokens (~$${(valueUsd != null && !isNaN(valueUsd) && typeof valueUsd === 'number' ? valueUsd.toFixed(4) : '0.0000')})`);
       }
 
       console.log(`📊 Total stuck tokens found: ${tokens.length}`);
@@ -128,7 +128,7 @@ export class TokenCleanupService {
       
       console.log(`🧹 CLEANUP COMPLETE:`);
       console.log(`✅ Tokens cleaned: ${result.tokensCleaned}`);
-      console.log(`💰 Value recovered: ~$${result.totalValueRecovered.toFixed(4)}`);
+      console.log(`💰 Value recovered: ~$${(result.totalValueRecovered != null && !isNaN(result.totalValueRecovered) && typeof result.totalValueRecovered === 'number' ? result.totalValueRecovered.toFixed(4) : '0.0000')}`);
       console.log(`❌ Errors: ${result.errors.length}`);
 
       return result;
@@ -159,7 +159,7 @@ export class TokenCleanupService {
         throw new Error('No quote available for conversion');
       }
 
-      console.log(`📊 ${token.symbol} Quote: ${token.uiAmount} → ${(parseInt(quote.outAmount) / 1e9).toFixed(6)} SOL`);
+      console.log(`📊 ${token.symbol} Quote: ${token.uiAmount} → ${((parseInt(quote.outAmount) / 1e9) != null && !isNaN(parseInt(quote.outAmount) / 1e9) && typeof (parseInt(quote.outAmount) / 1e9) === 'number' ? (parseInt(quote.outAmount) / 1e9).toFixed(6) : '0.000000')} SOL`);
 
       // Get swap transaction with high priority
       const swapTransaction = await supabaseJupiterService.getSwapTransaction(
