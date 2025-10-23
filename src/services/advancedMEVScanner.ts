@@ -277,7 +277,6 @@ class AdvancedMEVScanner {
       const solPrice = priceService.getPriceUsd(config.tokens.SOL);
       const outputValueUsd = outputSol * solPrice;
       const profitUsd = outputValueUsd - inputValueUsd;
-      console.log(`💰 INPUT: $${(inputValueUsd || 0).toFixed(2)} | OUTPUT: $${(outputValueUsd || 0).toFixed(2)} | PROFIT: $${(profitUsd || 0).toFixed(2)}`);
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
         return null;
