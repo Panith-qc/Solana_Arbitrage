@@ -113,7 +113,7 @@ class AdvancedSandwichEngine {
           const route = await this.calculateArbitrageRoute(token, pair);
           if (route && route.totalProfit > 0.001) { // Min $0.001 profit
             routes.push(route);
-            console.log(`💰 ARBITRAGE FOUND: ${pair.dex1}→${pair.dex2} | Profit: $${route.totalProfit.toFixed(6)}`);
+            console.log(`💰 ARBITRAGE FOUND: ${pair.dex1}→${pair.dex2} | Profit: $${(route.totalProfit != null && !isNaN(route.totalProfit) && typeof route.totalProfit === 'number' ? route.totalProfit.toFixed(6) : '0.000000')}`);
           }
         } catch (error) {
           console.warn(`⚠️ Arbitrage calculation failed for ${token}:`, error);
@@ -147,7 +147,7 @@ class AdvancedSandwichEngine {
       const result = await this.executeAtomicArbitrage(route, flashLoanAmount);
       
       if (result.success) {
-        console.log(`✅ FLASH LOAN ARBITRAGE SUCCESS: $${result.profit.toFixed(6)} profit`);
+        console.log(`✅ FLASH LOAN ARBITRAGE SUCCESS: $${(result.profit != null && !isNaN(result.profit) && typeof result.profit === 'number' ? result.profit.toFixed(6) : '0.000000')} profit`);
         return true;
       }
 
@@ -170,7 +170,7 @@ class AdvancedSandwichEngine {
       Math.min(profitBasedFee * 0.1, competitionFactor) // Max 10% of profit as fee
     );
 
-    console.log(`💰 OPTIMAL PRIORITY FEE: ${optimalFee} lamports (${(optimalFee / 1000000).toFixed(6)} SOL)`);
+    console.log(`💰 OPTIMAL PRIORITY FEE: ${optimalFee} lamports (${((optimalFee / 1000000) != null && !isNaN(optimalFee / 1000000) && typeof (optimalFee / 1000000) === 'number' ? (optimalFee / 1000000).toFixed(6) : '0.000000')} SOL)`);
     return optimalFee;
   }
 
@@ -213,7 +213,7 @@ class AdvancedSandwichEngine {
         
         if (backrunOpp && backrunOpp.profitUsd > 0.0005) { // Min $0.0005 profit
           opportunities.push(backrunOpp);
-          console.log(`🎯 BACKRUN OPPORTUNITY: ${trade.pair} | Profit: $${backrunOpp.profitUsd.toFixed(6)}`);
+          console.log(`🎯 BACKRUN OPPORTUNITY: ${trade.pair} | Profit: $${(backrunOpp.profitUsd != null && !isNaN(backrunOpp.profitUsd) && typeof backrunOpp.profitUsd === 'number' ? backrunOpp.profitUsd.toFixed(6) : '0.000000')}`);
         }
       } catch (error) {
         console.warn(`⚠️ Backrun analysis failed:`, error);
@@ -244,7 +244,7 @@ class AdvancedSandwichEngine {
         const profit = await this.calculateCircularProfit(circular);
         
         if (profit > 0.001) { // Min $0.001 profit
-          console.log(`💰 CIRCULAR ARBITRAGE FOUND: ${circular.path.join('→')} | Profit: $${profit.toFixed(6)}`);
+          console.log(`💰 CIRCULAR ARBITRAGE FOUND: ${circular.path.join('→')} | Profit: $${(profit != null && !isNaN(profit) && typeof profit === 'number' ? profit.toFixed(6) : '0.000000')}`);
           
           const success = await this.executeCircularTrade(circular);
           if (success) {
@@ -272,7 +272,7 @@ class AdvancedSandwichEngine {
     this.competitionMetrics.successRate = this.competitionMetrics.profitableAttempts / this.competitionMetrics.totalAttempts;
     this.competitionMetrics.avgPriorityFee = (this.competitionMetrics.avgPriorityFee + priorityFee) / 2;
     
-    console.log(`📊 COMPETITION METRICS: Success Rate: ${(this.competitionMetrics.successRate * 100).toFixed(2)}% | Avg Fee: ${this.competitionMetrics.avgPriorityFee}`);
+    console.log(`📊 COMPETITION METRICS: Success Rate: ${((this.competitionMetrics.successRate * 100) != null && !isNaN(this.competitionMetrics.successRate * 100) && typeof (this.competitionMetrics.successRate * 100) === 'number' ? (this.competitionMetrics.successRate * 100).toFixed(2) : '0.00')}% | Avg Fee: ${this.competitionMetrics.avgPriorityFee}`);
   }
 
   // TECHNIQUE 8: RISK MITIGATION WITH SIMULATION
@@ -315,7 +315,7 @@ class AdvancedSandwichEngine {
       const simulatedProfit = this.calculateSimulatedProfit(frontRunSim, backRunSim, victimImpact);
       
       if (simulatedProfit < opportunity.profitUsd * 0.8) { // Must be at least 80% of expected profit
-        console.log(`❌ Simulated profit too low: $${simulatedProfit.toFixed(6)} vs expected $${opportunity.profitUsd.toFixed(6)}`);
+        console.log(`❌ Simulated profit too low: $${(simulatedProfit != null && !isNaN(simulatedProfit) && typeof simulatedProfit === 'number' ? simulatedProfit.toFixed(6) : '0.000000')} vs expected $${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')}`);
         return false;
       }
 

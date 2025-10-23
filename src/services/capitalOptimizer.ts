@@ -97,7 +97,7 @@ class CapitalOptimizer {
       return {
         canTrade: false,
         recommendedSize: 0,
-        reason: `Profit $${expectedProfit.toFixed(6)} below minimum $${strategy.recommendedMinProfit.toFixed(6)}`,
+        reason: `Profit $${(expectedProfit != null && !isNaN(expectedProfit) && typeof expectedProfit === 'number' ? expectedProfit.toFixed(6) : '0.000000')} below minimum $${(strategy.recommendedMinProfit != null && !isNaN(strategy.recommendedMinProfit) && typeof strategy.recommendedMinProfit === 'number' ? strategy.recommendedMinProfit.toFixed(6) : '0.000000')}`,
         confidence: 0
       };
     }
@@ -106,7 +106,7 @@ class CapitalOptimizer {
       return {
         canTrade: false,
         recommendedSize: 0,
-        reason: `Insufficient capital: need ${recommendedSize.toFixed(3)} SOL, have ${availableCapital.toFixed(3)} SOL`,
+        reason: `Insufficient capital: need ${(recommendedSize != null && !isNaN(recommendedSize) && typeof recommendedSize === 'number' ? recommendedSize.toFixed(3) : '0.000')} SOL, have ${(availableCapital != null && !isNaN(availableCapital) && typeof availableCapital === 'number' ? availableCapital.toFixed(3) : '0.000')} SOL`,
         confidence: 0
       };
     }
