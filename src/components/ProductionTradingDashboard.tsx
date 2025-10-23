@@ -263,7 +263,7 @@ const ProductionTradingDashboard: React.FC = () => {
         sol: newBalance,
         totalUsd: newBalance * solPrice
       }));
-      console.log(`✅ Balance refreshed: ${newBalance.toFixed(4)} SOL`);
+      console.log(`✅ Balance refreshed: ${(newBalance != null && !isNaN(newBalance) && typeof newBalance === 'number' ? newBalance.toFixed(4) : '0.0000')} SOL`);
     }
   };
 
@@ -292,7 +292,7 @@ const ProductionTradingDashboard: React.FC = () => {
               .sort((a, b) => b.profitUsd - a.profitUsd)[0];
             
             if (bestOpportunity && !executingTradeId) {
-              console.log(`🤖 AUTO-EXECUTING BEST STRATEGY: ${bestOpportunity.strategyName} - $${bestOpportunity.profitUsd.toFixed(6)}`);
+              console.log(`🤖 AUTO-EXECUTING BEST STRATEGY: ${bestOpportunity.strategyName} - $${(bestOpportunity.profitUsd != null && !isNaN(bestOpportunity.profitUsd) && typeof bestOpportunity.profitUsd === 'number' ? bestOpportunity.profitUsd.toFixed(6) : '0.000000')}`);
               executeStrategyTrade(bestOpportunity);
             }
           }
@@ -339,7 +339,7 @@ const ProductionTradingDashboard: React.FC = () => {
     setExecutingTradeId(opportunity.id);
     
     try {
-      console.log(`🚀 EXECUTING ${opportunity.strategyName}: ${opportunity.pair} - $${opportunity.profitUsd.toFixed(6)}`);
+      console.log(`🚀 EXECUTING ${opportunity.strategyName}: ${opportunity.pair} - $${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')}`);
       
       // Simulate strategy execution
       const executionTime = 1000 + Math.random() * 3000;
@@ -358,7 +358,7 @@ const ProductionTradingDashboard: React.FC = () => {
           totalUsd: prev.totalUsd + actualProfit
         }));
         
-        console.log(`✅ STRATEGY SUCCESS: ${opportunity.strategyName} - $${actualProfit.toFixed(6)}`);
+        console.log(`✅ STRATEGY SUCCESS: ${opportunity.strategyName} - $${(actualProfit != null && !isNaN(actualProfit) && typeof actualProfit === 'number' ? actualProfit.toFixed(6) : '0.000000')}`);
         
         // Remove executed opportunity
         setOpportunities(prev => prev.filter(opp => opp.id !== opportunity.id));
@@ -401,7 +401,7 @@ const ProductionTradingDashboard: React.FC = () => {
         <div className="text-center">
           <Activity className="w-12 h-12 text-blue-400 mx-auto mb-4 animate-spin" />
           <h2 className="text-2xl font-bold text-white mb-2">Initializing Advanced MEV Strategy Engine</h2>
-          <p className="text-gray-300">Loading all strategies optimized for {balanceInfo.sol.toFixed(2)} SOL...</p>
+          <p className="text-gray-300">Loading all strategies optimized for {(balanceInfo.sol != null && !isNaN(balanceInfo.sol) && typeof balanceInfo.sol === 'number' ? balanceInfo.sol.toFixed(2) : '0.00')} SOL...</p>
         </div>
       </div>
     );
@@ -490,7 +490,7 @@ const ProductionTradingDashboard: React.FC = () => {
                         Test Wallet Connected: {walletState.publicKey?.slice(0, 8)}...{walletState.publicKey?.slice(-4)}
                       </div>
                       <div className="text-sm text-gray-300">
-                        Balance: {balanceInfo.sol.toFixed(4)} SOL | ${balanceInfo.totalUsd.toFixed(2)} USD Total
+                        Balance: {(balanceInfo.sol != null && !isNaN(balanceInfo.sol) && typeof balanceInfo.sol === 'number' ? balanceInfo.sol.toFixed(4) : '0.0000')} SOL | ${(balanceInfo.totalUsd != null && !isNaN(balanceInfo.totalUsd) && typeof balanceInfo.totalUsd === 'number' ? balanceInfo.totalUsd.toFixed(2) : '0.00')} USD Total
                         <span className="ml-2 text-green-400 font-bold">• ALL STRATEGIES ENABLED</span>
                       </div>
                     </div>
@@ -573,16 +573,16 @@ const ProductionTradingDashboard: React.FC = () => {
                   />
                 </div>
                 <div className="text-sm text-gray-300">
-                  Min Profit: ${config.trading.minProfitUsd.toFixed(6)} | 
+                  Min Profit: ${(config.trading.minProfitUsd != null && !isNaN(config.trading.minProfitUsd) && typeof config.trading.minProfitUsd === 'number' ? config.trading.minProfitUsd.toFixed(6) : '0.000000')} | 
                   Max Position: {config.trading.maxPositionSol} SOL |
-                  Success Rate: {successRate.toFixed(1)}%
+                  Success Rate: {(successRate != null && !isNaN(successRate) && typeof successRate === 'number' ? successRate.toFixed(1) : '0.0')}%
                 </div>
               </div>
               <div className="flex items-center space-x-4">
                 <div className="text-right">
                   <div className="text-sm text-gray-300">Total Strategy Profit</div>
                   <div className="text-lg font-bold text-green-400">
-                    ${totalProfit.toFixed(6)}
+                    ${(totalProfit != null && !isNaN(totalProfit) && typeof totalProfit === 'number' ? totalProfit.toFixed(6) : '0.000000')}
                   </div>
                 </div>
                 {isScanning && (
@@ -615,11 +615,11 @@ const ProductionTradingDashboard: React.FC = () => {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-300">Success Rate</span>
-                    <span className="text-green-400 font-bold">{successRate.toFixed(1)}%</span>
+                    <span className="text-green-400 font-bold">{(successRate != null && !isNaN(successRate) && typeof successRate === 'number' ? successRate.toFixed(1) : '0.0')}%</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-300">Total Profit</span>
-                    <span className="text-green-400 font-bold">${totalProfit.toFixed(6)}</span>
+                    <span className="text-green-400 font-bold">${(totalProfit != null && !isNaN(totalProfit) && typeof totalProfit === 'number' ? totalProfit.toFixed(6) : '0.000000')}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-300">Queue Size</span>
@@ -684,16 +684,16 @@ const ProductionTradingDashboard: React.FC = () => {
                             </div>
                             <div className="flex items-center space-x-4 mt-1 text-sm">
                               <span className="text-green-400">
-                                Profit: ${opportunity.profitUsd.toFixed(6)}
+                                Profit: ${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')}
                               </span>
                               <span className="text-blue-400">
-                                {opportunity.profitPercent.toFixed(2)}%
+                                {(opportunity.profitPercent != null && !isNaN(opportunity.profitPercent) && typeof opportunity.profitPercent === 'number' ? opportunity.profitPercent.toFixed(2) : '0.00')}%
                               </span>
                               <span className="text-gray-400">
-                                Confidence: {(opportunity.confidence * 100).toFixed(0)}%
+                                Confidence: {((opportunity.confidence * 100) != null && !isNaN(opportunity.confidence * 100) && typeof (opportunity.confidence * 100) === 'number' ? (opportunity.confidence * 100).toFixed(0) : '0')}%
                               </span>
                               <span className="text-purple-400">
-                                Capital: {opportunity.recommendedCapital?.toFixed(3)} SOL
+                                Capital: {(opportunity.recommendedCapital != null && !isNaN(opportunity.recommendedCapital) && typeof opportunity.recommendedCapital === 'number' ? opportunity.recommendedCapital.toFixed(3) : '0.000')} SOL
                               </span>
                             </div>
                             <div className="text-xs text-gray-500 mt-1">
@@ -759,7 +759,7 @@ const ProductionTradingDashboard: React.FC = () => {
                           <div className="flex items-center space-x-4 mt-1 text-sm">
                             {trade.profitUsd && (
                               <span className="text-green-400">
-                                Profit: ${trade.profitUsd.toFixed(6)}
+                                Profit: ${(trade.profitUsd != null && !isNaN(trade.profitUsd) && typeof trade.profitUsd === 'number' ? trade.profitUsd.toFixed(6) : '0.000000')}
                               </span>
                             )}
                             <span className="text-gray-400">
@@ -800,8 +800,8 @@ const ProductionTradingDashboard: React.FC = () => {
           <p>🎯 Advanced MEV Strategy Engine | All Strategies Active</p>
           <div className="flex items-center justify-center space-x-6">
             <span>Strategies: {activeStrategies}</span>
-            <span>Success Rate: {successRate.toFixed(1)}%</span>
-            <span>Total Profit: ${totalProfit.toFixed(6)}</span>
+            <span>Success Rate: {(successRate != null && !isNaN(successRate) && typeof successRate === 'number' ? successRate.toFixed(1) : '0.0')}%</span>
+            <span>Total Profit: ${(totalProfit != null && !isNaN(totalProfit) && typeof totalProfit === 'number' ? totalProfit.toFixed(6) : '0.000000')}</span>
             <span>Auto-Execute: {config.trading.autoTradingEnabled ? '🟢 ACTIVE' : '🔴 INACTIVE'}</span>
             <span>Wallet: {walletState.isConnected ? '🟢 CONNECTED' : '🔴 DISCONNECTED'}</span>
           </div>

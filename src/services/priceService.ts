@@ -35,7 +35,7 @@ class PriceService {
     // Check cache first
     const cached = this.priceCache.get(mint);
     if (cached && Date.now() - cached.lastUpdated < this.cacheTimeout) {
-      console.log(`💰 Using cached REAL price: $${cached.price.toFixed(2)}`);
+      console.log(`💰 Using cached REAL price: $${(cached.price != null && !isNaN(cached.price) && typeof cached.price === 'number' ? cached.price.toFixed(2) : '0.00')}`);
       return cached.price;
     }
 
@@ -102,7 +102,7 @@ class PriceService {
         lastUpdated: Date.now()
       });
 
-      console.log(`💰 REAL price fetched via Helius MEV Service: $${price.toFixed(2)} (source: Jupiter Ultra API)`);
+      console.log(`💰 REAL price fetched via Helius MEV Service: $${(price != null && !isNaN(price) && typeof price === 'number' ? price.toFixed(2) : '0.00')} (source: Jupiter Ultra API)`);
       return price;
     } catch (error) {
       console.error(`❌ Failed to get REAL price via Helius MEV Service for ${mint}:`, error);
@@ -204,7 +204,7 @@ class PriceService {
         return 0;
       }
       
-      console.log(`💰 REAL USD value: ${tokenAmount.toFixed(6)} tokens × $${price.toFixed(2)} = $${usdValue.toFixed(2)}`);
+      console.log(`💰 REAL USD value: ${(tokenAmount != null && !isNaN(tokenAmount) && typeof tokenAmount === 'number' ? tokenAmount.toFixed(6) : '0.000000')} tokens × $${(price != null && !isNaN(price) && typeof price === 'number' ? price.toFixed(2) : '0.00')} = $${(usdValue != null && !isNaN(usdValue) && typeof usdValue === 'number' ? usdValue.toFixed(2) : '0.00')}`);
       return usdValue;
     } catch (error) {
       console.error(`❌ Cannot calculate USD value for ${mint}:`, error);

@@ -70,7 +70,7 @@ class RealProfitEngine {
     const outputValueUsd = outputAmount * outputPrice;
     const grossProfit = outputValueUsd - inputValueUsd;
 
-    console.log(`📊 PROFIT CALC - ${opportunityType}: Input $${inputValueUsd.toFixed(3)} -> Output $${outputValueUsd.toFixed(3)}`);
+    console.log(`📊 PROFIT CALC - ${opportunityType}: Input $${(inputValueUsd != null && !isNaN(inputValueUsd) && typeof inputValueUsd === 'number' ? inputValueUsd.toFixed(3) : '0.000')} -> Output $${(outputValueUsd != null && !isNaN(outputValueUsd) && typeof outputValueUsd === 'number' ? outputValueUsd.toFixed(3) : '0.000')}`);
 
     // Calculate all trading fees
     const tradingFees = this.calculateComprehensiveFees(inputValueUsd, outputValueUsd, parseFloat(priceImpactPct));
@@ -89,7 +89,7 @@ class RealProfitEngine {
     // Calculate recommended position size
     const recommendedPosition = this.calculateOptimalPosition(inputValueUsd, riskScore, currentBalance);
 
-    console.log(`💰 NET PROFIT: $${netProfit.toFixed(4)} (${profitMargin.toFixed(2)}%) | Risk: ${riskScore} | Profitable: ${isReallyProfitable}`);
+    console.log(`💰 NET PROFIT: $${(netProfit != null && !isNaN(netProfit) && typeof netProfit === 'number' ? netProfit.toFixed(4) : '0.0000')} (${(profitMargin != null && !isNaN(profitMargin) && typeof profitMargin === 'number' ? profitMargin.toFixed(2) : '0.00')}%) | Risk: ${riskScore} | Profitable: ${isReallyProfitable}`);
 
     return {
       grossProfit,
@@ -126,12 +126,12 @@ class RealProfitEngine {
     const totalFees = gasFee + jupiterFee + dexFees + priorityFee + slippageFee;
 
     console.log(`💸 FEE BREAKDOWN:`);
-    console.log(`   Gas fee: $${gasFee.toFixed(4)}`);
-    console.log(`   Priority fee: $${priorityFee.toFixed(4)}`);
-    console.log(`   Jupiter fee: $${jupiterFee.toFixed(4)}`);
-    console.log(`   DEX fees: $${dexFees.toFixed(4)}`);
-    console.log(`   Slippage: $${slippageFee.toFixed(4)}`);
-    console.log(`   TOTAL FEES: $${totalFees.toFixed(4)}`);
+    console.log(`   Gas fee: $${(gasFee != null && !isNaN(gasFee) && typeof gasFee === 'number' ? gasFee.toFixed(4) : '0.0000')}`);
+    console.log(`   Priority fee: $${(priorityFee != null && !isNaN(priorityFee) && typeof priorityFee === 'number' ? priorityFee.toFixed(4) : '0.0000')}`);
+    console.log(`   Jupiter fee: $${(jupiterFee != null && !isNaN(jupiterFee) && typeof jupiterFee === 'number' ? jupiterFee.toFixed(4) : '0.0000')}`);
+    console.log(`   DEX fees: $${(dexFees != null && !isNaN(dexFees) && typeof dexFees === 'number' ? dexFees.toFixed(4) : '0.0000')}`);
+    console.log(`   Slippage: $${(slippageFee != null && !isNaN(slippageFee) && typeof slippageFee === 'number' ? slippageFee.toFixed(4) : '0.0000')}`);
+    console.log(`   TOTAL FEES: $${(totalFees != null && !isNaN(totalFees) && typeof totalFees === 'number' ? totalFees.toFixed(4) : '0.0000')}`);
 
     return {
       gasFee,
@@ -212,7 +212,7 @@ class RealProfitEngine {
     if (profitCalculation.netProfit < minThreshold) {
       return {
         worthTrading: false,
-        reason: `Net profit $${profitCalculation.netProfit.toFixed(4)} below minimum $${minThreshold}`
+        reason: `Net profit $${(profitCalculation.netProfit != null && !isNaN(profitCalculation.netProfit) && typeof profitCalculation.netProfit === 'number' ? profitCalculation.netProfit.toFixed(4) : '0.0000')} below minimum $${minThreshold}`
       };
     }
 
@@ -228,13 +228,13 @@ class RealProfitEngine {
     if (profitCalculation.profitMargin < 0.1) {
       return {
         worthTrading: false,
-        reason: `Profit margin ${profitCalculation.profitMargin.toFixed(3)}% too low (min 0.1%)`
+        reason: `Profit margin ${(profitCalculation.profitMargin != null && !isNaN(profitCalculation.profitMargin) && typeof profitCalculation.profitMargin === 'number' ? profitCalculation.profitMargin.toFixed(3) : '0.000')}% too low (min 0.1%)`
       };
     }
 
     return {
       worthTrading: true,
-      reason: `Profitable: $${profitCalculation.netProfit.toFixed(4)} net profit, ${profitCalculation.riskScore} risk score`
+      reason: `Profitable: $${(profitCalculation.netProfit != null && !isNaN(profitCalculation.netProfit) && typeof profitCalculation.netProfit === 'number' ? profitCalculation.netProfit.toFixed(4) : '0.0000')} net profit, ${profitCalculation.riskScore} risk score`
     };
   }
 

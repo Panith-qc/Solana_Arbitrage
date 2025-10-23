@@ -56,7 +56,7 @@ class RealWalletManager {
       };
       
       console.log(`✅ WALLET IMPORTED: ${publicKey.slice(0,8)}...${publicKey.slice(-4)}`);
-      console.log(`💰 BALANCE: ${balance.toFixed(4)} SOL`);
+      console.log(`💰 BALANCE: ${(balance != null && !isNaN(balance) && typeof balance === 'number' ? balance.toFixed(4) : '0.0000')} SOL`);
       
       return true;
     } catch (error) {
