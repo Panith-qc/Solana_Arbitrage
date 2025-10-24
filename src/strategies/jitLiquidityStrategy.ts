@@ -24,7 +24,7 @@ export interface JITOpportunity {
 
 class JITLiquidityStrategy {
   private isActive = false;
-  private readonly MIN_SWAP_VALUE_USD = 50000; // Only target swaps > $50k
+  private readonly MIN_SWAP_VALUE_USD = 500; // Target swaps > $500
   private readonly FEE_RATE = 0.003; // 0.3% LP fee
   private readonly LIQUIDITY_RATIO = 0.1; // Add 10% of swap amount as liquidity
 
@@ -57,7 +57,7 @@ class JITLiquidityStrategy {
       } catch (error) {
         console.error('❌ JIT Liquidity scan error:', error);
       }
-    }, 10000); // Check every 10 seconds
+    }, 3000); // Check every 3 seconds
   }
 
   private async detectJITOpportunity(): Promise<JITOpportunity | null> {

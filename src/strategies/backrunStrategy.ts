@@ -29,7 +29,7 @@ class BackrunStrategy {
   private connection: Connection | null = null;
   private isMonitoring = false;
   private readonly JUPITER_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
-  private readonly MIN_SWAP_VALUE_USD = 10000; // Only backrun swaps > $10k
+  private readonly MIN_SWAP_VALUE_USD = 100; // Backrun swaps > $100
   private readonly MIN_PRICE_IMPACT = 0.005; // 0.5% minimum price impact
 
   async startMonitoring(onOpportunity: (opp: BackrunOpportunity) => void): Promise<void> {
@@ -70,7 +70,7 @@ class BackrunStrategy {
       } catch (error) {
         console.error('❌ Backrun scan error:', error);
       }
-    }, 8000); // Check every 8 seconds
+    }, 3000); // Check every 3 seconds
   }
 
   private async detectBackrunOpportunity(): Promise<BackrunOpportunity | null> {
