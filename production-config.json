@@ -1,0 +1,38 @@
+{
+  "name": "solana-mev-trading-bot",
+  "version": "2.0.0",
+  "phase": "Phase 2 Complete",
+  "strategies": {
+    "phase0": ["Token Cleanup", "Basic Arbitrage"],
+    "phase1": ["Jito Bundles", "Priority Fee Optimization", "Mempool Monitor"],
+    "phase2": ["Backrun", "Cyclic Arbitrage", "JIT Liquidity", "Long-Tail Arbitrage"]
+  },
+  "production": {
+    "minCapitalSol": 1.0,
+    "recommendedCapitalSol": 10.0,
+    "maxCapitalSol": 100.0,
+    "safetySettings": {
+      "startWithManualTrading": true,
+      "enableAutoTradingAfter": "10_successful_trades",
+      "maxDailyLoss": "2_SOL",
+      "circuitBreakerEnabled": true
+    },
+    "performance": {
+      "expectedDailyTrades": "20-100",
+      "expectedSuccessRate": "75-85%",
+      "expectedDailyProfit": "$20-100_with_10_SOL"
+    }
+  },
+  "deployment": {
+    "platform": "GCP Cloud Run",
+    "region": "us-central1",
+    "autoscaling": {
+      "minInstances": 1,
+      "maxInstances": 3
+    },
+    "resources": {
+      "cpu": "2",
+      "memory": "2Gi"
+    }
+  }
+}
