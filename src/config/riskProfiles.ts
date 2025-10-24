@@ -92,8 +92,8 @@ export const BALANCED_PROFILE: RiskProfile = {
   level: 'BALANCED',
   
   // Moderate profit thresholds
-  minProfitUsd: 0.05,
-  minProfitPercent: 0.5, // 0.5% minimum profit
+  minProfitUsd: 0.01,
+  minProfitPercent: 0.1, // 0.1% minimum profit
   
   // Moderate positions
   maxPositionPercent: 25, // 25% of balance per trade

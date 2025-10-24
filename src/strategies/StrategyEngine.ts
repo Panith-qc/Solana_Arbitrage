@@ -432,27 +432,17 @@ export class StrategyEngine {
     jitLiquidityStrategy.startScanning((jitOpp) => {
       if (!this.isRunning) return;
       
-      // Convert JIT opportunity to StrategyOpportunity
-      const strategyOpp: StrategyOpportunity = {
-        id: jitOpp.id,
-        type: 'ARBITRAGE',
-        pair: `${jitOpp.pool.token0.slice(0, 8)}/${jitOpp.pool.token1.slice(0, 8)}`,
-        inputMint: jitOpp.pool.token0,
-        outputMint: jitOpp.pool.token1,
-        inputAmount: jitOpp.liquidityAmount,
-        expectedOutput: 0, // Will be calculated
-        profitUsd: jitOpp.expectedFeeCapture,
-        profitPercent: (jitOpp.expectedFeeCapture / jitOpp.targetSwap.usdValue) * 100,
-        confidence: 90,
-        riskLevel: 'MEDIUM',
-        timestamp: jitOpp.timestamp,
-        strategyName: 'LIQUIDATION',
-        recommendedCapital: Math.min(capital * 0.4, 5.0),
-        executionPlan: ['Detect large swap', 'Add liquidity', 'Capture fees', 'Remove liquidity']
-      };
+      // JIT Liquidity requires specialized execution (add/remove liquidity)
+      // NOT regular arbitrage cycles - so we log but don't execute via arbitrage
+      console.log(`💧 JIT LIQUIDITY DETECTED: $${jitOpp.expectedFeeCapture.toFixed(4)}`);
+      console.log(`   Note: JIT execution requires liquidity pool integration (not yet implemented)`);
       
-      console.log(`💧 REAL JIT LIQUIDITY OPPORTUNITY: $${jitOpp.expectedFeeCapture.toFixed(4)}`);
-      this.addToExecutionQueue([strategyOpp]);
+      // TODO: Implement proper JIT liquidity execution:
+      // 1. Detect large pending swap
+      // 2. Add liquidity to pool atomically before swap
+      // 3. Capture LP fees from the swap
+      // 4. Remove liquidity immediately after
+      // For now: Skip execution to avoid false opportunities
     });
   }
 
