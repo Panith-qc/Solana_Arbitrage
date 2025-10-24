@@ -34,9 +34,33 @@ export default function AutoTradingSetup() {
     setIsConfiguring(true);
 
     try {
-      // Extract wallet address from private key
-      // In production, use proper wallet derivation
-      const walletAddress = 'YOUR_WALLET_ADDRESS'; // TODO: Derive from private key
+      // Derive wallet address from private key
+      let walletAddress: string;
+      
+      try {
+        // Import Solana web3 for wallet derivation
+        const { Keypair } = await import('@solana/web3.js');
+        const bs58 = await import('bs58');
+        
+        // Decode private key (supports both base58 and JSON array formats)
+        let keypair: any;
+        const trimmedKey = privateKey.trim();
+        
+        if (trimmedKey.startsWith('[')) {
+          // JSON array format [1,2,3,...]
+          const secretKey = Uint8Array.from(JSON.parse(trimmedKey));
+          keypair = Keypair.fromSecretKey(secretKey);
+        } else {
+          // Base58 format
+          const secretKey = bs58.default.decode(trimmedKey);
+          keypair = Keypair.fromSecretKey(secretKey);
+        }
+        
+        walletAddress = keypair.publicKey.toString();
+        console.log('✅ Wallet derived:', walletAddress);
+      } catch (keyError) {
+        throw new Error('Invalid private key format. Use base58 string or [1,2,3...] array format.');
+      }
       
       // Auto-configure everything!
       const autoConfig = await autoConfigService.autoConfigureBot(
