@@ -1,0 +1,27 @@
+# PRODUCTION DOCKERFILE - SIMPLIFIED FOR CLOUD RUN
+# This Dockerfile expects dist/ to already be built
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install serve to host static files
+RUN npm install -g serve
+
+# Copy pre-built files
+COPY dist ./dist
+COPY package.json ./
+
+# Environment
+ENV NODE_ENV=production
+ENV PORT=5173
+
+# Expose port
+EXPOSE 5173
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:5173', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start server
+CMD ["serve", "-s", "dist", "-l", "5173", "--no-clipboard", "--no-port-switching"]
