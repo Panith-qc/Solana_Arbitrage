@@ -2,7 +2,7 @@
 // Simple one-click setup for automated trading
 // User just enters wallet, selects risk, and clicks START!
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { RiskLevel, getAllRiskProfiles } from '../config/riskProfiles';
 import { autoConfigService, AutoConfig } from '../services/autoConfigService';
-import { Loader2, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, Activity } from 'lucide-react';
+import { privateKeyWallet } from '../services/privateKeyWallet';
+import { fastMEVEngine, MEVOpportunity } from '../services/fastMEVEngine';
 
 export default function AutoTradingSetup() {
   const [privateKey, setPrivateKey] = useState('');
@@ -20,6 +22,10 @@ export default function AutoTradingSetup() {
   const [config, setConfig] = useState<AutoConfig | null>(null);
   const [isTrading, setIsTrading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [opportunities, setOpportunities] = useState<MEVOpportunity[]>([]);
+  const [scanInterval, setScanInterval] = useState<NodeJS.Timeout | null>(null);
+  const [totalProfit, setTotalProfit] = useState(0);
+  const [tradesExecuted, setTradesExecuted] = useState(0);
 
   const profiles = getAllRiskProfiles();
 
@@ -82,23 +88,112 @@ export default function AutoTradingSetup() {
   };
 
   // Start auto-trading
-  const handleStartTrading = () => {
+  const handleStartTrading = async () => {
     if (!config) return;
     
     setIsTrading(true);
-    
-    // TODO: Actually start the trading engine with config
     console.log('🚀 Starting automated trading with config:', config);
     
-    // In production, this would call:
-    // strategyEngine.startWithAutoConfig(config);
+    try {
+      // Import and setup wallet from private key
+      const { Keypair } = await import('@solana/web3.js');
+      const bs58 = await import('bs58');
+      
+      let secretKey: Uint8Array;
+      const trimmedKey = privateKey.trim();
+      
+      if (trimmedKey.startsWith('[')) {
+        secretKey = Uint8Array.from(JSON.parse(trimmedKey));
+      } else {
+        secretKey = bs58.default.decode(trimmedKey);
+      }
+      
+      const keypair = Keypair.fromSecretKey(secretKey);
+      
+      // Connect the wallet
+      await privateKeyWallet.connectWithPrivateKey(privateKey);
+      console.log('✅ Wallet connected for trading');
+      
+      // Start MEV scanner with configured parameters
+      const scanIntervalMs = config.profile.scanIntervalMs;
+      
+      const interval = setInterval(async () => {
+        try {
+          console.log('🔍 Scanning for MEV opportunities...');
+          
+          // Scan for opportunities using fastMEVEngine
+          const detectedOpportunities = await fastMEVEngine.detectOpportunities({
+            minProfitUsd: config.profile.minProfitUsd,
+            maxCapitalSol: config.calculatedSettings.maxPositionSol,
+            maxRiskLevel: config.profile.level === 'CONSERVATIVE' ? 'LOW' : 
+                         config.profile.level === 'BALANCED' ? 'MEDIUM' : 'MEDIUM',
+            minConfidence: 0.7,
+            gasEstimateSol: 0.003,
+            maxSlippagePercent: config.profile.slippageBps / 100,
+            priorityFeeLamports: config.profile.priorityFeeLamports,
+            tradeSizeSol: config.calculatedSettings.maxPositionSol,
+            scanIntervalMs: scanIntervalMs
+          });
+          
+          setOpportunities(detectedOpportunities);
+          
+          if (detectedOpportunities.length > 0) {
+            console.log(`✅ Found ${detectedOpportunities.length} opportunities`);
+            
+            // Auto-execute best opportunities
+            for (const opp of detectedOpportunities.slice(0, config.profile.maxConcurrentTrades)) {
+              if (opp.netProfitUsd >= config.profile.minProfitUsd) {
+                console.log(`⚡ Auto-executing: ${opp.pair} for $${opp.netProfitUsd.toFixed(4)} profit`);
+                
+                try {
+                  const result = await fastMEVEngine.executeTrade(opp, keypair);
+                  
+                  if (result.success) {
+                    console.log(`✅ Trade successful! Profit: $${result.actualProfitUsd?.toFixed(4)}`);
+                    setTotalProfit(prev => prev + (result.actualProfitUsd || 0));
+                    setTradesExecuted(prev => prev + 1);
+                  } else {
+                    console.log(`❌ Trade failed: ${result.error}`);
+                  }
+                } catch (execError) {
+                  console.error('❌ Execution error:', execError);
+                }
+              }
+            }
+          }
+        } catch (scanError) {
+          console.error('❌ Scan error:', scanError);
+        }
+      }, scanIntervalMs);
+      
+      setScanInterval(interval);
+      console.log(`✅ Trading bot started! Scanning every ${scanIntervalMs}ms`);
+      
+    } catch (err) {
+      console.error('❌ Failed to start trading:', err);
+      setError('Failed to start trading: ' + (err as Error).message);
+      setIsTrading(false);
+    }
   };
 
   // Stop trading
   const handleStopTrading = () => {
+    if (scanInterval) {
+      clearInterval(scanInterval);
+      setScanInterval(null);
+    }
     setIsTrading(false);
-    // TODO: Stop trading engine
+    console.log('⏹️ Trading stopped');
   };
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (scanInterval) {
+        clearInterval(scanInterval);
+      }
+    };
+  }, [scanInterval]);
 
   // Get risk icon
   const getRiskIcon = (level: RiskLevel) => {
