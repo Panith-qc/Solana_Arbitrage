@@ -296,7 +296,7 @@ export class StrategyEngine {
       } catch (error) {
         console.error('❌ Sandwich strategy error:', error);
       }
-    }, 2000); // Check every 2 seconds
+    }, 8000); // Check every 8 seconds (reduced to prevent API rate limiting)
   }
   
   /**
@@ -422,7 +422,7 @@ export class StrategyEngine {
       } catch (error) {
         console.error('❌ Liquidation strategy error:', error);
       }
-    }, 5000); // Check every 5 seconds
+    }, 12000); // Check every 12 seconds (reduced to prevent API rate limiting)
   }
 
   private async startMemeCoinStrategy(capital: number): Promise<void> {
@@ -449,7 +449,7 @@ export class StrategyEngine {
       } catch (error) {
         console.error('❌ Jito bundle strategy error:', error);
       }
-    }, 4000); // Check every 4 seconds
+    }, 10000); // Check every 10 seconds (reduced to prevent API rate limiting)
   }
 
   private async startPriceRecoveryStrategy(capital: number): Promise<void> {
@@ -471,7 +471,7 @@ export class StrategyEngine {
       } catch (error) {
         console.error('❌ Price recovery strategy error:', error);
       }
-    }, 6000); // Check every 6 seconds
+    }, 15000); // Check every 15 seconds (reduced to prevent API rate limiting)
   }
 
   private startOpportunityScanning(): void {

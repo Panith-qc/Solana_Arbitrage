@@ -23,6 +23,9 @@ export interface JupiterSwapResult {
 
 export class RealJupiterService {
   private baseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
+  private lastRequestTime = 0
+  private minRequestInterval = 200 // Minimum 200ms between requests
+  private requestQueue: Promise<any> = Promise.resolve()
 
   async getQuote(
     inputMint: string,
@@ -31,6 +34,14 @@ export class RealJupiterService {
     slippageBps: number = 50,
     retryCount: number = 0
   ): Promise<JupiterQuote> {
+    // Rate limit: Wait for minimum interval between requests
+    const now = Date.now()
+    const timeSinceLastRequest = now - this.lastRequestTime
+    if (timeSinceLastRequest < this.minRequestInterval) {
+      await new Promise(resolve => setTimeout(resolve, this.minRequestInterval - timeSinceLastRequest))
+    }
+    this.lastRequestTime = Date.now()
+    
     try {
       console.log('🔄 Getting REAL Jupiter quote via Helius MEV Service...')
       
@@ -50,10 +61,11 @@ export class RealJupiterService {
       })
 
       if (!response.ok) {
-        // Retry once on 500 errors (rate limiting)
-        if (response.status === 500 && retryCount < 1) {
-          console.log('⚠️ Helius 500 error, retrying in 500ms...');
-          await new Promise(resolve => setTimeout(resolve, 500));
+        // Exponential backoff for 500 errors (rate limiting)
+        if (response.status === 500 && retryCount < 2) {
+          const delayMs = 500 * Math.pow(2, retryCount) // 500ms, then 1000ms
+          console.log(`⚠️ Helius 500 error, retry ${retryCount + 1}/2 in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
           return this.getQuote(inputMint, outputMint, amount, slippageBps, retryCount + 1);
         }
         throw new Error(`Helius MEV Service failed: ${response.status}`)
