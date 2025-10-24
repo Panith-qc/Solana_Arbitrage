@@ -1,28 +1,28 @@
 import React, { useState } from 'react';
-import AutoTradingSetup from './components/AutoTradingSetup';
+import Phase2AutoTrading from './components/Phase2AutoTrading';
 import PrivateKeyTradingDashboard from './components/PrivateKeyTradingDashboard';
 import { Button } from './components/ui/button';
 
 function App() {
-  // Toggle between auto setup and advanced dashboard
-  // DEFAULT TO ADVANCED (ORIGINAL WORKING DASHBOARD)
-  const [useAutoMode, setUseAutoMode] = useState(false);
+  // Toggle between Phase 2 auto trading and manual dashboard
+  const [usePhase2, setUsePhase2] = useState(true);
 
   return (
     <div className="App">
       {/* Toggle Button */}
       <div className="fixed top-4 right-4 z-50">
         <Button
-          variant={useAutoMode ? "default" : "outline"}
-          onClick={() => setUseAutoMode(!useAutoMode)}
+          variant={usePhase2 ? "default" : "outline"}
+          onClick={() => setUsePhase2(!usePhase2)}
+          className="font-semibold"
         >
-          {useAutoMode ? '🤖 Auto Mode (Experimental)' : '⚙️ Advanced Mode (Original)'}
+          {usePhase2 ? '🚀 Phase 2 (All Strategies)' : '⚙️ Manual Mode'}
         </Button>
       </div>
 
-      {/* Show ORIGINAL working dashboard by default */}
-      {useAutoMode ? (
-        <AutoTradingSetup />
+      {/* Phase 2 Auto-Trading with ALL strategies by default */}
+      {usePhase2 ? (
+        <Phase2AutoTrading />
       ) : (
         <PrivateKeyTradingDashboard />
       )}

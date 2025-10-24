@@ -983,5 +983,3 @@ export class StrategyEngine {
 }
 
 export const strategyEngine = new StrategyEngine();
-
-export const strategyEngine = new StrategyEngine();
