@@ -1,9 +1,44 @@
-node_modules/
-.git/
-.github/
+# This file specifies files that are *not* uploaded to Google Cloud
+# using gcloud. It follows the same syntax as .gitignore
+
+.git
+.gitignore
+node_modules
+npm-debug.log
+
+# Ignore development files
+*.log
 *.md
 .env
-.env.*
-!.env.production
-src/
-*.log
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore build artifacts that will be rebuilt
+dist/
+.cache/
+
+# Ignore test files
+**/__tests__/**
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Ignore documentation
+docs/
+*.md
+README*
+
+# Ignore large unnecessary files
+*.zip
+*.tar.gz
+*.tgz

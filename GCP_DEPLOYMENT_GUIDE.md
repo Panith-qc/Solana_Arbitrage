@@ -1,218 +1,297 @@
-# 🚀 GCP DEPLOYMENT GUIDE - Solana MEV Bot
+# 🚀 GCP CLOUD RUN DEPLOYMENT GUIDE
 
-**GCP Project:** solana-mev-bot-476012  
-**Current Code:** All automation features pushed to GitHub  
-**Status:** Ready to deploy
+## 📋 **PRE-REQUISITES**
+
+1. **GCP Account** with billing enabled
+2. **gcloud CLI** installed:
+   ```bash
+   # Install gcloud CLI
+   curl https://sdk.cloud.google.com | bash
+   exec -l $SHELL
+   gcloud init
+   ```
+
+3. **Authenticate**:
+   ```bash
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   ```
 
 ---
 
-## 📋 DEPLOYMENT OVERVIEW
+## 🎯 **DEPLOYMENT OPTIONS**
 
-You have 2 deployment options:
+### **Option 1: Simple One-Command Deploy** (Recommended)
 
-### Option 1: Quick Deploy (Recommended) ⚡
-Use the automated deployment script - deploys in ~5 minutes
-
-### Option 2: Manual Deploy 🛠️
-Step-by-step manual deployment for more control
-
----
-
-## 🚀 OPTION 1: QUICK DEPLOY (RECOMMENDED)
-
-### Prerequisites Check
 ```bash
-# 1. Verify you're logged in
-gcloud auth list
-
-# 2. Set your project
-gcloud config set project solana-mev-bot-476012
-
-# 3. Enable required APIs (if not already enabled)
-gcloud services enable cloudbuild.googleapis.com
-gcloud services enable run.googleapis.com
-gcloud services enable containerregistry.googleapis.com
+./deploy-gcp-simple.sh
 ```
 
-### Deploy with One Command
-```bash
-# Set environment variable
-export GCP_PROJECT_ID="solana-mev-bot-476012"
+**What it does:**
+- Builds the app
+- Deploys to Cloud Run
+- Sets up auto-scaling
+- Returns service URL
 
-# Run deployment script
+**Time:** ~3-5 minutes
+
+---
+
+### **Option 2: Full Deployment with Configuration**
+
+```bash
+export GCP_PROJECT_ID="your-project-id"
 ./deploy-gcp.sh
 ```
 
-**This will:**
-1. Build your application (`pnpm install` + `pnpm run build`)
-2. Create Docker image
-3. Push to Google Container Registry (GCR)
-4. Deploy to Cloud Run
-5. Give you a live URL
+**What it does:**
+- Checks authentication
+- Enables required APIs
+- Builds the application
+- Deploys with full configuration
+- Provides detailed output
 
-**Expected time:** 5-7 minutes
+**Features:**
+- ✅ 2GB memory, 2 CPU
+- ✅ Auto-scaling (0-10 instances)
+- ✅ 1-hour timeout
+- ✅ Production environment
+
+**Time:** ~5-7 minutes
 
 ---
 
-## 🛠️ OPTION 2: MANUAL DEPLOYMENT
+### **Option 3: Deployment with Secrets** (Production)
 
-### Step 1: Enable Required APIs
+```bash
+export GCP_PROJECT_ID="your-project-id"
+./deploy-gcp-with-secrets.sh
+```
+
+**What it does:**
+- Creates GCP Secret Manager secrets
+- Securely stores API keys
+- Deploys with environment variables
+- Mounts secrets at runtime
+
+**You'll be prompted for:**
+1. Helius API key
+2. Wallet private key (base58)
+
+**Time:** ~5-7 minutes
+
+---
+
+## 📝 **MANUAL DEPLOYMENT**
+
+If you prefer manual control:
+
+### **Step 1: Authenticate**
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+```
+
+### **Step 2: Enable APIs**
 ```bash
 gcloud services enable cloudbuild.googleapis.com
 gcloud services enable run.googleapis.com
-gcloud services enable containerregistry.googleapis.com
-gcloud services enable artifactregistry.googleapis.com
 ```
 
-### Step 2: Build Application
+### **Step 3: Build**
 ```bash
-# Install dependencies
-pnpm install --legacy-peer-deps
-
-# Build for production
+pnpm install
 pnpm run build
 ```
 
-### Step 3: Build Docker Image
-```bash
-# Build the image
-docker build -t gcr.io/solana-mev-bot-476012/solana-mev-bot:latest .
-
-# Verify image was created
-docker images | grep solana-mev-bot
-```
-
-### Step 4: Push to Container Registry
-```bash
-# Configure Docker authentication
-gcloud auth configure-docker
-
-# Push the image
-docker push gcr.io/solana-mev-bot-476012/solana-mev-bot:latest
-```
-
-### Step 5: Deploy to Cloud Run
+### **Step 4: Deploy**
 ```bash
 gcloud run deploy solana-mev-bot \
-  --image gcr.io/solana-mev-bot-476012/solana-mev-bot:latest \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --memory 2Gi \
-  --cpu 2 \
-  --min-instances 1 \
-  --max-instances 3 \
-  --port 8080 \
-  --timeout 300
+    --source . \
+    --region us-central1 \
+    --allow-unauthenticated \
+    --port 5173 \
+    --memory 2Gi \
+    --cpu 2 \
+    --timeout 3600
 ```
 
-### Step 6: Get Service URL
+### **Step 5: Get URL**
 ```bash
 gcloud run services describe solana-mev-bot \
-  --platform managed \
-  --region us-central1 \
-  --format 'value(status.url)'
+    --region us-central1 \
+    --format="value(status.url)"
 ```
 
 ---
 
-## 📊 CLOUD RUN CONFIGURATION
+## 🔧 **CONFIGURATION OPTIONS**
 
-### Resource Allocation
-- **Memory:** 2 GB (enough for MEV bot)
-- **CPU:** 2 vCPUs (handles concurrent trades)
-- **Port:** 8080 (standard)
-- **Timeout:** 300 seconds (5 minutes)
-
-### Auto-Scaling
-- **Min Instances:** 1 (always running)
-- **Max Instances:** 3 (scale under load)
-- **Concurrency:** 80 requests per instance
-
-### Cost Estimate
-- **Always-on (1 instance):** ~$50-70/month
-- **Scaling (2-3 instances):** ~$100-150/month
-- **Free tier:** First 2 million requests free
-
----
-
-## 🔐 ENVIRONMENT VARIABLES
-
-### Set via Cloud Run Console
-Go to Cloud Run → Your Service → Edit & Deploy → Variables
-
-**Required variables:**
-```
-VITE_HELIUS_API_KEY=your_helius_key
-VITE_HELIUS_RPC_URL=your_helius_url
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_key
-```
-
-### Or set via command line:
+### **Change Region:**
 ```bash
-gcloud run services update solana-mev-bot \
-  --region us-central1 \
-  --update-env-vars VITE_HELIUS_API_KEY=your_key,VITE_SUPABASE_URL=your_url
+# Edit deploy script or use:
+gcloud run deploy solana-mev-bot --region europe-west1 ...
+```
+
+**Available regions:**
+- `us-central1` (Iowa)
+- `us-east1` (South Carolina)
+- `us-west1` (Oregon)
+- `europe-west1` (Belgium)
+- `asia-east1` (Taiwan)
+
+### **Change Memory/CPU:**
+```bash
+# More power for high-frequency trading:
+--memory 4Gi --cpu 4
+
+# Cost-effective for testing:
+--memory 1Gi --cpu 1
+```
+
+### **Set Min Instances (Always On):**
+```bash
+# Keep 1 instance always warm (costs more, faster response)
+--min-instances 1
 ```
 
 ---
 
-## 🔄 UPDATE DEPLOYMENT (After Code Changes)
+## 💰 **COST ESTIMATE**
 
-### Quick Update
+### **Default Configuration:**
+- **Memory:** 2GB
+- **CPU:** 2 vCPU
+- **Min Instances:** 0 (scales to zero)
+- **Max Instances:** 10
+
+**Estimated Cost:**
+- **Idle:** $0/month (scales to zero)
+- **Active (24/7):** ~$50-70/month
+- **Per request:** $0.0000004 per request
+
+### **With Min Instances = 1:**
+- **Base Cost:** ~$50/month (always running)
+- **Plus:** Scaling costs for traffic
+
+---
+
+## 🔒 **SECURITY BEST PRACTICES**
+
+### **1. Use Secret Manager:**
 ```bash
-# 1. Push code to GitHub (already done)
-git push origin main
+# Create secrets
+gcloud secrets create helius-api-key --data-file=-
+echo "YOUR_API_KEY" | gcloud secrets create helius-api-key --data-file=-
 
-# 2. Rebuild and redeploy
-./deploy-gcp.sh
-```
-
-### Manual Update
-```bash
-# 1. Rebuild app
-pnpm run build
-
-# 2. Rebuild Docker image
-docker build -t gcr.io/solana-mev-bot-476012/solana-mev-bot:latest .
-
-# 3. Push to GCR
-docker push gcr.io/solana-mev-bot-476012/solana-mev-bot:latest
-
-# 4. Deploy new version
+# Deploy with secrets
 gcloud run deploy solana-mev-bot \
-  --image gcr.io/solana-mev-bot-476012/solana-mev-bot:latest \
-  --region us-central1
+    --set-secrets "VITE_HELIUS_API_KEY=helius-api-key:latest"
 ```
+
+### **2. Restrict Access:**
+```bash
+# Remove public access
+gcloud run services remove-iam-policy-binding solana-mev-bot \
+    --region us-central1 \
+    --member="allUsers" \
+    --role="roles/run.invoker"
+
+# Add specific user
+gcloud run services add-iam-policy-binding solana-mev-bot \
+    --region us-central1 \
+    --member="user:your-email@gmail.com" \
+    --role="roles/run.invoker"
+```
+
+### **3. Enable VPC Connector (Optional):**
+For private database/API access
 
 ---
 
-## 📊 MONITORING YOUR DEPLOYMENT
+## 📊 **MONITORING**
 
-### View Logs
+### **View Logs:**
 ```bash
 # Real-time logs
-gcloud logs tail --service=solana-mev-bot
+gcloud run services logs read solana-mev-bot \
+    --region us-central1 \
+    --follow
 
-# Recent logs
-gcloud logs read --service=solana-mev-bot --limit 50
+# Filter by severity
+gcloud run services logs read solana-mev-bot \
+    --region us-central1 \
+    --format="value(textPayload)" \
+    --severity=ERROR
 ```
 
-### Check Service Status
+### **View Metrics:**
 ```bash
+# Open Cloud Console
 gcloud run services describe solana-mev-bot \
-  --region us-central1
+    --region us-central1 \
+    --format="value(status.url)"
 ```
 
-### View in Console
-Visit: https://console.cloud.google.com/run/detail/us-central1/solana-mev-bot/metrics?project=solana-mev-bot-476012
+### **Dashboard:**
+https://console.cloud.google.com/run
 
 ---
 
-## 🐛 TROUBLESHOOTING
+## 🔄 **UPDATE DEPLOYMENT**
 
-### Build Fails
+### **Deploy New Version:**
+```bash
+# Simple update
+./deploy-gcp-simple.sh
+
+# Or manual
+gcloud run deploy solana-mev-bot --source .
+```
+
+### **Rollback:**
+```bash
+# List revisions
+gcloud run revisions list --service solana-mev-bot --region us-central1
+
+# Rollback to previous
+gcloud run services update-traffic solana-mev-bot \
+    --region us-central1 \
+    --to-revisions REVISION_NAME=100
+```
+
+---
+
+## 🧪 **TESTING DEPLOYMENT**
+
+### **1. Check Health:**
+```bash
+SERVICE_URL=$(gcloud run services describe solana-mev-bot --region us-central1 --format="value(status.url)")
+curl $SERVICE_URL
+```
+
+### **2. View in Browser:**
+```bash
+# Open in browser
+gcloud run services describe solana-mev-bot \
+    --region us-central1 \
+    --format="value(status.url)" | xargs open
+```
+
+### **3. Test Trading:**
+1. Open service URL
+2. Connect wallet
+3. Start Phase 2 Auto Trading
+4. Watch console logs:
+   ```bash
+   gcloud run services logs read solana-mev-bot --region us-central1 --follow
+   ```
+
+---
+
+## ❌ **TROUBLESHOOTING**
+
+### **Build Fails:**
 ```bash
 # Check build logs
 gcloud builds list --limit 5
@@ -221,150 +300,108 @@ gcloud builds list --limit 5
 gcloud builds log BUILD_ID
 ```
 
-### Deployment Fails
+### **Service Not Responding:**
 ```bash
-# Check service logs
+# Check service status
 gcloud run services describe solana-mev-bot --region us-central1
 
-# Check recent errors
-gcloud logs read --service=solana-mev-bot --severity ERROR --limit 20
+# Check recent logs
+gcloud run services logs read solana-mev-bot --region us-central1 --limit 50
 ```
 
-### Service Not Responding
+### **Memory/CPU Issues:**
 ```bash
-# Check if service is running
-gcloud run services list
-
-# Check revisions
-gcloud run revisions list --service=solana-mev-bot --region us-central1
-
-# Test the URL
-curl -I YOUR_CLOUD_RUN_URL
-```
-
----
-
-## ✅ POST-DEPLOYMENT CHECKLIST
-
-After deployment:
-- [ ] Service URL is accessible
-- [ ] Dashboard loads correctly
-- [ ] Can enter wallet private key
-- [ ] Risk profiles display
-- [ ] Auto-configuration works
-- [ ] Can start trading
-- [ ] Logs show no errors
-
----
-
-## 🔒 SECURITY BEST PRACTICES
-
-### 1. Use Secret Manager (Recommended)
-```bash
-# Create secrets
-gcloud secrets create helius-api-key --data-file=-
-# (paste your key, then Ctrl+D)
-
-# Grant access to Cloud Run
-gcloud secrets add-iam-policy-binding helius-api-key \
-  --member=serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com \
-  --role=roles/secretmanager.secretAccessor
-
-# Update service to use secret
+# Increase resources
 gcloud run services update solana-mev-bot \
-  --region us-central1 \
-  --update-secrets=VITE_HELIUS_API_KEY=helius-api-key:latest
+    --region us-central1 \
+    --memory 4Gi \
+    --cpu 4
 ```
 
-### 2. Restrict Access
+### **Timeout Issues:**
 ```bash
-# Remove public access (if needed)
-gcloud run services remove-iam-policy-binding solana-mev-bot \
-  --region us-central1 \
-  --member="allUsers" \
-  --role="roles/run.invoker"
-
-# Add specific users
-gcloud run services add-iam-policy-binding solana-mev-bot \
-  --region us-central1 \
-  --member="user:your-email@gmail.com" \
-  --role="roles/run.invoker"
+# Increase timeout to max (1 hour)
+gcloud run services update solana-mev-bot \
+    --region us-central1 \
+    --timeout 3600
 ```
-
-### 3. Enable HTTPS Only
-Cloud Run automatically uses HTTPS - no additional config needed! ✅
 
 ---
 
-## 💰 COST OPTIMIZATION
-
-### Reduce Costs
-```bash
-# Scale to 0 when idle (not recommended for trading bot)
-gcloud run services update solana-mev-bot \
-  --region us-central1 \
-  --min-instances 0
-
-# Reduce memory (if bot runs fine with less)
-gcloud run services update solana-mev-bot \
-  --region us-central1 \
-  --memory 1Gi
-```
-
-### Monitor Costs
-Visit: https://console.cloud.google.com/billing/reports?project=solana-mev-bot-476012
-
----
-
-## 🎯 QUICK COMMANDS REFERENCE
+## 🗑️ **DELETE SERVICE**
 
 ```bash
-# Deploy/Update
-./deploy-gcp.sh
-
-# View logs
-gcloud logs tail --service=solana-mev-bot
-
-# Get URL
-gcloud run services describe solana-mev-bot \
-  --region us-central1 \
-  --format 'value(status.url)'
-
-# Check status
-gcloud run services list
-
-# Delete service
+# Delete Cloud Run service
 gcloud run services delete solana-mev-bot --region us-central1
+
+# Delete secrets (optional)
+gcloud secrets delete helius-api-key
+gcloud secrets delete wallet-private-key
 ```
 
 ---
 
-## 📞 SUPPORT RESOURCES
+## 📚 **USEFUL COMMANDS**
 
-### GCP Documentation
-- Cloud Run: https://cloud.google.com/run/docs
-- Container Registry: https://cloud.google.com/container-registry/docs
-- Secret Manager: https://cloud.google.com/secret-manager/docs
+```bash
+# List all services
+gcloud run services list
 
-### Your Project Console
-- Overview: https://console.cloud.google.com/home/dashboard?project=solana-mev-bot-476012
-- Cloud Run: https://console.cloud.google.com/run?project=solana-mev-bot-476012
-- Logs: https://console.cloud.google.com/logs?project=solana-mev-bot-476012
+# Describe service
+gcloud run services describe solana-mev-bot --region us-central1
 
----
+# View service URL
+gcloud run services describe solana-mev-bot \
+    --region us-central1 \
+    --format="value(status.url)"
 
-## 🎉 READY TO DEPLOY!
+# Update environment variables
+gcloud run services update solana-mev-bot \
+    --region us-central1 \
+    --set-env-vars "KEY=VALUE"
 
-**Recommended approach:**
-1. Run `./deploy-gcp.sh` 
-2. Wait 5-7 minutes
-3. Get your live URL
-4. Test with your wallet
-5. Start auto-trading!
-
-**Your bot will be live at a URL like:**
-`https://solana-mev-bot-XXXXXXXXX-uc.a.run.app`
+# View service IAM policy
+gcloud run services get-iam-policy solana-mev-bot --region us-central1
+```
 
 ---
 
-**Good luck with deployment!** 🚀
+## 🎉 **SUCCESS CHECKLIST**
+
+After deployment, verify:
+- [ ] Service URL is accessible
+- [ ] Web UI loads correctly
+- [ ] Wallet connection works
+- [ ] Strategies show as "enabled"
+- [ ] No console errors
+- [ ] Rate limiter working (no 500 errors)
+- [ ] Real opportunities detected
+- [ ] Trades can be executed
+
+---
+
+## 📞 **SUPPORT**
+
+**GCP Issues:**
+- https://console.cloud.google.com/support
+- https://cloud.google.com/run/docs
+
+**Bot Issues:**
+- Check `/workspace/CRITICAL_BUGS_FOUND.md`
+- Check `/workspace/DEPLOYMENT_READY_CONFIRMATION.md`
+
+---
+
+# 🚀 **QUICK START**
+
+```bash
+# 1. Set project
+export GCP_PROJECT_ID="your-project-id"
+
+# 2. Deploy
+./deploy-gcp-simple.sh
+
+# 3. Done! 🎉
+```
+
+**That's it! Your bot is live!** 💎
