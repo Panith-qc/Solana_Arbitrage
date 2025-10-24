@@ -75,7 +75,6 @@ export class APIRateLimiter {
       
       if (timeSinceLastRequest < this.MIN_INTERVAL) {
         const waitTime = this.MIN_INTERVAL - timeSinceLastRequest;
-        console.log(`⏳ Rate limit: waiting ${waitTime}ms before next request`);
         await this.sleep(waitTime);
       }
       
