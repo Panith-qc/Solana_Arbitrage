@@ -122,18 +122,13 @@ export default function AutoTradingSetup() {
           console.log('🔍 Scanning for MEV opportunities...');
           
           // Scan for opportunities using fastMEVEngine
-          const detectedOpportunities = await fastMEVEngine.detectOpportunities({
-            minProfitUsd: config.profile.minProfitUsd,
-            maxCapitalSol: config.calculatedSettings.maxPositionSol,
-            maxRiskLevel: config.profile.level === 'CONSERVATIVE' ? 'LOW' : 
-                         config.profile.level === 'BALANCED' ? 'MEDIUM' : 'MEDIUM',
-            minConfidence: 0.7,
-            gasEstimateSol: 0.003,
-            maxSlippagePercent: config.profile.slippageBps / 100,
-            priorityFeeLamports: config.profile.priorityFeeLamports,
-            tradeSizeSol: config.calculatedSettings.maxPositionSol,
-            scanIntervalMs: scanIntervalMs
-          });
+          const detectedOpportunities = await fastMEVEngine.scanForMEVOpportunities(
+            config.calculatedSettings.maxPositionSol, // maxCapitalSol
+            0.003, // gasEstimateSol
+            config.calculatedSettings.maxPositionSol * 0.5, // baseAmountSol
+            config.profile.slippageBps / 100, // maxSlippagePercent
+            config.profile.priorityFeeLamports / 1e9 // priorityFeeSol
+          );
           
           setOpportunities(detectedOpportunities);
           
@@ -146,7 +141,7 @@ export default function AutoTradingSetup() {
                 console.log(`⚡ Auto-executing: ${opp.pair} for $${opp.netProfitUsd.toFixed(4)} profit`);
                 
                 try {
-                  const result = await fastMEVEngine.executeTrade(opp, keypair);
+                  const result = await fastMEVEngine.executeArbitrage(opp, keypair);
                   
                   if (result.success) {
                     console.log(`✅ Trade successful! Profit: $${result.actualProfitUsd?.toFixed(4)}`);
