@@ -5,7 +5,8 @@ import { Button } from './components/ui/button';
 
 function App() {
   // Toggle between auto setup and advanced dashboard
-  const [useAutoMode, setUseAutoMode] = useState(true);
+  // DEFAULT TO ADVANCED (ORIGINAL WORKING DASHBOARD)
+  const [useAutoMode, setUseAutoMode] = useState(false);
 
   return (
     <div className="App">
@@ -15,11 +16,11 @@ function App() {
           variant={useAutoMode ? "default" : "outline"}
           onClick={() => setUseAutoMode(!useAutoMode)}
         >
-          {useAutoMode ? '🤖 Auto Mode (Simple)' : '⚙️ Advanced Mode'}
+          {useAutoMode ? '🤖 Auto Mode (Experimental)' : '⚙️ Advanced Mode (Original)'}
         </Button>
       </div>
 
-      {/* Show Auto Trading Setup by default (Simple Mode) */}
+      {/* Show ORIGINAL working dashboard by default */}
       {useAutoMode ? (
         <AutoTradingSetup />
       ) : (
