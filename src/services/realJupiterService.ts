@@ -28,7 +28,8 @@ export class RealJupiterService {
     inputMint: string,
     outputMint: string,
     amount: string,
-    slippageBps: number = 50
+    slippageBps: number = 50,
+    retryCount: number = 0
   ): Promise<JupiterQuote> {
     try {
       console.log('🔄 Getting REAL Jupiter quote via Helius MEV Service...')
@@ -49,6 +50,12 @@ export class RealJupiterService {
       })
 
       if (!response.ok) {
+        // Retry once on 500 errors (rate limiting)
+        if (response.status === 500 && retryCount < 1) {
+          console.log('⚠️ Helius 500 error, retrying in 500ms...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return this.getQuote(inputMint, outputMint, amount, slippageBps, retryCount + 1);
+        }
         throw new Error(`Helius MEV Service failed: ${response.status}`)
       }
 

@@ -272,11 +272,13 @@ class AdvancedMEVScanner {
       const priceImpact = parseFloat(quote.priceImpactPct || '0');
       
       // Calculate potential profit from price impact using dynamic pricing
-      const inputValueUsd = priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);
+      const inputValueUsd = await priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);
       const outputSol = outputAmount / 1e9;
-      const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+      const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
       const outputValueUsd = outputSol * solPrice;
       const profitUsd = outputValueUsd - inputValueUsd;
+      
+      console.log(`💰 PROFIT CALC: Input=$${inputValueUsd.toFixed(2)}, Output=$${outputValueUsd.toFixed(2)}, Profit=$${profitUsd.toFixed(4)}`);
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
         return null;
