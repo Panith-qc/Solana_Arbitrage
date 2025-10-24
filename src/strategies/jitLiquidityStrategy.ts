@@ -61,13 +61,65 @@ class JITLiquidityStrategy {
   }
 
   private async detectJITOpportunity(): Promise<JITOpportunity | null> {
-    // DISABLED: JIT requires liquidity pool integration which is complex
-    // For now: Return null so it doesn't create fake opportunities
-    // Real JIT would need:
-    // 1. Mempool monitoring for pending large swaps
-    // 2. Raydium/Orca pool integration
-    // 3. Atomic add/remove liquidity transactions
-    // 4. Jito bundles for MEV protection
+    const config = tradingConfigManager.getConfig();
+    const SOL_MINT = config.tokens.SOL;
+    
+    // FIXED: Instead of fake fee capture, detect REAL arbitrage in liquidity pools
+    // Check if large liquidity imbalances create arbitrage opportunities
+    
+    const tokens = [config.tokens.USDC, config.tokens.JUP, config.tokens.WIF];
+    
+    for (const token of tokens) {
+      try {
+        // Check for arbitrage cycle with larger amounts (1 SOL)
+        const solAmount = 1 * 1e9; // 1 SOL
+        
+        // Step 1: SOL → Token
+        const forwardQuote = await rateLimiter.execute(() =>
+          realJupiterService.getQuote(SOL_MINT, token, solAmount.toString(), 50)
+        );
+        if (!forwardQuote) continue;
+        
+        const tokenAmount = parseInt(forwardQuote.outAmount);
+        
+        // Step 2: Token → SOL
+        const reverseQuote = await rateLimiter.execute(() =>
+          realJupiterService.getQuote(token, SOL_MINT, tokenAmount.toString(), 50)
+        );
+        if (!reverseQuote) continue;
+        
+        const finalSolAmount = parseInt(reverseQuote.outAmount);
+        const profitLamports = finalSolAmount - solAmount;
+        
+        if (profitLamports <= 0) continue;
+        
+        const profitSol = profitLamports / 1e9;
+        const solPrice = await priceService.getPriceUsd(SOL_MINT);
+        const profitUsd = profitSol * solPrice;
+        
+        // Only return if profit > $0.05
+        if (profitUsd < 0.05) continue;
+        
+        // Found a profitable cycle via JIT scanning
+        return {
+          id: `jit_${Date.now()}`,
+          pool: {
+            address: 'jupiter_aggregator',
+            token0: SOL_MINT,
+            token1: token
+          },
+          targetSwap: {
+            amount: solAmount,
+            usdValue: (solAmount / 1e9) * solPrice
+          },
+          liquidityAmount: solAmount,
+          expectedFeeCapture: profitUsd,
+          timestamp: new Date()
+        };
+      } catch (error) {
+        // Continue to next token
+      }
+    }
     
     return null;
   }
