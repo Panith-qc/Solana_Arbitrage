@@ -101,34 +101,36 @@ class AdvancedMEVScanner {
   private getTokenPairs(): TokenPair[] {
     const config = tradingConfigManager.getConfig();
     
+    // CRITICAL FIX: amounts are now SOL amounts (in lamports)
+    // We'll trade SOL → Token → SOL cycles
     return [
       {
-        name: 'JUP/SOL',
+        name: 'JUP',
         inputMint: config.tokens.JUP,
         outputMint: config.tokens.SOL,
         decimals: 6,
-        amounts: [10416666, 20833333, 41666666] // $25, $50, $100 worth at $2.40 JUP
+        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
       },
       {
-        name: 'BONK/SOL', 
+        name: 'BONK', 
         inputMint: config.tokens.BONK,
         outputMint: config.tokens.SOL,
         decimals: 5,
-        amounts: [83333333333, 166666666666, 333333333333] // Different amounts for BONK
+        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
       },
       {
-        name: 'WIF/SOL',
+        name: 'WIF',
         inputMint: config.tokens.WIF,
         outputMint: config.tokens.SOL, 
         decimals: 6,
-        amounts: [5000000, 10000000, 20000000] // 5, 10, 20 WIF
+        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
       },
       {
-        name: 'USDC/SOL',
+        name: 'USDC',
         inputMint: config.tokens.USDC,
         outputMint: config.tokens.SOL,
         decimals: 6,
-        amounts: [25000000, 50000000, 100000000] // $25, $50, $100 USDC
+        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
       }
     ];
   }
@@ -211,7 +213,7 @@ class AdvancedMEVScanner {
           const opportunity = await this.checkMicroMevOpportunity(pair, amount);
           if (opportunity) {
             opportunities.push(opportunity);
-            console.log(`💰 FOUND OPPORTUNITY: ${opportunity.pair} - $${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')} profit`);
+            console.log(`💰 FOUND PROFITABLE CYCLE: ${opportunity.pair} - Profit: ${((opportunity.expectedOutput - opportunity.inputAmount) / 1e9).toFixed(6)} SOL ($${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')})`);
           }
         } catch (error) {
           console.log(`⚠️ Failed to check ${pair.name} with amount ${amount}:`, error);
@@ -249,81 +251,112 @@ class AdvancedMEVScanner {
   private async checkMicroMevOpportunity(pair: TokenPair, amount: number): Promise<MEVOpportunity | null> {
     try {
       const config = tradingConfigManager.getConfig();
+      const SOL_MINT = config.tokens.SOL;
       
-      console.log(`📊 MICRO-MEV QUOTE: ${pair.inputMint.slice(0, 8)}... → ${pair.outputMint.slice(0, 8)}... | Amount: ${amount}`);
+      // CRITICAL FIX: We want SOL → Token → SOL cycles
+      // So we ALWAYS start with SOL, regardless of what pair.inputMint says
       
-      // Get Jupiter quote with configurable slippage
-      const quote = await realJupiterService.getQuote(
-        pair.inputMint,
-        pair.outputMint, 
-        amount,
+      console.log(`📊 CHECKING COMPLETE CYCLE: SOL → ${pair.name.split('/')[0]} → SOL`);
+      
+      // Step 1: Get quote for SOL → Token
+      const solAmount = amount; // Amount in lamports
+      console.log(`   Step 1: SOL → Token (${solAmount / 1e9} SOL)`);
+      
+      const forwardQuote = await realJupiterService.getQuote(
+        SOL_MINT,
+        pair.inputMint, // The token we're buying
+        solAmount,
         config.trading.slippageBps
       );
 
-      if (!quote) {
-        console.log('❌ MICRO-MEV QUOTE FAILED: No quote received');
+      if (!forwardQuote) {
+        console.log('   ❌ Forward quote failed');
         return null;
       }
 
-      const outputAmount = parseInt(quote.outAmount);
-      console.log(`✅ MICRO-MEV QUOTE SUCCESS: ${outputAmount} output | Impact: ${quote.priceImpactPct || 0}%`);
+      const tokenAmount = parseInt(forwardQuote.outAmount);
+      console.log(`   ✅ Got ${tokenAmount} tokens`);
 
-      // Calculate price impact percentage
-      const priceImpact = parseFloat(quote.priceImpactPct || '0');
+      // Step 2: Get quote for Token → SOL
+      console.log(`   Step 2: Token → SOL (${tokenAmount} tokens)`);
       
-      // Calculate potential profit from price impact using dynamic pricing
-      const inputValueUsd = await priceService.calculateUsdValue(amount, pair.inputMint, pair.decimals);
-      const outputSol = outputAmount / 1e9;
-      const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
-      const outputValueUsd = outputSol * solPrice;
-      const profitUsd = outputValueUsd - inputValueUsd;
+      const reverseQuote = await realJupiterService.getQuote(
+        pair.inputMint, // The token we're selling
+        SOL_MINT,
+        tokenAmount,
+        config.trading.slippageBps
+      );
+
+      if (!reverseQuote) {
+        console.log('   ❌ Reverse quote failed');
+        return null;
+      }
+
+      const finalSolAmount = parseInt(reverseQuote.outAmount);
+      console.log(`   ✅ Got ${finalSolAmount / 1e9} SOL back`);
+
+      // Step 3: Calculate profit
+      const startSolAmount = solAmount;
+      const endSolAmount = finalSolAmount;
+      const profitLamports = endSolAmount - startSolAmount;
+      const profitSol = profitLamports / 1e9;
       
-      console.log(`💰 PROFIT CALC: Input=$${inputValueUsd.toFixed(2)}, Output=$${outputValueUsd.toFixed(2)}, Profit=$${profitUsd.toFixed(4)}`);
+      const solPrice = await priceService.getPriceUsd(SOL_MINT);
+      const profitUsd = profitSol * solPrice;
+      
+      console.log(`💰 CYCLE PROFIT: Start=${startSolAmount / 1e9} SOL, End=${endSolAmount / 1e9} SOL, Profit=${profitSol.toFixed(6)} SOL ($${profitUsd.toFixed(4)})`);
+      
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
+        console.log(`   ❌ Profit too low: $${profitUsd.toFixed(4)} < $${config.trading.minProfitUsd}`);
         return null;
       }
 
-      // Calculate confidence based on price impact and liquidity
-      const confidence = Math.min(95, Math.max(60, 80 + (priceImpact * 1000)));
+      // Calculate price impact
+      const forwardImpact = parseFloat(forwardQuote.priceImpactPct || '0');
+      const reverseImpact = parseFloat(reverseQuote.priceImpactPct || '0');
+      const totalImpact = Math.abs(forwardImpact) + Math.abs(reverseImpact);
       
-      // Determine risk level based on configured thresholds
-      const riskLevel = priceImpact > 0.01 ? 'HIGH' : priceImpact > 0.005 ? 'MEDIUM' : 'LOW';
+      // Calculate confidence based on price impact
+      const confidence = Math.min(95, Math.max(60, 90 - (totalImpact * 100)));
+      
+      // Determine risk level
+      const riskLevel = totalImpact > 0.02 ? 'HIGH' : totalImpact > 0.01 ? 'MEDIUM' : 'LOW';
 
-      // Calculate capital required in SOL
-      const capitalRequired = inputValueUsd / solPrice;
+      // Capital required in SOL
+      const capitalRequired = solAmount / 1e9;
 
       const opportunity: MEVOpportunity = {
         id: `mev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'ARBITRAGE',
-        pair: pair.name,
-        inputMint: pair.inputMint,
-        outputMint: pair.outputMint,
-        inputAmount: amount,
-        expectedOutput: outputAmount,
+        pair: `SOL/${pair.name.split('/')[0]}/SOL`, // Show it's a cycle
+        inputMint: SOL_MINT, // ALWAYS starts with SOL
+        outputMint: pair.inputMint, // The token in the middle
+        inputAmount: solAmount,
+        expectedOutput: finalSolAmount, // Final SOL amount
         profitUsd: profitUsd,
-        profitPercent: priceImpact,
+        profitPercent: (profitSol / (solAmount / 1e9)) * 100, // % return
         confidence: confidence,
         riskLevel: riskLevel as 'LOW' | 'MEDIUM' | 'HIGH',
         timestamp: new Date(),
-        quote: quote,
-        priceImpact: priceImpact,
-        executionPriority: Math.floor(profitUsd * 1000), // Higher profit = higher priority
+        quote: forwardQuote, // Store forward quote for execution
+        priceImpact: totalImpact,
+        executionPriority: Math.floor(profitUsd * 1000),
         capitalRequired: capitalRequired
       };
 
-      console.log(`🎯 CREATED OPPORTUNITY OBJECT:`, {
-        id: opportunity.id,
+      console.log(`🎯 FOUND PROFITABLE CYCLE:`, {
         pair: opportunity.pair,
-        profit: opportunity.profitUsd,
-        type: opportunity.type,
-        capitalRequired: opportunity.capitalRequired
+        startSOL: solAmount / 1e9,
+        endSOL: finalSolAmount / 1e9,
+        profitSOL: profitSol,
+        profitUSD: profitUsd
       });
 
       return opportunity;
 
     } catch (error) {
-      console.log(`❌ MICRO-MEV QUOTE FAILED: ${error}`);
+      console.log(`❌ CYCLE CHECK FAILED: ${error}`);
       return null;
     }
   }
