@@ -156,16 +156,147 @@ export interface TradeResult {
 
 ---
 
+---
+
+## ❌ **BUG #4: PRICE_RECOVERY TRADES SOL → SOL** (CATASTROPHIC!)
+
+### **Location:** Phase2AutoTrading.tsx execution logic
+
+### **The Bug:**
+
+```typescript
+// PRICE_RECOVERY strategy creates:
+{
+  pair: 'BONK/SOL',
+  inputMint: 'DezXAZ8z...' (BONK),
+  outputMint: 'So11111...' (SOL),
+  // ...
+}
+
+// But Phase2AutoTrading calls:
+await realTradeExecutor.executeArbitrageCycle(
+  opp.outputMint,  // ❌ This is SOL mint!
+  amountSOL,
+  ...
+);
+
+// Result: Tries to trade SOL → SOL → SOL!
+```
+
+### **From Your Logs:**
+
+```
+💎 Evaluating: PRICE_RECOVERY - BONK/SOL
+═══════════════════════════════════════════════════════════
+🔄 EXECUTING FULL ARBITRAGE CYCLE
+═══════════════════════════════════════════════════════════
+➡️  Forward: SOL → Token
+═══════════════════════════════════════════════════════════
+📊 Input: So111111...  ← SOL
+📊 Output: So111111... ← ALSO SOL! Same token!
+```
+
+**It's trying to swap SOL for SOL, which makes NO SENSE!**
+
+This happens because:
+1. PRICE_RECOVERY says "BONK/SOL" but sets outputMint to SOL
+2. executeArbitrageCycle uses outputMint as the target token
+3. Result: SOL → SOL (impossible trade!)
+
+---
+
+## ❌ **BUG #5: INCONSISTENT TOKEN PRICES** (HIGH!)
+
+### **From Your Logs:**
+
+**Scan #2:**
+```
+💰 REAL price fetched: $0.54 (JUP)
+💰 REAL USD value: 10.416666 tokens × $0.54 = $5.58
+💰 PROFIT CALC: Input=$5.58, Output=$4.71, Profit=$-0.8711
+❌ MASSIVE LOSS!
+```
+
+**Scan #15:**
+```
+💰 REAL price fetched: $0.38 (JUP)
+💰 REAL USD value: 10.416666 tokens × $0.38 = $3.91
+💰 PROFIT CALC: Input=$3.91, Output=$4.70, Profit=$0.7951
+✅ LOOKS PROFITABLE!
+```
+
+**JUP price fluctuated from $0.54 → $0.38 (41% drop!)**
+
+**Problem:**
+- Initial scan uses old/cached price ($0.54)
+- Execution uses different price ($0.38)
+- Profit estimates are wildly wrong
+- Same trade looks like -$0.87 loss, then +$0.79 profit!
+
+This makes profit calculations completely unreliable.
+
+---
+
+## ❌ **BUG #6: BONK PRICE CALCULATION IS WRONG** (CRITICAL!)
+
+### **From Your Logs:**
+
+```
+💰 Getting REAL USD price for: DezXAZ8z... (BONK)
+💰 REAL price fetched: $0.00 (source: Jupiter Ultra API)
+💰 REAL USD value: 833333.333330 tokens × $0.00 = $122.50
+```
+
+**WAIT, WHAT?!**
+
+- Price: $0.00
+- But USD value: $122.50?!
+- How do you get $122.50 from $0.00 × 833,333 tokens?!
+
+**Then:**
+```
+💰 REAL USD value: 833333.333330 tokens × $0.00 = $122.50
+💰 Output=$12.20
+💰 PROFIT CALC: Input=$122.50, Output=$12.20, Profit=$-110.3017
+```
+
+**The math doesn't add up!**
+
+The price service is returning $0.00 for BONK but then calculating non-zero USD values. This is completely broken!
+
+**Later it changes:**
+```
+💰 REAL USD value: 833333.333330 tokens × $0.00 = $491.67  ← DIFFERENT VALUE!
+💰 REAL USD value: 833333.333330 tokens × $0.00 = $983.33  ← EVEN MORE DIFFERENT!
+💰 REAL USD value: 833333.333330 tokens × $0.00 = $1966.67 ← KEEPS CHANGING!
+```
+
+**SAME token amount ($0.00 × 833,333) is producing DIFFERENT USD values:**
+- First: $122.50
+- Then: $245.00
+- Then: $491.67
+- Then: $983.33
+- Then: $1966.67
+- Then: $2016.67
+- Then: $2073.33!
+
+**This is INSANE! The USD calculation is completely broken for BONK!**
+
+---
+
 ## 📊 **COMPLETE STATUS - ALL BUGS:**
 
 | # | Bug | Severity | Status | Impact |
 |---|-----|----------|--------|--------|
 | 1 | NaN profit calculation | 🔴 CRITICAL | ✅ FIXED | Would show wrong data |
 | 2 | Disabled execution path | 🔴 CRITICAL | ✅ FIXED | Would prevent execution |
-| 3 | API rate limiting | 🟡 HIGH | ✅ FIXED | Was causing 500 errors |
-| 4 | **Wrong token amounts** | 🔴 CRITICAL | ❌ NEW | Causes wrong profit calc |
-| 5 | **Fake strategies** | 🔴 CRITICAL | ❌ NEW | 4 strategies are placeholders |
+| 3 | API rate limiting | 🟡 HIGH | ⚠️ PARTIAL | STILL seeing 500 errors! |
+| 4 | **Wrong token amounts** | 🔴 CRITICAL | ❌ NEW | Causes $-117 losses |
+| 5 | **Fake strategies** | 🔴 CRITICAL | ❌ NEW | 4 strategies use Math.random() |
 | 6 | **Missing output tracking** | 🟡 HIGH | ❌ NEW | Can't track actual amounts |
+| 7 | **SOL → SOL trades** | 🔴 CRITICAL | ❌ NEW | PRICE_RECOVERY tries same token! |
+| 8 | **Inconsistent token prices** | 🔴 CRITICAL | ❌ NEW | JUP: $0.54 → $0.38 (41% swing!) |
+| 9 | **BONK price completely broken** | 🔴 CRITICAL | ❌ NEW | $0.00 price → random USD values! |
 
 ---
 
@@ -226,86 +357,141 @@ I initially thought execution was missing, but it's actually there (lines 227-28
 
 ---
 
-## 🔧 **WHAT NEEDS TO BE FIXED:**
+---
 
-### **Fix #1: Add Output Amount Tracking (30 min)**
+## 🚨 **FROM YOUR NEW LOGS - ADDITIONAL ISSUES:**
+
+### **Issue #1: API Rate Limiting STILL NOT FIXED**
+```
+🔴 POST .../helius-mev-service 500 (Internal Server Error) ← STILL HAPPENING!
+⚠️ Helius 500 error, retry 1/2 in 500ms...
+⚠️ Helius 500 error, retry 2/2 in 1000ms...
+❌ Real Jupiter quote failed: Error: Helius MEV Service failed: 500
+```
+
+**The rate limiting fixes I applied are NOT WORKING!** Still seeing dozens of 500 errors.
+
+### **Issue #2: SOL → SOL Trades**
+```
+💎 Evaluating: PRICE_RECOVERY - BONK/SOL
+📊 Input: So111111... (SOL)
+📊 Output: So111111... (ALSO SOL!)
+```
+
+**PRICE_RECOVERY is trying to trade SOL for SOL!**
+
+### **Issue #3: Insane BONK Price Calculations**
+```
+💰 REAL price: $0.00 (BONK)
+💰 REAL USD value: 833333 tokens × $0.00 = $122.50  ← IMPOSSIBLE!
+
+Then later:
+💰 REAL USD value: 833333 tokens × $0.00 = $491.67  ← DIFFERENT!
+💰 REAL USD value: 833333 tokens × $0.00 = $983.33  ← KEEPS CHANGING!
+💰 REAL USD value: 833333 tokens × $0.00 = $1966.67 ← MULTIPLYING!
+```
+
+**Same token, same price ($0.00), producing WILDLY different USD values!**
+
+The displayed price is wrong OR the calculation is using a different price than displayed.
+
+### **Issue #4: JUP Price Volatility**
+```
+Scan #2:  JUP = $0.54 → Loss: $-0.87
+Scan #15: JUP = $0.38 → Profit: $0.79
+
+Scan #28: JUP = $0.54 → Input=$5.58
+Scan #34: JUP = $0.38 → Input=$3.91 (same 10.4 tokens!)
+```
+
+**41% price swing in seconds, causing completely opposite profit calculations!**
+
+---
+
+## 🔧 **ALL FIXES NEEDED:**
+
+### **Fix #1: Disable ALL Fake Strategies** ⏱️ 5 min
+- Disable JITO_BUNDLE (uses Math.random())
+- Disable PRICE_RECOVERY (uses Math.random() + trades SOL→SOL!)
+- Disable SANDWICH (uses Math.random())
+- Disable LIQUIDATION (uses Math.random())
+- **Keep ONLY Micro Arbitrage (real MEV scanner)**
+
+### **Fix #2: Add Output Amount Tracking** ⏱️ 10 min
 ```typescript
-// Add to TradeResult interface:
 export interface TradeResult {
   success: boolean;
-  actualOutputAmount?: number; // ← ADD THIS!
-  actualProfit?: number;
-  // ... rest
-}
-
-// Update executeTrade to return it:
-return {
-  success: true,
-  actualOutputAmount: expectedOutput, // ← ADD THIS!
-  actualProfit: profitCheck.netProfitUSD,
+  actualOutputAmount?: number; // ← ADD THIS
   // ... rest
 }
 ```
 
-### **Fix #2: Use Correct Amount in Arbitrage Cycle (10 min)**
+### **Fix #3: Fix Arbitrage Cycle Token Amounts** ⏱️ 15 min
 ```typescript
 // BEFORE:
 const tokenAmount = amountLamports; // ❌ WRONG!
 
 // AFTER:
-const tokenAmount = forwardResult.actualOutputAmount || 0; // ✅ CORRECT!
-if (tokenAmount === 0) {
-  throw new Error('Forward trade did not return output amount');
-}
+const tokenAmount = forwardResult.actualOutputAmount!; // ✅ CORRECT!
 ```
 
-### **Fix #3: Disable Fake Strategies (5 min)**
+### **Fix #4: Fix BONK Price Decimals** ⏱️ 20 min
 ```typescript
-// In StrategyEngine constructor, disable these:
-this.activeStrategies.set('JITO_BUNDLE', { 
-  ...existing, 
-  enabled: false // ← DISABLE until implemented
-});
-this.activeStrategies.set('PRICE_RECOVERY', { 
-  ...existing, 
-  enabled: false // ← DISABLE until implemented
-});
-this.activeStrategies.set('SANDWICH', { 
-  ...existing, 
-  enabled: false // ← DISABLE until implemented
-});
-this.activeStrategies.set('LIQUIDATION', { 
-  ...existing, 
-  enabled: false // ← DISABLE until implemented
-});
+// Need to handle different token decimals:
+- BONK: 5 decimals
+- USDC/USDT: 6 decimals
+- SOL: 9 decimals
+- JUP: 6 decimals
 ```
 
-**Only keep:**
-- ✅ Micro Arbitrage (uses real MEV scanner)
-- ✅ Cyclic Arbitrage (uses real MEV scanner)
-- ✅ Long-Tail Arbitrage (uses real MEV scanner)
-- ✅ Cross-DEX Arbitrage (real implementation)
+### **Fix #5: Increase Rate Limiting EVEN MORE** ⏱️ 10 min
+```typescript
+// Current: 200ms minimum between requests (NOT ENOUGH!)
+// Need: 500ms minimum + request queue
+```
+
+---
+
+## 📊 **COMPLETE STATUS - ALL BUGS:**
+
+| # | Bug | Severity | Status | Impact |
+|---|-----|----------|--------|--------|
+| 1 | NaN profit calculation | 🔴 CRITICAL | ✅ FIXED | Would show wrong data |
+| 2 | Disabled execution path | 🔴 CRITICAL | ✅ FIXED | Would prevent execution |
+| 3 | API rate limiting | 🔴 CRITICAL | ⚠️ STILL BROKEN! | 500 errors everywhere |
+| 4 | **Wrong token amounts** | 🔴 CRITICAL | ❌ NEW | Causes $-117 losses |
+| 5 | **Fake strategies** | 🔴 CRITICAL | ❌ NEW | Math.random() placeholders |
+| 6 | **Missing output tracking** | 🟡 HIGH | ❌ NEW | Can't track amounts |
+| 7 | **SOL → SOL trades** | 🔴 CRITICAL | ❌ NEW | Impossible trade! |
+| 8 | **JUP price swings** | 🔴 CRITICAL | ❌ NEW | 41% fluctuation! |
+| 9 | **BONK price broken** | 🔴 CRITICAL | ❌ NEW | $0.00 → random values! |
 
 ---
 
 ## 📈 **WHAT HAPPENS AFTER FIXES:**
 
-### **Current (Broken):**
+### **Current (Completely Broken):**
 ```
-1. Fake strategies generate $0.44 profit opportunity
-2. Execution uses WRONG token amount
-3. Profit calculation shows $-115 loss
-4. Trade rejected
-5. Never executes anything
+1. ❌ Fake strategies generate random profits
+2. ❌ PRICE_RECOVERY tries SOL → SOL (impossible!)
+3. ❌ Token amounts are wrong (uses SOL lamports for JUP!)
+4. ❌ BONK price calculations are insane
+5. ❌ JUP price swings 41% in seconds
+6. ❌ API still rate-limited (500 errors)
+7. ❌ Every trade shows $-115 to $-120 loss
+8. ❌ ZERO trades executed
 ```
 
-### **After Fixes:**
+### **After ALL Fixes:**
 ```
-1. Only REAL MEV Scanner finds opportunities
-2. Uses CORRECT token amounts
-3. Profit calculation is accurate
-4. If profitable → EXECUTES with real transaction!
-5. You see transaction hash and profit
+1. ✅ Only REAL MEV Scanner (no fake data)
+2. ✅ Correct token amounts
+3. ✅ Stable, accurate prices
+4. ✅ Proper token decimals
+5. ✅ NO more 500 errors
+6. ✅ Accurate profit calculations
+7. ✅ Will EXECUTE when truly profitable
+8. ✅ See real transaction hashes
 ```
 
 ---
