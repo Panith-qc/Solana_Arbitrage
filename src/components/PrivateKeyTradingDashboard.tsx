@@ -259,19 +259,24 @@ const PrivateKeyTradingDashboard: React.FC = () => {
 
           // Auto-execute if enabled and conditions met
           for (const opportunity of newOpportunities) {
+            // Risk level hierarchy: ULTRA_LOW < LOW < MEDIUM < HIGH
+            const riskLevels = { 'ULTRA_LOW': 1, 'LOW': 2, 'MEDIUM': 3, 'HIGH': 4 };
+            const opportunityRisk = riskLevels[opportunity.riskLevel] || 0;
+            const maxRisk = riskLevels[autoTradeSettings.maxRiskLevel] || 2;
+            
             if (autoTradeSettings.enabled && 
                 !executingTradeId &&
                 opportunity.netProfitUsd >= autoTradeSettings.minProfitUsd &&
                 opportunity.confidence >= autoTradeSettings.minConfidence &&
-                opportunity.riskLevel === autoTradeSettings.maxRiskLevel) {
+                opportunityRisk <= maxRisk) {  // FIX: At or below max risk, not exact match
               
-              console.log(`🤖 AUTO-EXECUTING SAFE MEV TRADE: ${opportunity.pair} - $${(opportunity.netProfitUsd != null && !isNaN(opportunity.netProfitUsd) && typeof opportunity.netProfitUsd === 'number' ? opportunity.netProfitUsd.toFixed(6) : '0.000000')}`);
+              console.log(`🤖 AUTO-EXECUTING: ${opportunity.pair}`);
+              console.log(`   💰 Profit: $${opportunity.netProfitUsd.toFixed(6)}`);
+              console.log(`   📊 Risk: ${opportunity.riskLevel} (Max: ${autoTradeSettings.maxRiskLevel})`);
+              console.log(`   ✅ Confidence: ${(opportunity.confidence * 100).toFixed(1)}%`);
               
-              // Small delay for execution timing
-              setTimeout(() => {
-                executeArbitrageTrade(opportunity);
-              }, autoTradeSettings.executionDelay);
-              
+              // Execute immediately (no artificial delay - speed is critical for MEV)
+              executeArbitrageTrade(opportunity);
               break; // Execute one at a time
             }
           }
@@ -332,15 +337,23 @@ const PrivateKeyTradingDashboard: React.FC = () => {
       
       // Update performance stats
       if (result.success) {
+        const profit = result.actualProfitUsd || 0;
         setPerformanceStats(prev => ({
           totalTrades: prev.totalTrades + 1,
           successfulTrades: prev.successfulTrades + 1,
-          totalProfitUsd: prev.totalProfitUsd + (result.actualProfitUsd || 0),
+          totalProfitUsd: prev.totalProfitUsd + profit,
           avgExecutionTime: (prev.avgExecutionTime + (result.executionTimeMs || 0)) / 2,
           successRate: ((prev.successfulTrades + 1) / (prev.totalTrades + 1)) * 100
         }));
         
-        console.log(`✅ SAFE ARBITRAGE SUCCESS: $${(result.actualProfitUsd != null && !isNaN(result.actualProfitUsd) && typeof result.actualProfitUsd === 'number' ? result.actualProfitUsd.toFixed(6) : '0.000000')} profit in ${result.executionTimeMs}ms`);
+        console.log('════════════════════════════════════════════════════════');
+        console.log('✅ TRADE SUCCESS!');
+        console.log('════════════════════════════════════════════════════════');
+        console.log(`💰 Actual Profit: $${profit.toFixed(6)}`);
+        console.log(`⏱️  Execution Time: ${result.executionTimeMs}ms`);
+        console.log(`🔗 Forward TX: ${result.forwardTxHash || 'N/A'}`);
+        console.log(`🔗 Reverse TX: ${result.reverseTxHash || 'N/A'}`);
+        console.log('════════════════════════════════════════════════════════');
         
         // Update balance
         try {
@@ -356,7 +369,11 @@ const PrivateKeyTradingDashboard: React.FC = () => {
           successRate: (prev.successfulTrades / (prev.totalTrades + 1)) * 100
         }));
         
-        console.log(`❌ SAFE ARBITRAGE FAILED: ${result.error}`);
+        console.log('════════════════════════════════════════════════════════');
+        console.log('❌ TRADE FAILED');
+        console.log('════════════════════════════════════════════════════════');
+        console.log(`📛 Error: ${result.error}`);
+        console.log('════════════════════════════════════════════════════════');
       }
       
       // Remove executed opportunity
