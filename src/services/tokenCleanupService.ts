@@ -1,6 +1,6 @@
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
-import { supabaseJupiterService } from './supabaseJupiterService';
+import { realJupiterService } from './realJupiterService';
 
 export interface TokenBalance {
   mint: string;
@@ -148,7 +148,7 @@ export class TokenCleanupService {
       }
 
       // Get quote for Token → SOL conversion
-      const quote = await supabaseJupiterService.getQuote(
+      const quote = await realJupiterService.getQuote(
         token.mint,
         this.solMint,
         token.balance,
@@ -162,7 +162,7 @@ export class TokenCleanupService {
       console.log(`📊 ${token.symbol} Quote: ${token.uiAmount} → ${((parseInt(quote.outAmount) / 1e9) != null && !isNaN(parseInt(quote.outAmount) / 1e9) && typeof (parseInt(quote.outAmount) / 1e9) === 'number' ? (parseInt(quote.outAmount) / 1e9).toFixed(6) : '0.000000')} SOL`);
 
       // Get swap transaction with high priority
-      const swapTransaction = await supabaseJupiterService.getSwapTransaction(
+      const swapTransaction = await realJupiterService.getSwapTransaction(
         quote,
         keypair.publicKey.toString(),
         15000000 // 0.015 SOL priority fee for cleanup
@@ -208,7 +208,7 @@ export class TokenCleanupService {
   private async estimateTokenValue(mint: string, balance: number, decimals: number): Promise<number> {
     try {
       // Try to get a quote to SOL to estimate value
-      const quote = await supabaseJupiterService.getQuote(
+      const quote = await realJupiterService.getQuote(
         mint,
         this.solMint,
         balance,

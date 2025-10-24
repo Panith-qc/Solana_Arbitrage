@@ -1,6 +1,6 @@
 import { Connection, Keypair, VersionedTransaction, PublicKey } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
-import { supabaseJupiterService, JupiterQuote } from './supabaseJupiterService';
+import { realJupiterService } from "./realJupiterService";
 
 export interface MEVOpportunity {
   id: string;
@@ -111,7 +111,7 @@ export class FastMEVEngine {
         let forwardQuote = null;
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            forwardQuote = await supabaseJupiterService.getQuote(
+            forwardQuote = await realJupiterService.getQuote(
               solMint,
               pair.targetMint,
               pair.baseAmount,
@@ -135,7 +135,7 @@ export class FastMEVEngine {
         let reverseQuote = null;
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            reverseQuote = await supabaseJupiterService.getQuote(
+            reverseQuote = await realJupiterService.getQuote(
               pair.targetMint,
               solMint, // GUARANTEED: Always back to SOL
               parseInt(reverseAmount),
@@ -355,7 +355,7 @@ export class FastMEVEngine {
     
     console.log(`⚡ ${type}: Using UI Priority Fee ${priorityFeeLamports} lamports (${priorityFeeSol} SOL)`);
     
-    const swapTransactionBase64 = await supabaseJupiterService.getSwapTransaction(
+    const swapTransactionBase64 = await realJupiterService.getSwapTransaction(
       quote,
       keypair.publicKey.toString(),
       priorityFeeLamports
