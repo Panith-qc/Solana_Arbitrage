@@ -13,6 +13,8 @@ import { autoConfigService, AutoConfig } from '../services/autoConfigService';
 import { Loader2, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, Activity, Rocket } from 'lucide-react';
 import { privateKeyWallet } from '../services/privateKeyWallet';
 import { strategyEngine, StrategyOpportunity } from '../strategies/StrategyEngine';
+import { realTradeExecutor } from '../services/realTradeExecutor';
+import { Keypair } from '@solana/web3.js';
 
 export default function Phase2AutoTrading() {
   const [privateKey, setPrivateKey] = useState('');
@@ -81,23 +83,41 @@ export default function Phase2AutoTrading() {
     }
   };
 
-  // Start ALL Phase 2 strategies
+  // Start ALL Phase 2 strategies with REAL TRADING
   const handleStartTrading = async () => {
     if (!config) return;
     
     setIsTrading(true);
     console.log('═══════════════════════════════════════════════════════════');
-    console.log('🚀 PHASE 2 AUTO-TRADING STARTED');
+    console.log('🚀 PHASE 2 AUTO-TRADING STARTED - REAL EXECUTION MODE');
     console.log('═══════════════════════════════════════════════════════════');
     console.log('📊 Risk Profile:', config.profile.name);
     console.log('💰 Capital:', config.calculatedSettings.maxPositionSol.toFixed(4), 'SOL per trade');
     console.log('📈 Strategies:', config.enabledStrategies.join(', '));
+    console.log('⚠️  REAL TRADING: Transactions will be sent to Solana mainnet');
+    console.log('💸 Fee Check: Only profitable trades (after ALL fees) will execute');
     console.log('═══════════════════════════════════════════════════════════');
     
     try {
-      // Connect wallet
+      // Connect wallet and derive keypair
       await privateKeyWallet.connectWithPrivateKey(privateKey);
       console.log('✅ Wallet connected');
+      
+      // Derive keypair for signing transactions
+      const bs58 = await import('bs58');
+      let keypair: Keypair;
+      const trimmedKey = privateKey.trim();
+      
+      if (trimmedKey.startsWith('[')) {
+        const secretKey = Uint8Array.from(JSON.parse(trimmedKey));
+        keypair = Keypair.fromSecretKey(secretKey);
+      } else {
+        const secretKey = bs58.default.decode(trimmedKey);
+        keypair = Keypair.fromSecretKey(secretKey);
+      }
+      
+      console.log('🔑 Keypair derived for transaction signing');
+      console.log('🔗 Will execute as:', keypair.publicKey.toString());
       
       // Track enabled strategies
       const enabled: string[] = [];
@@ -115,10 +135,10 @@ export default function Phase2AutoTrading() {
       console.log('🔥 Starting ALL Phase 2 strategies...');
       enabled.forEach(s => console.log(`   ✅ ${s}`));
       
-      // Start StrategyEngine with ALL strategies
+      // Start StrategyEngine with REAL EXECUTION CALLBACK
       await strategyEngine.startAllStrategies(
         config.calculatedSettings.maxPositionSol,
-        (detectedOpps: StrategyOpportunity[]) => {
+        async (detectedOpps: StrategyOpportunity[]) => {
           // Filter opportunities by configuration
           const riskLevels = { 'ULTRA_LOW': 1, 'LOW': 2, 'MEDIUM': 3, 'HIGH': 4 };
           const maxRisk = config.profile.level === 'CONSERVATIVE' ? 2 : 
@@ -126,32 +146,63 @@ export default function Phase2AutoTrading() {
           
           const filtered = detectedOpps.filter(opp => {
             const oppRisk = riskLevels[opp.riskLevel as keyof typeof riskLevels] || 0;
-            return opp.profitUsd >= config.profile.minProfitUsd &&
-                   opp.confidence >= 0.7 &&
-                   oppRisk <= maxRisk;
+            const meetsProfit = opp.profitUsd && opp.profitUsd >= config.profile.minProfitUsd;
+            const meetsConfidence = opp.confidence >= 0.7;
+            const meetsRisk = oppRisk <= maxRisk;
+            
+            return meetsProfit && meetsConfidence && meetsRisk;
           });
           
           if (filtered.length > 0) {
-            console.log(`🎯 Found ${filtered.length} profitable opportunities!`);
+            console.log(`🎯 Found ${filtered.length} potentially profitable opportunities!`);
             
-            filtered.forEach(opp => {
-              console.log(`   💰 ${opp.strategyName}: ${opp.pair} - $${opp.profitUsd.toFixed(4)}`);
-            });
-            
-            setOpportunities(prev => {
-              const combined = [...filtered, ...prev];
-              return combined.slice(0, 20); // Keep last 20
-            });
-            
-            // Track successful executions
-            setTradesExecuted(prev => prev + filtered.length);
-            setTotalProfit(prev => prev + filtered.reduce((sum, opp) => sum + opp.profitUsd, 0));
+            // Execute REAL trades with full fee calculation
+            for (const opp of filtered.slice(0, config.profile.maxConcurrentTrades)) {
+              console.log('');
+              console.log(`💎 Evaluating: ${opp.strategyName} - ${opp.pair}`);
+              console.log(`   Expected Profit: $${opp.profitUsd?.toFixed(4) || '0.0000'}`);
+              console.log(`   Confidence: ${(opp.confidence * 100).toFixed(1)}%`);
+              
+              try {
+                // Execute REAL trade with profitability check
+                const SOL_MINT = 'So11111111111111111111111111111111111111112';
+                const amountSOL = opp.recommendedCapital || config.calculatedSettings.maxPositionSol * 0.5;
+                
+                const result = await realTradeExecutor.executeArbitrageCycle(
+                  opp.outputMint,
+                  amountSOL,
+                  config.profile.slippageBps,
+                  keypair,
+                  config.profile.level === 'AGGRESSIVE' // Use Jito for aggressive
+                );
+                
+                if (result.success) {
+                  console.log(`✅ REAL TRADE EXECUTED!`);
+                  console.log(`   Net Profit: $${result.netProfitUSD.toFixed(4)}`);
+                  console.log(`   TX Signatures: ${result.txSignatures.join(', ')}`);
+                  
+                  setTotalProfit(prev => prev + result.netProfitUSD);
+                  setTradesExecuted(prev => prev + 1);
+                  
+                  // Add to opportunities list
+                  setOpportunities(prev => [{
+                    ...opp,
+                    profitUsd: result.netProfitUSD
+                  }, ...prev].slice(0, 20));
+                } else {
+                  console.log(`❌ Trade rejected or failed`);
+                }
+                
+              } catch (execError) {
+                console.error(`❌ Execution error for ${opp.pair}:`, execError);
+              }
+            }
           }
         }
       );
       
       console.log('');
-      console.log('✅ ALL PHASE 2 STRATEGIES ACTIVE!');
+      console.log('✅ ALL PHASE 2 STRATEGIES ACTIVE - REAL TRADING ENABLED!');
       console.log('═══════════════════════════════════════════════════════════');
       
     } catch (err) {
