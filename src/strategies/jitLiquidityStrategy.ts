@@ -61,45 +61,15 @@ class JITLiquidityStrategy {
   }
 
   private async detectJITOpportunity(): Promise<JITOpportunity | null> {
-    const config = tradingConfigManager.getConfig();
+    // DISABLED: JIT requires liquidity pool integration which is complex
+    // For now: Return null so it doesn't create fake opportunities
+    // Real JIT would need:
+    // 1. Mempool monitoring for pending large swaps
+    // 2. Raydium/Orca pool integration
+    // 3. Atomic add/remove liquidity transactions
+    // 4. Jito bundles for MEV protection
     
-    // Simulate detecting a large pending swap
-    // In production: Monitor mempool for large swap transactions
-    const targetSwapAmount = 100 * 1e9; // 100 SOL swap (~$20k)
-    const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
-    const swapValueUsd = (targetSwapAmount / 1e9) * solPrice;
-
-    // Only target large swaps
-    if (swapValueUsd < this.MIN_SWAP_VALUE_USD) {
-      return null;
-    }
-
-    // Calculate liquidity to add (10% of swap amount)
-    const liquidityAmount = Math.floor(targetSwapAmount * this.LIQUIDITY_RATIO);
-
-    // Calculate expected fee capture
-    const feeCapture = swapValueUsd * this.FEE_RATE;
-
-    // Only proceed if fee is worth the gas cost
-    if (feeCapture < 1.0) {
-      return null;
-    }
-
-    return {
-      id: `jit_${Date.now()}`,
-      pool: {
-        address: 'pool_address_here',
-        token0: config.tokens.SOL,
-        token1: config.tokens.USDC
-      },
-      targetSwap: {
-        amount: targetSwapAmount,
-        usdValue: swapValueUsd
-      },
-      liquidityAmount,
-      expectedFeeCapture: feeCapture,
-      timestamp: new Date()
-    };
+    return null;
   }
 
   stopScanning(): void {
