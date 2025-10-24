@@ -1,6 +1,7 @@
 // COMPREHENSIVE STRATEGY ENGINE - ALL MEV STRATEGIES IMPLEMENTED
 // Integrates all available strategies except flash loans
 // PHASE 1 ENHANCED: Jito Bundles + Priority Fee Optimization + Mempool Monitoring
+// REAL STRATEGIES: Backrun, JIT Liquidity, Long-Tail Arbitrage
 
 import { tradingConfigManager } from '../config/tradingConfig';
 import { advancedMEVScanner, MEVOpportunity } from '../services/advancedMEVScanner';
@@ -12,6 +13,11 @@ import { realJupiterTrading } from '../services/realJupiterTrading';
 import { jitoBundleService } from '../services/jitoBundleService';
 import { priorityFeeOptimizer } from '../services/priorityFeeOptimizer';
 import { mempoolMonitor, SandwichOpportunity as MempoolSandwichOpportunity } from '../services/mempoolMonitor';
+
+// REAL STRATEGY IMPLEMENTATIONS
+import { backrunStrategy } from './backrunStrategy';
+import { jitLiquidityStrategy } from './jitLiquidityStrategy';
+import { longTailArbitrageStrategy } from './longTailArbitrageStrategy';
 
 export interface StrategyConfig {
   name: string;
@@ -143,9 +149,10 @@ export class StrategyEngine {
     });
 
     // STRATEGY 3: SANDWICH ATTACKS - Front/back-run large transactions
+    // BUG FIX: DISABLED - Fake strategy using Math.random()
     this.activeStrategies.set('SANDWICH', {
       name: 'Sandwich Trading',
-      enabled: true,
+      enabled: false, // DISABLED UNTIL REAL IMPLEMENTATION
       priority: 3,
       minCapitalSol: 1.0,
       maxCapitalSol: 5.0,
@@ -155,9 +162,10 @@ export class StrategyEngine {
     });
 
     // STRATEGY 4: LIQUIDATION - Liquidate undercollateralized positions
+    // NOW WITH REAL JIT LIQUIDITY IMPLEMENTATION
     this.activeStrategies.set('LIQUIDATION', {
-      name: 'Liquidation Hunting',
-      enabled: true,
+      name: 'JIT Liquidity',
+      enabled: true, // RE-ENABLED with real JIT liquidity strategy
       priority: 4,
       minCapitalSol: 2.0,
       maxCapitalSol: 8.0,
@@ -179,9 +187,10 @@ export class StrategyEngine {
     });
 
     // STRATEGY 6: JITO BUNDLE OPTIMIZATION - Bundle transactions for MEV
+    // Keeping disabled (Jito bundles are infrastructure, not a strategy)
     this.activeStrategies.set('JITO_BUNDLE', {
       name: 'Jito Bundle MEV',
-      enabled: true,
+      enabled: false, // Jito is infrastructure, not standalone strategy
       priority: 6,
       minCapitalSol: 1.5,
       maxCapitalSol: 6.0,
@@ -191,9 +200,10 @@ export class StrategyEngine {
     });
 
     // STRATEGY 7: PRICE RECOVERY - Exploit temporary price dislocations
+    // NOW WITH REAL LONG-TAIL ARBITRAGE IMPLEMENTATION
     this.activeStrategies.set('PRICE_RECOVERY', {
-      name: 'Price Recovery',
-      enabled: true,
+      name: 'Long-Tail Arbitrage',
+      enabled: true, // RE-ENABLED with real long-tail arbitrage strategy
       priority: 7,
       minCapitalSol: 0.3,
       maxCapitalSol: 2.5,
@@ -278,25 +288,34 @@ export class StrategyEngine {
     const strategy = this.activeStrategies.get('SANDWICH')!;
     if (!strategy.enabled || capital < strategy.minCapitalSol) return;
 
-    console.log('🥪 Starting Sandwich Strategy with Mempool Monitoring...');
+    console.log('🏃 Starting REAL Backrun Strategy...');
     
-    // PHASE 1: Mempool monitoring is started separately
-    // Sandwich opportunities are detected via mempoolMonitor callbacks
-    
-    // Backup: Still scan periodically for opportunities
-    setInterval(async () => {
+    // Use real backrun strategy implementation
+    backrunStrategy.startMonitoring((backrunOpp) => {
       if (!this.isRunning) return;
       
-      try {
-        const sandwichOpportunities = await this.scanForSandwichOpportunities(capital);
-        if (sandwichOpportunities.length > 0) {
-          console.log(`🥪 Found ${sandwichOpportunities.length} sandwich opportunities`);
-          this.addToExecutionQueue(sandwichOpportunities);
-        }
-      } catch (error) {
-        console.error('❌ Sandwich strategy error:', error);
-      }
-    }, 8000); // Check every 8 seconds (reduced to prevent API rate limiting)
+      // Convert backrun opportunity to StrategyOpportunity
+      const strategyOpp: StrategyOpportunity = {
+        id: backrunOpp.id,
+        type: 'ARBITRAGE',
+        pair: `${backrunOpp.targetSwap.inputMint.slice(0, 8)}/SOL`,
+        inputMint: backrunOpp.backrunTrade.inputMint,
+        outputMint: backrunOpp.backrunTrade.outputMint,
+        inputAmount: backrunOpp.backrunTrade.optimalAmount,
+        expectedOutput: 0, // Will be calculated
+        profitUsd: backrunOpp.backrunTrade.expectedProfit,
+        profitPercent: backrunOpp.targetSwap.priceImpact * 100,
+        confidence: 85,
+        riskLevel: 'MEDIUM',
+        timestamp: backrunOpp.timestamp,
+        strategyName: 'SANDWICH',
+        recommendedCapital: Math.min(capital * 0.3, 3.0),
+        executionPlan: ['Monitor mempool', 'Detect price impact', 'Execute backrun']
+      };
+      
+      console.log(`🏃 REAL BACKRUN OPPORTUNITY: $${backrunOpp.backrunTrade.expectedProfit.toFixed(4)}`);
+      this.addToExecutionQueue([strategyOpp]);
+    });
   }
   
   /**
@@ -407,22 +426,34 @@ export class StrategyEngine {
     const strategy = this.activeStrategies.get('LIQUIDATION')!;
     if (!strategy.enabled || capital < strategy.minCapitalSol) return;
 
-    console.log('⚡ Starting Liquidation Strategy...');
+    console.log('💧 Starting REAL JIT Liquidity Strategy...');
     
-    // Implement liquidation scanning
-    setInterval(async () => {
+    // Use real JIT liquidity strategy implementation
+    jitLiquidityStrategy.startScanning((jitOpp) => {
       if (!this.isRunning) return;
       
-      try {
-        const liquidationOpportunities = await this.scanForLiquidationOpportunities(capital);
-        if (liquidationOpportunities.length > 0) {
-          console.log(`⚡ Found ${liquidationOpportunities.length} liquidation opportunities`);
-          this.addToExecutionQueue(liquidationOpportunities);
-        }
-      } catch (error) {
-        console.error('❌ Liquidation strategy error:', error);
-      }
-    }, 12000); // Check every 12 seconds (reduced to prevent API rate limiting)
+      // Convert JIT opportunity to StrategyOpportunity
+      const strategyOpp: StrategyOpportunity = {
+        id: jitOpp.id,
+        type: 'ARBITRAGE',
+        pair: `${jitOpp.pool.token0.slice(0, 8)}/${jitOpp.pool.token1.slice(0, 8)}`,
+        inputMint: jitOpp.pool.token0,
+        outputMint: jitOpp.pool.token1,
+        inputAmount: jitOpp.liquidityAmount,
+        expectedOutput: 0, // Will be calculated
+        profitUsd: jitOpp.expectedFeeCapture,
+        profitPercent: (jitOpp.expectedFeeCapture / jitOpp.targetSwap.usdValue) * 100,
+        confidence: 90,
+        riskLevel: 'MEDIUM',
+        timestamp: jitOpp.timestamp,
+        strategyName: 'LIQUIDATION',
+        recommendedCapital: Math.min(capital * 0.4, 5.0),
+        executionPlan: ['Detect large swap', 'Add liquidity', 'Capture fees', 'Remove liquidity']
+      };
+      
+      console.log(`💧 REAL JIT LIQUIDITY OPPORTUNITY: $${jitOpp.expectedFeeCapture.toFixed(4)}`);
+      this.addToExecutionQueue([strategyOpp]);
+    });
   }
 
   private async startMemeCoinStrategy(capital: number): Promise<void> {
@@ -456,22 +487,34 @@ export class StrategyEngine {
     const strategy = this.activeStrategies.get('PRICE_RECOVERY')!;
     if (!strategy.enabled || capital < strategy.minCapitalSol) return;
 
-    console.log('📈 Starting Price Recovery Strategy...');
+    console.log('🎯 Starting REAL Long-Tail Arbitrage Strategy...');
     
-    // Implement price recovery detection
-    setInterval(async () => {
+    // Use real long-tail arbitrage strategy implementation
+    longTailArbitrageStrategy.startScanning((longTailOpp) => {
       if (!this.isRunning) return;
       
-      try {
-        const recoveryOpportunities = await this.scanForPriceRecoveryOpportunities(capital);
-        if (recoveryOpportunities.length > 0) {
-          console.log(`📈 Found ${recoveryOpportunities.length} price recovery opportunities`);
-          this.addToExecutionQueue(recoveryOpportunities);
-        }
-      } catch (error) {
-        console.error('❌ Price recovery strategy error:', error);
-      }
-    }, 15000); // Check every 15 seconds (reduced to prevent API rate limiting)
+      // Convert long-tail opportunity to StrategyOpportunity
+      const strategyOpp: StrategyOpportunity = {
+        id: longTailOpp.id,
+        type: 'ARBITRAGE',
+        pair: `${longTailOpp.token.symbol}/SOL`,
+        inputMint: longTailOpp.token.mint,
+        outputMint: 'So11111111111111111111111111111111111111112', // SOL
+        inputAmount: longTailOpp.amount,
+        expectedOutput: 0, // Will be calculated
+        profitUsd: longTailOpp.expectedProfit,
+        profitPercent: longTailOpp.priceDifference * 100,
+        confidence: 80,
+        riskLevel: 'LOW',
+        timestamp: longTailOpp.timestamp,
+        strategyName: 'PRICE_RECOVERY',
+        recommendedCapital: Math.min(capital * 0.2, 2.0),
+        executionPlan: ['Detect price spread', `Buy on ${longTailOpp.buyDex}`, `Sell on ${longTailOpp.sellDex}`]
+      };
+      
+      console.log(`🎯 REAL LONG-TAIL ARBITRAGE: ${longTailOpp.token.symbol} - ${(longTailOpp.priceDifference * 100).toFixed(2)}% spread`);
+      this.addToExecutionQueue([strategyOpp]);
+    });
   }
 
   private startOpportunityScanning(): void {

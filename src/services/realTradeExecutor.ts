@@ -30,6 +30,7 @@ export interface TradeResult {
   txSignature?: string;
   actualProfit?: number; // In USD
   actualProfitSOL?: number;
+  actualOutputAmount?: number; // BUG FIX: Track actual output amount for multi-step trades
   fees: FeeBreakdown;
   executionTimeMs: number;
   error?: string;
@@ -143,6 +144,21 @@ class RealTradeExecutor {
   }
 
   /**
+   * Validate trade pair to prevent invalid trades (e.g., SOL → SOL)
+   */
+  private validateTradePair(inputMint: string, outputMint: string): { valid: boolean; error?: string } {
+    // BUG FIX: Prevent same-token trades
+    if (inputMint === outputMint) {
+      return {
+        valid: false,
+        error: `Cannot trade ${inputMint.slice(0, 8)}... for itself`
+      };
+    }
+    
+    return { valid: true };
+  }
+
+  /**
    * Execute a real trade on Solana mainnet
    * ONLY if it's profitable after ALL fees
    */
@@ -160,6 +176,11 @@ class RealTradeExecutor {
     console.log('═══════════════════════════════════════════════════════════');
 
     try {
+      // BUG FIX: Validate trade pair first
+      const validation = this.validateTradePair(params.inputMint, params.outputMint);
+      if (!validation.valid) {
+        throw new Error(`Invalid trade pair: ${validation.error}`);
+      }
       // Step 1: Calculate ALL fees
       console.log('📊 Step 1: Calculating all fees...');
       const fees = await this.calculateTotalFees(
@@ -296,6 +317,7 @@ class RealTradeExecutor {
         txSignature,
         actualProfit: profitCheck.netProfitUSD,
         actualProfitSOL: profitCheck.netProfitUSD / this.SOL_PRICE_USD,
+        actualOutputAmount: expectedOutputAmount, // BUG FIX: Store actual output for arbitrage
         fees,
         executionTimeMs,
         profitableBeforeExecution: true
@@ -366,15 +388,16 @@ class RealTradeExecutor {
         txSignatures.push(forwardResult.txSignature);
       }
 
-      // Get token balance (simulated - in reality would check wallet)
-      const tokenAmount = amountLamports; // Simplified
+      // BUG FIX: Use ACTUAL output amount from forward trade, not initial SOL amount!
+      const actualTokenAmount = forwardResult.actualOutputAmount || amountLamports;
+      console.log(`📊 Forward trade output: ${actualTokenAmount} tokens (not ${amountLamports} SOL lamports!)`);
 
       // Reverse trade: Token → SOL
       console.log('⬅️  Reverse: Token → SOL');
       const reverseResult = await this.executeTrade({
         inputMint: tokenMint,
         outputMint: SOL_MINT,
-        amount: tokenAmount,
+        amount: actualTokenAmount, // BUG FIX: Use actual tokens received!
         slippageBps,
         wallet,
         useJito

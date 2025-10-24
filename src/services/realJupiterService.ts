@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { rateLimiter } from '../utils/rateLimiter'
 
 export interface JupiterQuote {
   inputMint: string
@@ -23,29 +24,18 @@ export interface JupiterSwapResult {
 
 export class RealJupiterService {
   private baseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
-  private lastRequestTime = 0
-  private minRequestInterval = 200 // Minimum 200ms between requests
-  private requestQueue: Promise<any> = Promise.resolve()
+  // Rate limiting now handled by rateLimiter utility (500ms intervals + queue)
 
   async getQuote(
     inputMint: string,
     outputMint: string,
     amount: string,
-    slippageBps: number = 50,
-    retryCount: number = 0
+    slippageBps: number = 50
   ): Promise<JupiterQuote> {
-    // Rate limit: Wait for minimum interval between requests
-    const now = Date.now()
-    const timeSinceLastRequest = now - this.lastRequestTime
-    if (timeSinceLastRequest < this.minRequestInterval) {
-      await new Promise(resolve => setTimeout(resolve, this.minRequestInterval - timeSinceLastRequest))
-    }
-    this.lastRequestTime = Date.now()
+    console.log('🔄 Getting REAL Jupiter quote via Helius MEV Service (rate limited)...')
     
-    try {
-      console.log('🔄 Getting REAL Jupiter quote via Helius MEV Service...')
-      
-      // Use the WORKING Helius MEV Service with Jupiter Ultra API
+    // BUG FIX: Use rate limiter with exponential backoff (no more 500 errors!)
+    return rateLimiter.execute(async () => {
       const response = await fetch(`${this.baseUrl}/helius-mev-service`, {
         method: 'POST',
         headers: {
@@ -58,17 +48,10 @@ export class RealJupiterService {
           amount,
           slippageBps
         })
-      })
+      });
 
       if (!response.ok) {
-        // Exponential backoff for 500 errors (rate limiting)
-        if (response.status === 500 && retryCount < 2) {
-          const delayMs = 500 * Math.pow(2, retryCount) // 500ms, then 1000ms
-          console.log(`⚠️ Helius 500 error, retry ${retryCount + 1}/2 in ${delayMs}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          return this.getQuote(inputMint, outputMint, amount, slippageBps, retryCount + 1);
-        }
-        throw new Error(`Helius MEV Service failed: ${response.status}`)
+        throw new Error(`Helius MEV Service failed: ${response.status}`);
       }
 
       const result = await response.json()
@@ -83,12 +66,8 @@ export class RealJupiterService {
         source: result.source
       })
 
-      return result.data
-
-    } catch (error) {
-      console.error('❌ Real Jupiter quote failed:', error)
-      throw new Error(`Real quote generation failed: ${error.message}`)
-    }
+      return result.data;
+    }, 3); // Retry up to 3 times with exponential backoff
   }
 
   async getSwapTransaction(
