@@ -477,6 +477,11 @@ export class StrategyEngine {
   private startOpportunityScanning(): void {
     console.log('🔄 Starting opportunity scanning and execution loop...');
     
+    // DISABLED: Internal execution now handled by Phase2AutoTrading with realTradeExecutor
+    // The StrategyEngine only detects and queues opportunities
+    // Execution with full fee calculation and profitability checks happens in the callback
+    
+    /* COMMENTED OUT - OLD INTERNAL EXECUTION:
     setInterval(async () => {
       if (!this.isRunning || this.executionQueue.length === 0) return;
       
@@ -501,6 +506,7 @@ export class StrategyEngine {
         await this.executeStrategy(bestOpportunity);
       }
     }, 1000); // Check execution queue every second
+    */
   }
 
   private async executeStrategy(opportunity: StrategyOpportunity): Promise<void> {
