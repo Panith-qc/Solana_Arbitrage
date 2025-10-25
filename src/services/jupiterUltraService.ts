@@ -94,11 +94,11 @@ export class JupiterUltraService {
 
   constructor() {
     this.apiKey = JUPITER_API_KEY;
-    this.baseUrl = JUPITER_ULTRA_API;
+    this.baseUrl = JUPITER_V6_API;
     
-    console.log('⚡ Jupiter Ultra Service initialized');
-    console.log('🚀 Features: RPC-less | MEV Protection | Gasless | 96% Success Rate');
-    console.log('⏱️  Latency: 300ms quote | 700ms-2s execution');
+    console.log('⚡ Jupiter V6 Service initialized (Ultra API fallback)');
+    console.log('🚀 Using standard Jupiter V6 API for quotes');
+    console.log('⏱️  Latency: ~300ms quote');
   }
 
   /**
