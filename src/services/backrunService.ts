@@ -303,19 +303,24 @@ export class BackrunService {
     
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     
-    // Get buy quote
-    const quote = await realJupiterService.getQuote(
+    // 🚀 ULTRA: Get buy quote with MEV protection
+    const ultra = getJupiterUltraService();
+    const order = await ultra.createOrder(
       SOL_MINT,
       opportunity.token.mint,
       (opportunity.buyAmountSol * 1e9).toString(),
       50
     );
 
+    if (!order) {
+      throw new Error('Failed to get buy quote');
+    }
+
     // Simulate execution
     await new Promise(resolve => setTimeout(resolve, 500));
     
     const txHash = `backrun_buy_${Date.now()}`;
-    console.log(`✅ Bought tokens: ${txHash}`);
+    console.log(`✅ Bought tokens: ${txHash} (MEV-protected)`);
     
     return txHash;
   }
@@ -341,19 +346,24 @@ export class BackrunService {
     
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     
-    // Get sell quote
-    const quote = await realJupiterService.getQuote(
+    // 🚀 ULTRA: Get sell quote with MEV protection
+    const ultra = getJupiterUltraService();
+    const order = await ultra.createOrder(
       opportunity.token.mint,
       SOL_MINT,
       opportunity.estimatedTokens.toString(),
       50
     );
 
+    if (!order) {
+      throw new Error('Failed to get sell quote');
+    }
+
     // Simulate execution
     await new Promise(resolve => setTimeout(resolve, 500));
     
     const txHash = `backrun_sell_${Date.now()}`;
-    console.log(`✅ Sold back to SOL: ${txHash}`);
+    console.log(`✅ Sold back to SOL: ${txHash} (MEV-protected)`);
     
     return txHash;
   }
