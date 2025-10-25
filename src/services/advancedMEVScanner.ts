@@ -3,7 +3,7 @@
 
 import { tradingConfigManager } from '../config/tradingConfig';
 import { priceService } from './priceService';
-import { realJupiterService } from './realJupiterService';
+import { getJupiterUltraService } from './jupiterUltraService';
 
 interface JupiterQuote {
   inputMint: string;
@@ -275,6 +275,7 @@ class AdvancedMEVScanner {
     try {
       const config = tradingConfigManager.getConfig();
       const SOL_MINT = config.tokens.SOL;
+      const ultra = getJupiterUltraService();
       
       // Show what we're checking
       const solAmt = amount / 1e9;
@@ -282,34 +283,34 @@ class AdvancedMEVScanner {
       
       const solAmount = amount.toString(); // Convert to string for API
       
-      // OPTIMIZED: Execute both quote requests in parallel (when possible)
+      // ULTRA API: Direct quotes with MEV protection & sub-second execution
       // First get the forward quote to know how much tokens we'll get
-      const forwardQuote = await realJupiterService.getQuote(
+      const forwardOrder = await ultra.createOrder(
         SOL_MINT,
         pair.inputMint,
         solAmount,
         config.trading.slippageBps
       );
 
-      if (!forwardQuote) {
+      if (!forwardOrder) {
         return null;
       }
 
-      const tokenAmount = forwardQuote.outAmount; // Keep as string
+      const tokenAmount = forwardOrder.order.outAmount; // Keep as string
       
       // Now get reverse quote
-      const reverseQuote = await realJupiterService.getQuote(
+      const reverseOrder = await ultra.createOrder(
         pair.inputMint,
         SOL_MINT,
         tokenAmount,
         config.trading.slippageBps
       );
 
-      if (!reverseQuote) {
+      if (!reverseOrder) {
         return null;
       }
 
-      const finalSolAmount = parseInt(reverseQuote.outAmount);
+      const finalSolAmount = parseInt(reverseOrder.order.outAmount);
       const startSolAmount = parseInt(solAmount);
 
       // Calculate profit
@@ -328,9 +329,9 @@ class AdvancedMEVScanner {
       // FOUND PROFITABLE OPPORTUNITY!
       console.log(`      💰 PROFITABLE! ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: $${profitUsd.toFixed(4)} | ✅ ABOVE THRESHOLD!`);
 
-      // Calculate price impact
-      const forwardImpact = parseFloat(forwardQuote.priceImpactPct || '0');
-      const reverseImpact = parseFloat(reverseQuote.priceImpactPct || '0');
+      // Calculate price impact (Ultra provides this)
+      const forwardImpact = parseFloat(forwardOrder.order.priceImpactPct || '0');
+      const reverseImpact = parseFloat(reverseOrder.order.priceImpactPct || '0');
       const totalImpact = Math.abs(forwardImpact) + Math.abs(reverseImpact);
       
       // Calculate confidence based on price impact
@@ -355,7 +356,21 @@ class AdvancedMEVScanner {
         confidence: confidence,
         riskLevel: riskLevel as 'LOW' | 'MEDIUM' | 'HIGH',
         timestamp: new Date(),
-        quote: forwardQuote, // Store forward quote for execution
+        quote: {
+          // Convert Ultra format to expected format
+          inputMint: forwardOrder.order.inputMint,
+          inAmount: forwardOrder.order.inAmount,
+          outputMint: forwardOrder.order.outputMint,
+          outAmount: forwardOrder.order.outAmount,
+          otherAmountThreshold: forwardOrder.order.outAmount,
+          swapMode: 'ExactIn',
+          slippageBps: forwardOrder.order.estimatedSlippageBps,
+          platformFee: null,
+          priceImpactPct: forwardOrder.order.priceImpactPct,
+          routePlan: forwardOrder.order.routes,
+          contextSlot: 0,
+          timeTaken: forwardOrder.timeTakenMs
+        },
         priceImpact: totalImpact,
         executionPriority: Math.floor(profitUsd * 1000),
         capitalRequired: capitalRequired
