@@ -1,11 +1,12 @@
-// CYCLIC ARBITRAGE SERVICE
+// CYCLIC ARBITRAGE SERVICE - OPTIMIZED FOR SPEED ⚡
 // Multi-hop arbitrage that ALWAYS returns to SOL
 // DESIGN PRINCIPLE: Start with SOL → Trade through 2-5 tokens → End with more SOL
 // Example: SOL → USDC → BONK → SOL (profit in SOL)
+// ⚡ SPEED: Parallel API calls, 1s timeouts, millisecond tracking
 
 import { Connection } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
-import { realJupiterService } from './realJupiterService';
+import { getFastJupiterService, FastQuote } from './fastJupiterService';
 import { priceService } from './priceService';
 
 export interface CyclicRoute {
@@ -40,27 +41,25 @@ export class CyclicArbitrageService {
   private isScanning = false;
   private scanInterval?: NodeJS.Timeout;
 
-  // Popular tokens for cycles (all must have SOL pairs)
+  // ⚡ SPEED: Only 3 most liquid tokens (faster checks)
   private readonly CYCLE_TOKENS = {
     SOL: 'So11111111111111111111111111111111111111112',
     USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     JUP: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
-    BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-    WIF: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
-    JTO: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'
   };
 
-  // Minimum profit threshold (in SOL)
-  private readonly MIN_PROFIT_SOL = 0.001; // 0.001 SOL minimum
+  // ⚡ SPEED: Lower profit threshold to find more opportunities
+  private readonly MIN_PROFIT_SOL = 0.0005; // 0.0005 SOL = $0.0005 (very low for speed testing)
 
   // Maximum slippage per hop
   private readonly MAX_SLIPPAGE_BPS = 50; // 0.5%
 
   constructor() {
     this.connection = privateKeyWallet.getConnection();
-    console.log('🔄 Cyclic Arbitrage Service initialized');
+    console.log('⚡ Cyclic Arbitrage Service initialized (SPEED OPTIMIZED)');
     console.log('🎯 Strategy: SOL → Token → Token → ... → SOL (always)');
+    console.log('⏱️  Timeouts: 1s per quote | Parallel API calls | Millisecond tracking');
   }
 
   /**
@@ -73,14 +72,15 @@ export class CyclicArbitrageService {
       return;
     }
 
-    console.log('🚀 Starting cyclic arbitrage scanning...');
+    console.log('⚡ Starting cyclic arbitrage scanning (FAST MODE)...');
     console.log('💎 All cycles: SOL → ... → SOL');
+    console.log('⏱️  Scan interval: 2 seconds (aggressive)');
     this.isScanning = true;
 
-    // Scan for opportunities every 3 seconds
+    // ⚡ SPEED: Scan every 2 seconds (was 3s)
     this.scanInterval = setInterval(async () => {
       await this.scanForCycles();
-    }, 3000);
+    }, 2000);
 
     // Initial scan
     await this.scanForCycles();
@@ -102,34 +102,43 @@ export class CyclicArbitrageService {
   }
 
   /**
-   * Scan for profitable cycles
+   * Scan for profitable cycles (SPEED OPTIMIZED)
+   * ⚡ Parallel API calls, 1s timeouts, millisecond tracking
    */
   private async scanForCycles(): Promise<void> {
+    const scanStartTime = Date.now();
+    
     try {
-      // Generate possible cycles
-      const cycles = [
-        ...this.generate3HopCycles(),
-        ...this.generate4HopCycles(),
-        ...this.generate5HopCycles()
-      ];
+      // ⚡ SPEED: Only check 3-hop cycles (fastest)
+      const cycles = this.generate3HopCycles().slice(0, 3); // Only top 3
 
-      // Analyze each cycle for profitability
-      for (const cycle of cycles) {
-        const route = await this.analyzeCycle(cycle);
+      console.log(`⚡ Checking ${cycles.length} cycles in parallel...`);
+
+      // ⚡ SPEED: Analyze ALL cycles in parallel (not sequential)
+      const results = await Promise.all(
+        cycles.map(cycle => this.analyzeCycleFast(cycle))
+      );
+
+      // Filter profitable routes
+      const profitableRoutes = results.filter(
+        route => route && route.netProfitSol >= this.MIN_PROFIT_SOL
+      );
+
+      const scanTimeMs = Date.now() - scanStartTime;
+
+      if (profitableRoutes.length > 0) {
+        console.log(`✅ Scan complete in ${scanTimeMs}ms - Found ${profitableRoutes.length} opportunities`);
         
-        if (route && route.netProfitSol >= this.MIN_PROFIT_SOL) {
-          console.log(`🔄 Profitable cycle found: ${route.path.join(' → ')}`);
-          console.log(`💰 Net profit: ${route.netProfitSol.toFixed(6)} SOL (${route.profitPercent.toFixed(2)}%)`);
-          
-          // Would notify callback or execute automatically
-          // For now, just log
+        for (const route of profitableRoutes) {
+          console.log(`🔄 ${route.path.join(' → ')} | Profit: ${route.netProfitSol.toFixed(6)} SOL (${route.profitPercent.toFixed(2)}%) | Time: ${scanTimeMs}ms`);
         }
+      } else {
+        console.log(`⚡ Scan complete in ${scanTimeMs}ms - No profitable cycles`);
       }
 
     } catch (error) {
-      if (Math.random() < 0.1) { // Log 10% of errors to avoid spam
-        console.error('Cycle scan error:', error);
-      }
+      const scanTimeMs = Date.now() - scanStartTime;
+      console.error(`❌ Cycle scan error (${scanTimeMs}ms):`, error);
     }
   }
 
@@ -186,7 +195,78 @@ export class CyclicArbitrageService {
   }
 
   /**
-   * Analyze cycle for profitability
+   * ⚡ FAST: Analyze cycle with 1s timeouts and millisecond tracking
+   */
+  private async analyzeCycleFast(cycle: string[]): Promise<CyclicRoute | null> {
+    const startTime = Date.now();
+    
+    try {
+      const fastJupiter = getFastJupiterService();
+      const inputAmountSol = 0.1; // Test with 0.1 SOL
+      const SOL_LAMPORTS = 100_000_000; // 0.1 SOL in lamports
+      
+      let currentAmount = SOL_LAMPORTS;
+      const quotes: (FastQuote | null)[] = [];
+      
+      // Execute each hop
+      for (let i = 0; i < cycle.length - 1; i++) {
+        const fromToken = cycle[i];
+        const toToken = cycle[i + 1];
+        const fromMint = this.CYCLE_TOKENS[fromToken as keyof typeof this.CYCLE_TOKENS];
+        const toMint = this.CYCLE_TOKENS[toToken as keyof typeof this.CYCLE_TOKENS];
+        
+        // ⚡ SPEED: 1s timeout per quote (fail fast!)
+        const quote = await fastJupiter.getQuote(fromMint, toMint, currentAmount, 50);
+        
+        if (!quote) {
+          return null; // Failed - move on
+        }
+        
+        quotes.push(quote);
+        currentAmount = parseInt(quote.outAmount);
+      }
+      
+      // Calculate final profit
+      const finalSol = currentAmount / 1e9;
+      const grossProfitSol = finalSol - inputAmountSol;
+      const gasFeeSol = 0.0003 * (cycle.length - 1);
+      const netProfitSol = grossProfitSol - gasFeeSol;
+      const profitPercent = (netProfitSol / inputAmountSol) * 100;
+      
+      const totalTimeMs = Date.now() - startTime;
+      
+      if (netProfitSol < this.MIN_PROFIT_SOL) {
+        return null;
+      }
+      
+      // Build route
+      const route: CyclicRoute = {
+        id: `cycle_${cycle.join('_')}_${Date.now()}`,
+        hops: cycle.length - 1,
+        path: cycle,
+        mints: cycle.map(t => this.CYCLE_TOKENS[t as keyof typeof this.CYCLE_TOKENS]),
+        inputAmountSol,
+        expectedOutputSol: finalSol,
+        grossProfitSol,
+        gasFeeSol,
+        netProfitSol,
+        profitPercent,
+        confidence: 85,
+        riskLevel: 'MEDIUM',
+        executionPlan: quotes.map((q, i) => 
+          `Hop ${i + 1}: ${cycle[i]} → ${cycle[i + 1]} (${totalTimeMs}ms)`
+        ),
+      };
+      
+      return route;
+      
+    } catch (error: any) {
+      return null;
+    }
+  }
+
+  /**
+   * OLD: Analyze cycle for profitability (DEPRECATED)
    * Returns route if profitable, null otherwise
    */
   private async analyzeCycle(path: string[]): Promise<CyclicRoute | null> {
