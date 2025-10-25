@@ -3,11 +3,13 @@
 // DESIGN PRINCIPLE: Start with SOL → Trade through 2-5 tokens → End with more SOL
 // Example: SOL → USDC → BONK → SOL (profit in SOL)
 // ⚡ SPEED: Parallel API calls, 1s timeouts, millisecond tracking
+// 🚨 RATE LIMITED: Adaptive scan interval based on API utilization
 
 import { Connection } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
 import { getFastJupiterService, FastQuote } from './fastJupiterService';
 import { priceService } from './priceService';
+import { jupiterRateLimiter } from './advancedRateLimiter';
 
 export interface CyclicRoute {
   id: string;
@@ -72,20 +74,43 @@ export class CyclicArbitrageService {
       return;
     }
 
-    console.log('⚡ Starting cyclic arbitrage scanning (FAST MODE)...');
+    console.log('⚡ Starting cyclic arbitrage scanning (ADAPTIVE MODE)...');
     console.log('💎 All cycles: SOL → ... → SOL');
-    console.log('⏱️  Scan interval: 2 seconds (aggressive)');
+    console.log('🚨 Rate limited: Adaptive interval (2-10s based on utilization)');
     this.isScanning = true;
 
-    // ⚡ SPEED: Scan every 2 seconds (was 3s)
-    this.scanInterval = setInterval(async () => {
-      await this.scanForCycles();
-    }, 2000);
+    // 🚨 RATE LIMITED: Use adaptive scanning
+    this.adaptiveScanLoop();
 
     // Initial scan
     await this.scanForCycles();
 
     console.log('✅ Cyclic arbitrage scanner active');
+  }
+
+  /**
+   * Adaptive scanning loop - adjusts speed based on rate limit utilization
+   */
+  private async adaptiveScanLoop(): Promise<void> {
+    while (this.isScanning) {
+      try {
+        await this.scanForCycles();
+        
+        // Get recommended delay based on rate limit utilization
+        const delay = jupiterRateLimiter.getRecommendedScanDelay();
+        const stats = jupiterRateLimiter.getStats();
+        
+        if (Math.random() < 0.1) { // Log 10% of the time
+          console.log(`⚡ Next scan in ${delay}ms | Utilization: ${stats.utilizationPercent} | Queue: ${stats.queueLength}`);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+      } catch (error) {
+        console.error('Scan error:', error);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s on error
+      }
+    }
   }
 
   /**

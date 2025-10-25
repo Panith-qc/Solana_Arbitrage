@@ -1,8 +1,10 @@
 // FAST JUPITER V6 SERVICE - DIRECT API (NO SUPABASE WRAPPER)
 // ⚡ Speed optimized for MEV trading (milliseconds matter!)
 // Direct connection to Jupiter API - bypasses slow Supabase edge function
+// 🚨 RATE LIMITED: Respects free tier limits (100 req/min)
 
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js';
+import { jupiterRateLimiter } from './advancedRateLimiter';
 
 export interface FastQuote {
   inputMint: string;
@@ -49,7 +51,7 @@ export class FastJupiterService {
   }
 
   /**
-   * Get quote with aggressive timeout (FAST!)
+   * Get quote with rate limiting and timeout (FAST + SAFE!)
    */
   async getQuote(
     inputMint: string,
@@ -61,27 +63,34 @@ export class FastJupiterService {
     this.metrics.totalQuotes++;
 
     try {
-      // Create abort controller for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.QUOTE_TIMEOUT_MS);
+      // 🚨 RATE LIMITED: Queue request to avoid hitting free tier limits
+      const result = await jupiterRateLimiter.execute(async () => {
+        // Create abort controller for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.QUOTE_TIMEOUT_MS);
 
-      const url = `${this.JUPITER_V6_API}/quote?` + new URLSearchParams({
-        inputMint,
-        outputMint,
-        amount: amount.toString(),
-        slippageBps: slippageBps.toString(),
-        onlyDirectRoutes: 'false',
-        asLegacyTransaction: 'false',
-      });
+        const url = `${this.JUPITER_V6_API}/quote?` + new URLSearchParams({
+          inputMint,
+          outputMint,
+          amount: amount.toString(),
+          slippageBps: slippageBps.toString(),
+          onlyDirectRoutes: 'false',
+          asLegacyTransaction: 'false',
+        });
 
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json',
+          },
+        });
 
-      clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
+        
+        return response;
+      }, 5); // Priority 5 (normal)
+      
+      const response = result as Response;
 
       if (!response.ok) {
         throw new Error(`Jupiter API error: ${response.status}`);
