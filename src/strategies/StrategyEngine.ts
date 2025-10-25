@@ -14,10 +14,16 @@ import { jitoBundleService } from '../services/jitoBundleService';
 import { priorityFeeOptimizer } from '../services/priorityFeeOptimizer';
 import { mempoolMonitor, SandwichOpportunity as MempoolSandwichOpportunity } from '../services/mempoolMonitor';
 
-// REAL STRATEGY IMPLEMENTATIONS
+// REAL STRATEGY IMPLEMENTATIONS (strategies folder)
 import { backrunStrategy } from './backrunStrategy';
 import { jitLiquidityStrategy } from './jitLiquidityStrategy';
 import { longTailArbitrageStrategy } from './longTailArbitrageStrategy';
+
+// REAL STRATEGY SERVICES (services folder)
+import { jitLiquidityService } from '../services/jitLiquidityService';
+import { cyclicArbitrageService } from '../services/cyclicArbitrageService';
+import { backrunService } from '../services/backrunService';
+import { longTailArbitrageService } from '../services/longTailArbitrageService';
 
 export interface StrategyConfig {
   name: string;
