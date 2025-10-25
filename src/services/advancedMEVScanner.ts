@@ -208,6 +208,9 @@ class AdvancedMEVScanner {
     const scanTime = new Date().toLocaleTimeString();
     console.log(`🔍 [${scanTime}] MEV SCAN #${this.metrics.totalScans} - Checking ${tokenPairs.length} tokens...`);
 
+    // CRITICAL FIX: Add timeout to entire scan to prevent hanging
+    const SCAN_TIMEOUT_MS = 30000; // 30 second max per scan
+    
     // OPTIMIZED: Batch all checks for parallel execution
     const checkPromises: Promise<MEVOpportunity | null>[] = [];
     
@@ -222,8 +225,16 @@ class AdvancedMEVScanner {
       }
     }
     
-    // Execute all checks in parallel (rate limiter handles batching)
-    const results = await Promise.all(checkPromises);
+    // Execute all checks in parallel with timeout
+    const scanPromise = Promise.all(checkPromises);
+    const timeoutPromise = new Promise<(MEVOpportunity | null)[]>((resolve) => 
+      setTimeout(() => {
+        console.log(`   ⏱️ Scan timeout after ${SCAN_TIMEOUT_MS}ms - moving to next scan`);
+        resolve([]);
+      }, SCAN_TIMEOUT_MS)
+    );
+    
+    const results = await Promise.race([scanPromise, timeoutPromise]);
     
     // Collect profitable opportunities
     for (const opportunity of results) {
