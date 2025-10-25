@@ -201,10 +201,9 @@ class AdvancedMEVScanner {
     this.metrics.totalScans++;
     this.metrics.lastScanTime = new Date();
 
-    // Only log every 10th scan to reduce clutter
-    if (this.metrics.totalScans % 10 === 0) {
-      console.log(`🔍 MEV SCAN #${this.metrics.totalScans} - Searching for opportunities...`);
-    }
+    // CRITICAL: Log EVERY scan so user sees real-time activity
+    const scanTime = new Date().toLocaleTimeString();
+    console.log(`🔍 [${scanTime}] MEV SCAN #${this.metrics.totalScans} - Checking ${tokenPairs.length} tokens...`);
 
     const opportunities: MEVOpportunity[] = [];
     const tokenPairs = this.getTokenPairs();
@@ -216,7 +215,7 @@ class AdvancedMEVScanner {
       for (const amount of pair.amounts) {
         checkPromises.push(
           this.checkMicroMevOpportunity(pair, amount).catch(error => {
-            // Silent error handling - don't log every failure
+            console.log(`   ⚠️ ${pair.name} check failed: ${error.message}`);
             return null;
           })
         );
@@ -245,13 +244,15 @@ class AdvancedMEVScanner {
     this.metrics.opportunitiesFound += limitedOpportunities.length;
     this.metrics.avgExecutionTime = (this.metrics.avgExecutionTime + (Date.now() - startTime)) / 2;
 
-    // ALWAYS CALL CALLBACK - CRITICAL FIX
-    // Only log if opportunities found or every 10th scan
+    // CRITICAL: Always show scan results for transparency
+    const scanDuration = Date.now() - startTime;
     if (limitedOpportunities.length > 0) {
-      console.log(`📊 SENDING ${limitedOpportunities.length} OPPORTUNITIES TO UI`);
-      console.log('🎯 Profitable opportunities:', limitedOpportunities.map(o => `${o.pair}: $${(o.profitUsd != null && !isNaN(o.profitUsd) && typeof o.profitUsd === 'number' ? o.profitUsd.toFixed(6) : '0.000000')}`));
-    } else if (this.metrics.totalScans % 10 === 0) {
-      console.log(`✅ Scan #${this.metrics.totalScans} complete: No profitable opportunities (all < $${config.trading.minProfitUsd})`);
+      console.log(`💰 FOUND ${limitedOpportunities.length} PROFITABLE OPPORTUNITIES! (${scanDuration}ms)`);
+      limitedOpportunities.forEach(o => {
+        console.log(`   ✅ ${o.pair}: $${o.profitUsd.toFixed(4)} profit (${o.profitPercent.toFixed(2)}% return)`);
+      });
+    } else {
+      console.log(`❌ Scan #${this.metrics.totalScans} complete: No profitable trades found (${scanDuration}ms) - All opportunities < $${config.trading.minProfitUsd}`);
     }
     
     if (this.onOpportunityCallback) {
@@ -264,7 +265,10 @@ class AdvancedMEVScanner {
       const config = tradingConfigManager.getConfig();
       const SOL_MINT = config.tokens.SOL;
       
-      // CRITICAL FIX: We want SOL → Token → SOL cycles
+      // Show what we're checking
+      const solAmt = amount / 1e9;
+      console.log(`   🔄 Checking: SOL → ${pair.name} → SOL (${solAmt.toFixed(2)} SOL)`);
+      
       const solAmount = amount.toString(); // Convert to string for API
       
       // OPTIMIZED: Execute both quote requests in parallel (when possible)
@@ -304,13 +308,14 @@ class AdvancedMEVScanner {
       const solPrice = await priceService.getPriceUsd(SOL_MINT);
       const profitUsd = profitSol * solPrice;
       
-      // Use configurable minimum profit threshold
+      // Show result for transparency
       if (profitUsd < config.trading.minProfitUsd) {
+        console.log(`      👉 Result: ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: $${profitUsd.toFixed(4)} | ❌ Too low (min $${config.trading.minProfitUsd})`);
         return null;
       }
       
-      // FOUND PROFITABLE OPPORTUNITY! (only log profitable ones)
-      console.log(`💰 PROFITABLE CYCLE: SOL→${pair.name}→SOL | ${(startSolAmount / 1e9).toFixed(2)} SOL → ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: ${profitSol.toFixed(6)} SOL ($${profitUsd.toFixed(4)})`);
+      // FOUND PROFITABLE OPPORTUNITY!
+      console.log(`      💰 PROFITABLE! ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: $${profitUsd.toFixed(4)} | ✅ ABOVE THRESHOLD!`);
 
       // Calculate price impact
       const forwardImpact = parseFloat(forwardQuote.priceImpactPct || '0');

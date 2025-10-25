@@ -349,20 +349,21 @@ export class PriorityFeeOptimizer {
 
   /**
    * Start monitoring fees periodically
-   * OPTIMIZED: Reduced logging frequency (every 60s instead of 10s)
+   * Balanced logging: Every 30 seconds
    */
   private startFeeMonitoring(): void {
-    console.log('📊 Starting priority fee monitoring (low verbosity mode)...');
+    console.log('📊 Starting priority fee monitoring...');
     
     let updateCount = 0;
-    // Update fees every 10 seconds but only log every 60 seconds
+    // Update fees every 10 seconds but only log every 30 seconds
     this.updateTimer = setInterval(async () => {
       try {
         const analysis = await this.analyzeFees();
         updateCount++;
-        // Only log every 6th update (once per minute)
-        if (updateCount % 6 === 0) {
-          console.log(`📊 Fee update - Median: ${analysis.currentMedian / 1e9} SOL, Congestion: ${analysis.congestionLevel}`);
+        // Log every 3rd update (once per 30 seconds)
+        if (updateCount % 3 === 0) {
+          const time = new Date().toLocaleTimeString();
+          console.log(`📊 [${time}] Network fees - Median: ${(analysis.currentMedian / 1e9).toFixed(6)} SOL | Congestion: ${analysis.congestionLevel}`);
         }
       } catch (error) {
         console.error('❌ Fee monitoring error:', error);
