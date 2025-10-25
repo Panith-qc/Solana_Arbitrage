@@ -56,6 +56,22 @@ echo ""
 echo "✅ All secrets configured"
 echo ""
 
+# Grant secret access permissions
+echo "🔑 Granting secret access to Cloud Run service account..."
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+for SECRET in helius-rpc-url helius-api-key jupiter-ultra-api-key jito-tip-accounts; do
+  gcloud secrets add-iam-policy-binding $SECRET \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --quiet 2>/dev/null && echo "   ✅ $SECRET permissions granted" || echo "   ✓ $SECRET already has permissions"
+done
+
+echo ""
+echo "✅ Permissions configured"
+echo ""
+
 # Deploy to Cloud Run
 echo "🏗️  Deploying to Cloud Run (takes 5-8 minutes)..."
 echo ""
