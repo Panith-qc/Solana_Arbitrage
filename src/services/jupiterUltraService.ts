@@ -102,6 +102,34 @@ export class JupiterUltraService {
   }
 
   /**
+   * Fetch with timeout to prevent infinite hangs
+   * CRITICAL FIX: All API calls MUST have timeout to prevent 30s scan hangs
+   */
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    timeoutMs: number = 5000
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${timeoutMs}ms`);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Step 1: Create order (get quote and route)
    * Ultra automatically selects best liquidity source
    */
@@ -116,7 +144,7 @@ export class JupiterUltraService {
     this.metrics.totalOrders++;
 
     try {
-      const response = await fetch(`${this.baseUrl}/order`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/order`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -134,7 +162,7 @@ export class JupiterUltraService {
             predictiveRouting: true,
           },
         }),
-      });
+      }, 5000); // 5 second timeout
 
       if (!response.ok) {
         throw new Error(`Ultra Order API error: ${response.status}`);
@@ -176,7 +204,7 @@ export class JupiterUltraService {
     const startTime = Date.now();
 
     try {
-      const response = await fetch(`${this.baseUrl}/execute`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -187,7 +215,7 @@ export class JupiterUltraService {
           wallet,
           priorityFee,
         }),
-      });
+      }, 10000); // 10 second timeout for execution
 
       if (!response.ok) {
         throw new Error(`Ultra Execute API error: ${response.status}`);
@@ -223,11 +251,11 @@ export class JupiterUltraService {
    */
   async getHoldings(wallet: string): Promise<UltraHoldingsResponse | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/holdings?wallet=${wallet}`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/holdings?wallet=${wallet}`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
         },
-      });
+      }, 3000); // 3 second timeout
 
       if (!response.ok) {
         throw new Error(`Ultra Holdings API error: ${response.status}`);
@@ -247,11 +275,11 @@ export class JupiterUltraService {
    */
   async searchToken(query: string): Promise<any[] | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/search?q=${encodeURIComponent(query)}`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/search?q=${encodeURIComponent(query)}`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
         },
-      });
+      }, 2000); // 2 second timeout
 
       if (!response.ok) {
         throw new Error(`Ultra Search API error: ${response.status}`);
@@ -270,11 +298,11 @@ export class JupiterUltraService {
    */
   async checkTokenSecurity(mint: string): Promise<any | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/shield?mint=${mint}`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/shield?mint=${mint}`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
         },
-      });
+      }, 2000); // 2 second timeout
 
       if (!response.ok) {
         throw new Error(`Ultra Shield API error: ${response.status}`);

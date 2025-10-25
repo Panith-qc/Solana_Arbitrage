@@ -1,7 +1,7 @@
 // ADVANCED SANDWICH ENGINE - IMPLEMENTING ALL PDF TECHNIQUES
 // Based on "Profitable Solana Sandwich Bots: Strategies and Techniques"
 
-import { realJupiterService } from './realJupiterService';
+import { getJupiterUltraService } from './jupiterUltraService';
 import { productionWalletManager } from './productionWalletManager';
 
 interface SandwichOpportunity {

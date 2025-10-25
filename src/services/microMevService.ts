@@ -1,4 +1,4 @@
-import { realJupiterService } from './realJupiterService';
+import { getJupiterUltraService } from './jupiterUltraService';
 
 export interface MevOpportunity {
   id: string;

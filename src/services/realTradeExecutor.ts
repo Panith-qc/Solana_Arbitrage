@@ -2,7 +2,7 @@
 // Only executes trades that are profitable AFTER all fees
 
 import { Connection, Keypair, Transaction, VersionedTransaction, PublicKey } from '@solana/web3.js';
-import { realJupiterService } from './realJupiterService';
+import { getJupiterUltraService } from './jupiterUltraService';
 import { priorityFeeOptimizer } from './priorityFeeOptimizer';
 import { jitoBundleService } from './jitoBundleService';
 

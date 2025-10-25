@@ -1,6 +1,6 @@
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
-import { realJupiterService } from './realJupiterService';
+import { getJupiterUltraService } from './jupiterUltraService';
 
 export interface TokenBalance {
   mint: string;

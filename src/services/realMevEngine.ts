@@ -1,7 +1,7 @@
 // REAL MEV ENGINE - LIVE SOLANA MEV TRADING
 // Scans for actual MEV opportunities and executes real trades
 
-import { realJupiterService } from './realJupiterService';
+import { getJupiterUltraService } from './jupiterUltraService';
 import { realWalletManager } from './realWalletManager';
 
 interface RealMevOpportunity {

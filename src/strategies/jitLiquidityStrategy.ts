@@ -2,7 +2,7 @@
 // Add liquidity just before large swaps, remove immediately after to capture fees
 
 import { rateLimiter } from '../utils/rateLimiter';
-import { realJupiterService } from '../services/realJupiterService';
+import { getJupiterUltraService } from '../services/jupiterUltraService';
 import { priceService } from '../services/priceService';
 import { tradingConfigManager } from '../config/tradingConfig';
 
