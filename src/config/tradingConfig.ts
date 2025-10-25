@@ -94,11 +94,11 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   },
 
   scanner: {
-    scanIntervalMs: 2000, // Fast scans every 2 seconds
+    scanIntervalMs: 3000, // OPTIMIZED: 3 seconds for better rate limit management
     circuitBreakerFailureThreshold: 5,
     circuitBreakerRecoveryTimeoutMs: 30000, // 30 seconds
     maxOpportunities: 5, // Allow more opportunities
-    tokenCheckDelayMs: 50, // Minimal delay - rate limiter handles it
+    tokenCheckDelayMs: 0, // OPTIMIZED: No delay - batching handles everything
     profitCaptureRate: 0.8, // 80% profit capture rate
   },
 

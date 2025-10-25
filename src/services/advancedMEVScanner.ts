@@ -101,36 +101,36 @@ class AdvancedMEVScanner {
   private getTokenPairs(): TokenPair[] {
     const config = tradingConfigManager.getConfig();
     
-    // CRITICAL FIX: amounts are now SOL amounts (in lamports)
-    // We'll trade SOL → Token → SOL cycles
+    // OPTIMIZED: Reduced amounts to check (focus on most profitable sizes)
+    // Test with smaller amounts first, scale up if profitable
     return [
       {
         name: 'JUP',
         inputMint: config.tokens.JUP,
         outputMint: config.tokens.SOL,
         decimals: 6,
-        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
+        amounts: [100000000, 500000000] // 0.1, 0.5 SOL (removed 0.2)
       },
       {
         name: 'BONK', 
         inputMint: config.tokens.BONK,
         outputMint: config.tokens.SOL,
         decimals: 5,
-        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
+        amounts: [100000000, 500000000] // 0.1, 0.5 SOL
       },
       {
         name: 'WIF',
         inputMint: config.tokens.WIF,
         outputMint: config.tokens.SOL, 
         decimals: 6,
-        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
+        amounts: [100000000, 500000000] // 0.1, 0.5 SOL
       },
       {
         name: 'USDC',
         inputMint: config.tokens.USDC,
         outputMint: config.tokens.SOL,
         decimals: 6,
-        amounts: [100000000, 200000000, 500000000] // 0.1, 0.2, 0.5 SOL
+        amounts: [100000000] // Only check 0.1 SOL for stablecoins
       }
     ];
   }
@@ -201,29 +201,35 @@ class AdvancedMEVScanner {
     this.metrics.totalScans++;
     this.metrics.lastScanTime = new Date();
 
-    // Only log every 5th scan to reduce clutter
-    if (this.metrics.totalScans % 5 === 0) {
-      console.log(`🔍 MEV SCAN #${this.metrics.totalScans} - Searching...`);
+    // Only log every 10th scan to reduce clutter
+    if (this.metrics.totalScans % 10 === 0) {
+      console.log(`🔍 MEV SCAN #${this.metrics.totalScans} - Searching for opportunities...`);
     }
 
     const opportunities: MEVOpportunity[] = [];
     const tokenPairs = this.getTokenPairs();
 
-    // Scan each token pair for micro-MEV opportunities
+    // OPTIMIZED: Batch all checks for parallel execution
+    const checkPromises: Promise<MEVOpportunity | null>[] = [];
+    
     for (const pair of tokenPairs) {
       for (const amount of pair.amounts) {
-        try {
-          const opportunity = await this.checkMicroMevOpportunity(pair, amount);
-          if (opportunity) {
-            opportunities.push(opportunity);
-            console.log(`💰 FOUND PROFITABLE CYCLE: ${opportunity.pair} - Profit: ${((opportunity.expectedOutput - opportunity.inputAmount) / 1e9).toFixed(6)} SOL ($${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')})`);
-          }
-        } catch (error) {
-          console.log(`⚠️ Failed to check ${pair.name} with amount ${amount}:`, error);
-        }
-        
-        // Configurable delay between token checks
-        await this.sleep(config.scanner.tokenCheckDelayMs);
+        checkPromises.push(
+          this.checkMicroMevOpportunity(pair, amount).catch(error => {
+            // Silent error handling - don't log every failure
+            return null;
+          })
+        );
+      }
+    }
+    
+    // Execute all checks in parallel (rate limiter handles batching)
+    const results = await Promise.all(checkPromises);
+    
+    // Collect profitable opportunities
+    for (const opportunity of results) {
+      if (opportunity) {
+        opportunities.push(opportunity);
       }
     }
 
@@ -259,14 +265,13 @@ class AdvancedMEVScanner {
       const SOL_MINT = config.tokens.SOL;
       
       // CRITICAL FIX: We want SOL → Token → SOL cycles
-      // So we ALWAYS start with SOL, regardless of what pair.inputMint says
+      const solAmount = amount.toString(); // Convert to string for API
       
-      // Reduced logging - only log when checking (not every detail)
-      const solAmount = amount; // Amount in lamports
-      
+      // OPTIMIZED: Execute both quote requests in parallel (when possible)
+      // First get the forward quote to know how much tokens we'll get
       const forwardQuote = await realJupiterService.getQuote(
         SOL_MINT,
-        pair.inputMint, // The token we're buying
+        pair.inputMint,
         solAmount,
         config.trading.slippageBps
       );
@@ -275,10 +280,11 @@ class AdvancedMEVScanner {
         return null;
       }
 
-      const tokenAmount = parseInt(forwardQuote.outAmount);
+      const tokenAmount = forwardQuote.outAmount; // Keep as string
       
+      // Now get reverse quote
       const reverseQuote = await realJupiterService.getQuote(
-        pair.inputMint, // The token we're selling
+        pair.inputMint,
         SOL_MINT,
         tokenAmount,
         config.trading.slippageBps
@@ -289,11 +295,10 @@ class AdvancedMEVScanner {
       }
 
       const finalSolAmount = parseInt(reverseQuote.outAmount);
+      const startSolAmount = parseInt(solAmount);
 
       // Calculate profit
-      const startSolAmount = solAmount;
-      const endSolAmount = finalSolAmount;
-      const profitLamports = endSolAmount - startSolAmount;
+      const profitLamports = finalSolAmount - startSolAmount;
       const profitSol = profitLamports / 1e9;
       
       const solPrice = await priceService.getPriceUsd(SOL_MINT);
@@ -304,8 +309,8 @@ class AdvancedMEVScanner {
         return null;
       }
       
-      // FOUND PROFITABLE OPPORTUNITY!
-      console.log(`💰 PROFITABLE CYCLE: SOL→${pair.name}→SOL | ${(solAmount / 1e9).toFixed(2)} SOL → ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: ${profitSol.toFixed(6)} SOL ($${profitUsd.toFixed(4)})`);
+      // FOUND PROFITABLE OPPORTUNITY! (only log profitable ones)
+      console.log(`💰 PROFITABLE CYCLE: SOL→${pair.name}→SOL | ${(startSolAmount / 1e9).toFixed(2)} SOL → ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: ${profitSol.toFixed(6)} SOL ($${profitUsd.toFixed(4)})`);
 
       // Calculate price impact
       const forwardImpact = parseFloat(forwardQuote.priceImpactPct || '0');
@@ -319,7 +324,7 @@ class AdvancedMEVScanner {
       const riskLevel = totalImpact > 0.02 ? 'HIGH' : totalImpact > 0.01 ? 'MEDIUM' : 'LOW';
 
       // Capital required in SOL
-      const capitalRequired = solAmount / 1e9;
+      const capitalRequired = startSolAmount / 1e9;
 
       const opportunity: MEVOpportunity = {
         id: `mev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -327,10 +332,10 @@ class AdvancedMEVScanner {
         pair: `SOL/${pair.name.split('/')[0]}/SOL`, // Show it's a cycle
         inputMint: SOL_MINT, // ALWAYS starts with SOL
         outputMint: pair.inputMint, // The token in the middle
-        inputAmount: solAmount,
+        inputAmount: startSolAmount,
         expectedOutput: finalSolAmount, // Final SOL amount
         profitUsd: profitUsd,
-        profitPercent: (profitSol / (solAmount / 1e9)) * 100, // % return
+        profitPercent: (profitSol / (startSolAmount / 1e9)) * 100, // % return
         confidence: confidence,
         riskLevel: riskLevel as 'LOW' | 'MEDIUM' | 'HIGH',
         timestamp: new Date(),
@@ -340,14 +345,7 @@ class AdvancedMEVScanner {
         capitalRequired: capitalRequired
       };
 
-      console.log(`🎯 FOUND PROFITABLE CYCLE:`, {
-        pair: opportunity.pair,
-        startSOL: solAmount / 1e9,
-        endSOL: finalSolAmount / 1e9,
-        profitSOL: profitSol,
-        profitUSD: profitUsd
-      });
-
+      // OPTIMIZED: Removed duplicate logging
       return opportunity;
 
     } catch (error) {

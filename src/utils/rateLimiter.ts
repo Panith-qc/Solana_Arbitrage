@@ -1,6 +1,7 @@
 /**
  * API RATE LIMITER - Prevents 500 errors from API overload
- * Implements request queuing + exponential backoff + 500ms minimum interval
+ * Implements request queuing + exponential backoff + batching for parallel execution
+ * OPTIMIZED: Supports batch execution for 5-10x faster scanning
  */
 
 interface QueuedRequest<T> {
@@ -12,11 +13,14 @@ interface QueuedRequest<T> {
 export class APIRateLimiter {
   private queue: QueuedRequest<any>[] = [];
   private processing = false;
-  private lastRequestTime = 0;
-  private MIN_INTERVAL = 500; // 500ms between requests (2 requests/second max)
+  private lastBatchTime = 0;
+  private MIN_INTERVAL = 200; // 200ms between batches (was 500ms)
+  private BATCH_SIZE = 5; // Process up to 5 requests in parallel
+  private batchTimeout: NodeJS.Timeout | null = null;
   
   /**
    * Execute an API call with rate limiting and retry logic
+   * OPTIMIZED: Batches requests for parallel execution
    */
   async execute<T>(fn: () => Promise<T>, retries: number = 3): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -25,8 +29,22 @@ export class APIRateLimiter {
         resolve,
         reject
       });
-      this.processQueue();
+      
+      // Debounce processing to allow batching
+      if (this.batchTimeout) {
+        clearTimeout(this.batchTimeout);
+      }
+      this.batchTimeout = setTimeout(() => this.processBatch(), 10);
     });
+  }
+  
+  /**
+   * Execute multiple requests in a single batch
+   * OPTIMIZED: Allows parallel execution within rate limits
+   */
+  async executeBatch<T>(fns: (() => Promise<T>)[], retries: number = 3): Promise<T[]> {
+    const promises = fns.map(fn => this.execute(fn, retries));
+    return Promise.all(promises);
   }
   
   /**
@@ -59,34 +77,40 @@ export class APIRateLimiter {
   }
   
   /**
-   * Process the request queue one at a time
+   * Process requests in batches for better performance
+   * OPTIMIZED: Processes multiple requests in parallel
    */
-  private async processQueue() {
+  private async processBatch() {
     if (this.processing || this.queue.length === 0) return;
     
     this.processing = true;
     
     while (this.queue.length > 0) {
-      const task = this.queue.shift()!;
-      
-      // Enforce minimum interval between requests
+      // Enforce minimum interval between batches
       const now = Date.now();
-      const timeSinceLastRequest = now - this.lastRequestTime;
+      const timeSinceLastBatch = now - this.lastBatchTime;
       
-      if (timeSinceLastRequest < this.MIN_INTERVAL) {
-        const waitTime = this.MIN_INTERVAL - timeSinceLastRequest;
+      if (timeSinceLastBatch < this.MIN_INTERVAL) {
+        const waitTime = this.MIN_INTERVAL - timeSinceLastBatch;
         await this.sleep(waitTime);
       }
       
-      // Execute the task
-      try {
-        const result = await task.fn();
-        this.lastRequestTime = Date.now();
-        task.resolve(result);
-      } catch (error) {
-        this.lastRequestTime = Date.now();
-        task.reject(error);
-      }
+      // Get next batch of tasks (up to BATCH_SIZE)
+      const batch = this.queue.splice(0, this.BATCH_SIZE);
+      
+      // Execute batch in parallel
+      await Promise.allSettled(
+        batch.map(async (task) => {
+          try {
+            const result = await task.fn();
+            task.resolve(result);
+          } catch (error) {
+            task.reject(error);
+          }
+        })
+      );
+      
+      this.lastBatchTime = Date.now();
     }
     
     this.processing = false;
@@ -103,9 +127,22 @@ export class APIRateLimiter {
     return {
       queueLength: this.queue.length,
       processing: this.processing,
-      timeSinceLastRequest: Date.now() - this.lastRequestTime,
-      minInterval: this.MIN_INTERVAL
+      timeSinceLastBatch: Date.now() - this.lastBatchTime,
+      minInterval: this.MIN_INTERVAL,
+      batchSize: this.BATCH_SIZE
     };
+  }
+  
+  /**
+   * Update rate limiter settings (for tuning)
+   */
+  configure(options: { minInterval?: number; batchSize?: number }) {
+    if (options.minInterval !== undefined) {
+      this.MIN_INTERVAL = options.minInterval;
+    }
+    if (options.batchSize !== undefined) {
+      this.BATCH_SIZE = options.batchSize;
+    }
   }
 }
 

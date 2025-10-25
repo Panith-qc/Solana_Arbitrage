@@ -24,7 +24,11 @@ export interface JupiterSwapResult {
 
 export class RealJupiterService {
   private baseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
-  // Rate limiting now handled by rateLimiter utility (500ms intervals + queue)
+  // Rate limiting now handled by rateLimiter utility (200ms batches + queue)
+  
+  // OPTIMIZED: Quote caching to reduce duplicate API calls
+  private quoteCache = new Map<string, { quote: JupiterQuote; timestamp: number }>()
+  private CACHE_TTL = 2000 // 2 second cache (very short for real-time data)
 
   async getQuote(
     inputMint: string,
@@ -32,10 +36,16 @@ export class RealJupiterService {
     amount: string,
     slippageBps: number = 50
   ): Promise<JupiterQuote> {
-    console.log('🔄 Getting REAL Jupiter quote via Helius MEV Service (rate limited)...')
+    // OPTIMIZED: Check cache first to avoid duplicate API calls
+    const cacheKey = `${inputMint}-${outputMint}-${amount}-${slippageBps}`
+    const cached = this.quoteCache.get(cacheKey)
+    
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      return cached.quote
+    }
     
     // BUG FIX: Use rate limiter with exponential backoff (no more 500 errors!)
-    return rateLimiter.execute(async () => {
+    const quote = await rateLimiter.execute(async () => {
       const response = await fetch(`${this.baseUrl}/helius-mev-service`, {
         method: 'POST',
         headers: {
@@ -60,14 +70,33 @@ export class RealJupiterService {
         throw new Error(`Helius MEV Service error: ${result.error}`)
       }
 
-      console.log('✅ REAL Jupiter quote received via Helius MEV Service:', {
-        inAmount: result.data.inAmount,
-        outAmount: result.data.outAmount,
-        source: result.source
+      // OPTIMIZED: Cache the quote for reuse
+      this.quoteCache.set(cacheKey, {
+        quote: result.data,
+        timestamp: Date.now()
       })
-
+      
       return result.data;
     }, 3); // Retry up to 3 times with exponential backoff
+    
+    return quote
+  }
+  
+  /**
+   * Clear quote cache (for testing or after config changes)
+   */
+  clearCache(): void {
+    this.quoteCache.clear()
+  }
+  
+  /**
+   * Get cache statistics
+   */
+  getCacheStats() {
+    return {
+      size: this.quoteCache.size,
+      ttl: this.CACHE_TTL
+    }
   }
 
   async getSwapTransaction(
