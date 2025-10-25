@@ -4,6 +4,7 @@
 import { tradingConfigManager } from '../config/tradingConfig';
 import { priceService } from './priceService';
 import { realJupiterService } from './realJupiterService';
+import { rateLimiter } from '../utils/rateLimiter';
 
 interface JupiterQuote {
   inputMint: string;
@@ -79,6 +80,10 @@ class AdvancedMEVScanner {
   private scanInterval: NodeJS.Timeout | null = null;
   private onOpportunityCallback: ((opportunities: MEVOpportunity[]) => void) | null = null;
   private currentOpportunities: MEVOpportunity[] = [];
+  // Rolling cursor to avoid re-checking all pairs each scan
+  private scanCursor: { pairIndex: number; amountIndex: number } = { pairIndex: 0, amountIndex: 0 };
+  // Remember last computed per-scan work to tune delay
+  private lastMaxChecks: number = 0;
   
   // Metrics tracking
   private metrics: ScannerMetrics = {
@@ -183,8 +188,14 @@ class AdvancedMEVScanner {
         await this.performScan();
         this.circuitBreaker.failureCount = 0; // Reset on success
         
-        // Rate limiting between scans - configurable
-        await this.sleep(config.scanner.scanIntervalMs);
+        // Enforce a minimum delay between scans based on actual API throughput
+        const minInterval = rateLimiter.getStats().minInterval; // ms between API calls
+        const perCheckCostMs = (2 * minInterval) + (config.scanner.tokenCheckDelayMs || 50); // 2 quotes + token delay
+        const computedMinDelay = Math.max(
+          config.scanner.scanIntervalMs,
+          (this.lastMaxChecks > 0 ? this.lastMaxChecks : 1) * perCheckCostMs
+        );
+        await this.sleep(computedMinDelay);
         
       } catch (error) {
         console.error('❌ Scan failed:', error);
@@ -209,22 +220,63 @@ class AdvancedMEVScanner {
     const opportunities: MEVOpportunity[] = [];
     const tokenPairs = this.getTokenPairs();
 
-    // Scan each token pair for micro-MEV opportunities
-    for (const pair of tokenPairs) {
-      for (const amount of pair.amounts) {
-        try {
-          const opportunity = await this.checkMicroMevOpportunity(pair, amount);
-          if (opportunity) {
-            opportunities.push(opportunity);
-            console.log(`💰 FOUND PROFITABLE CYCLE: ${opportunity.pair} - Profit: ${((opportunity.expectedOutput - opportunity.inputAmount) / 1e9).toFixed(6)} SOL ($${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')})`);
-          }
-        } catch (error) {
-          console.log(`⚠️ Failed to check ${pair.name} with amount ${amount}:`, error);
-        }
-        
-        // Configurable delay between token checks
-        await this.sleep(config.scanner.tokenCheckDelayMs);
+    // Determine how much work to do this scan based on interval and API limits
+    const determineMaxChecks = (): number => {
+      const minInterval = rateLimiter.getStats().minInterval; // ms
+      const perCheckCostMs = (2 * minInterval) + (config.scanner.tokenCheckDelayMs || 50);
+      const targetWindowMs = Math.max(config.scanner.scanIntervalMs, perCheckCostMs);
+      // Aim to keep each scan under the target window
+      const checks = Math.max(1, Math.floor(targetWindowMs / perCheckCostMs));
+      // Bound checks to avoid bursty behavior
+      return Math.min(checks, 4); // cap at 4 checks per scan
+    };
+
+    const maxChecksThisScan = determineMaxChecks();
+    this.lastMaxChecks = maxChecksThisScan;
+
+    // Pre-fetch SOL price once per scan (cached subsequently)
+    const SOL_MINT = tradingConfigManager.getConfig().tokens.SOL;
+    let solPrice = 0;
+    try {
+      solPrice = await priceService.getPriceUsd(SOL_MINT);
+    } catch {
+      // Use conservative fallback handled inside check function as needed
+    }
+
+    // Build a small plan of (pair, amount) to check this scan using rolling cursor
+    const plan: Array<{ pair: TokenPair; amount: number }> = [];
+    let pi = this.scanCursor.pairIndex;
+    let ai = this.scanCursor.amountIndex;
+    for (let i = 0; i < maxChecksThisScan; i++) {
+      const pair = tokenPairs[pi];
+      const amount = pair.amounts[ai];
+      plan.push({ pair, amount });
+      // Advance cursor
+      ai++;
+      if (ai >= pair.amounts.length) {
+        ai = 0;
+        pi = (pi + 1) % tokenPairs.length;
       }
+    }
+    // Persist cursor for the next scan
+    this.scanCursor.pairIndex = pi;
+    this.scanCursor.amountIndex = ai;
+
+    // Execute the plan sequentially (respects global rate limiter)
+    for (const { pair, amount } of plan) {
+      try {
+        const opportunity = await this.checkMicroMevOpportunity(pair, amount, solPrice);
+        if (opportunity) {
+          opportunities.push(opportunity);
+          console.log(
+            `💰 FOUND PROFITABLE CYCLE: ${opportunity.pair} - Profit: ${((opportunity.expectedOutput - opportunity.inputAmount) / 1e9).toFixed(6)} SOL ($${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')})`
+          );
+        }
+      } catch (error) {
+        console.log(`⚠️ Failed to check ${pair.name} with amount ${amount}:`, error);
+      }
+      // Configurable delay between token checks
+      await this.sleep(config.scanner.tokenCheckDelayMs);
     }
 
     // Limit opportunities to configured maximum
@@ -253,7 +305,7 @@ class AdvancedMEVScanner {
     }
   }
 
-  private async checkMicroMevOpportunity(pair: TokenPair, amount: number): Promise<MEVOpportunity | null> {
+  private async checkMicroMevOpportunity(pair: TokenPair, amount: number, solPrice?: number): Promise<MEVOpportunity | null> {
     try {
       const config = tradingConfigManager.getConfig();
       const SOL_MINT = config.tokens.SOL;
@@ -296,8 +348,9 @@ class AdvancedMEVScanner {
       const profitLamports = endSolAmount - startSolAmount;
       const profitSol = profitLamports / 1e9;
       
-      const solPrice = await priceService.getPriceUsd(SOL_MINT);
-      const profitUsd = profitSol * solPrice;
+      // Use pre-fetched SOL price when available to avoid redundant API calls/logs
+      const effectiveSolPrice = (solPrice != null && !isNaN(solPrice)) ? solPrice : await priceService.getPriceUsd(SOL_MINT);
+      const profitUsd = profitSol * effectiveSolPrice;
       
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
