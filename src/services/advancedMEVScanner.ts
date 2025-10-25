@@ -201,12 +201,12 @@ class AdvancedMEVScanner {
     this.metrics.totalScans++;
     this.metrics.lastScanTime = new Date();
 
+    const opportunities: MEVOpportunity[] = [];
+    const tokenPairs = this.getTokenPairs();
+    
     // CRITICAL: Log EVERY scan so user sees real-time activity
     const scanTime = new Date().toLocaleTimeString();
     console.log(`🔍 [${scanTime}] MEV SCAN #${this.metrics.totalScans} - Checking ${tokenPairs.length} tokens...`);
-
-    const opportunities: MEVOpportunity[] = [];
-    const tokenPairs = this.getTokenPairs();
 
     // OPTIMIZED: Batch all checks for parallel execution
     const checkPromises: Promise<MEVOpportunity | null>[] = [];
