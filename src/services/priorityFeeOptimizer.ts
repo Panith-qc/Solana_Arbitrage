@@ -2,7 +2,7 @@
 // Dynamic priority fee calculation to minimize costs while maintaining competitiveness
 // Reduces gas costs by 20-40% through intelligent fee estimation
 
-import { Connection, PublicKey } from '@solana/web3.js';
+import { Connection } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
 
 export interface PriorityFeeRecommendation {
@@ -37,7 +37,7 @@ export class PriorityFeeOptimizer {
   private connection: Connection;
   private feeHistory: number[] = [];
   private readonly MAX_HISTORY = 100;
-  private readonly UPDATE_INTERVAL = 10000; // 10 seconds
+  private readonly UPDATE_INTERVAL = 15000; // 15 seconds to reduce chatter and load
   private updateTimer?: NodeJS.Timeout;
 
   // Base fee levels (in lamports)
@@ -114,8 +114,7 @@ export class PriorityFeeOptimizer {
   async analyzeFees(): Promise<FeeAnalysis> {
     try {
       // Get recent prioritization fees from network
-      const recentSlot = await this.connection.getSlot();
-      const recentFees = await this.getRecentPrioritizationFees(recentSlot);
+      const recentFees = await this.getRecentPrioritizationFees();
       
       // Update history
       this.updateFeeHistory(recentFees);
@@ -156,7 +155,7 @@ export class PriorityFeeOptimizer {
   /**
    * Get recent prioritization fees from the network
    */
-  private async getRecentPrioritizationFees(slot: number): Promise<number[]> {
+  private async getRecentPrioritizationFees(): Promise<number[]> {
     try {
       // Get recent blocks to analyze fees
       // Note: This is a simplified implementation
@@ -226,7 +225,7 @@ export class PriorityFeeOptimizer {
   /**
    * Determine congestion level
    */
-  private determineCongestion(median: number, p90: number): 'low' | 'medium' | 'high' | 'extreme' {
+  private determineCongestion(median: number): 'low' | 'medium' | 'high' | 'extreme' {
     if (median < this.BASE_FEES.low) return 'low';
     if (median < this.BASE_FEES.medium) return 'medium';
     if (median < this.BASE_FEES.high) return 'high';
@@ -299,7 +298,7 @@ export class PriorityFeeOptimizer {
   /**
    * Analyze competitor bot fees (advanced)
    */
-  async analyzeCompetitors(targetAddress?: string): Promise<CompetitorAnalysis> {
+  async analyzeCompetitors(): Promise<CompetitorAnalysis> {
     console.log('🔍 Analyzing competitor bot fees...');
     
     try {

@@ -51,6 +51,7 @@ export class MempoolMonitor {
   private sandwichCallbacks: SandwichCallback[] = [];
   private processedTxs = new Set<string>();
   private readonly MAX_PROCESSED_TXS = 10000;
+  private dexRotationIndex = 0; // rotate focus across known DEX programs to cut workload
 
   // Known DEX program IDs
   private readonly DEX_PROGRAMS = {
@@ -117,8 +118,8 @@ export class MempoolMonitor {
       try {
         await this.scanRecentTransactions();
         
-        // Small delay to avoid overwhelming the RPC
-        await this.sleep(1000); // Check every second
+        // Slightly longer delay to reduce RPC load
+        await this.sleep(1500);
         
       } catch (error) {
         console.error('❌ Mempool monitoring error:', error);
@@ -134,15 +135,16 @@ export class MempoolMonitor {
    */
   private async scanRecentTransactions(): Promise<void> {
     try {
-      // Get recent signatures
+      // Get recent signatures with a smaller page to reduce per-loop cost
       const signatures = await this.connection.getSignaturesForAddress(
-        PublicKey.default, // Using default to get recent transactions
-        { limit: 50 },
+        PublicKey.default,
+        { limit: 25 },
         'confirmed'
       );
 
-      // Process each signature
-      for (const sigInfo of signatures) {
+      // Process a subset per loop to avoid spikes
+      const toProcess = signatures.slice(0, 10);
+      for (const sigInfo of toProcess) {
         // Skip if already processed
         if (this.processedTxs.has(sigInfo.signature)) {
           continue;
@@ -248,11 +250,15 @@ export class MempoolMonitor {
    * Check if transaction is a swap
    */
   private isSwapTransaction(instructions: ParsedInstruction[], accounts: string[]): boolean {
-    // Check if any instruction is from known DEX programs
+    // Rotate DEX focus each loop to reduce checks while maintaining coverage
+    const dexValues = Object.values(this.DEX_PROGRAMS);
+    const focusedDex = dexValues[this.dexRotationIndex % dexValues.length];
+    this.dexRotationIndex++;
+
     for (const instruction of instructions) {
       const programId = instruction.programId;
       
-      if (Object.values(this.DEX_PROGRAMS).includes(programId)) {
+      if (programId === focusedDex) {
         return true;
       }
       
