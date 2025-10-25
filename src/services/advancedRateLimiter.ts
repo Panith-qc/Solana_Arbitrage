@@ -260,34 +260,28 @@ export class AdvancedRateLimiter {
 // Rate limiter configurations
 export const RATE_LIMIT_CONFIGS = {
   // Jupiter API limits
-  JUPITER_FREE: {
-    requestsPerMinute: 100,
-    requestsPerSecond: 3,
-    burstSize: 5,
+  JUPITER_LITE: {
+    requestsPerMinute: 60,
+    requestsPerSecond: 1,
+    burstSize: 2,
     tier: 'free' as const,
   },
-  JUPITER_PAID: {
-    requestsPerMinute: 600,
+  JUPITER_ULTRA: {
+    requestsPerMinute: 1200, // 20 req/sec
     requestsPerSecond: 20,
-    burstSize: 30,
+    burstSize: 50,
     tier: 'paid' as const,
   },
   
-  // Helius RPC limits
-  HELIUS_FREE: {
-    requestsPerMinute: 100,
-    requestsPerSecond: 3,
-    burstSize: 5,
-    tier: 'free' as const,
-  },
+  // Helius RPC limits (ACTUAL PAID TIER: 10 req/sec)
   HELIUS_PAID: {
-    requestsPerMinute: 1000,
-    requestsPerSecond: 30,
-    burstSize: 50,
+    requestsPerMinute: 600, // 10 req/sec = 600 req/min
+    requestsPerSecond: 10,
+    burstSize: 30,
     tier: 'paid' as const,
   },
 };
 
-// Export singleton instances
-export const jupiterRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.JUPITER_FREE);
-export const heliusRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.HELIUS_FREE);
+// Export singleton instances WITH ACTUAL PAID TIERS
+export const jupiterRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.JUPITER_ULTRA);
+export const heliusRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.HELIUS_PAID);
