@@ -4,7 +4,8 @@
 
 import { Connection, PublicKey } from '@solana/web3.js';
 
-const JUPITER_ULTRA_API = 'https://lite-api.jup.ag/ultra/v1';
+// Using standard Jupiter V6 API (reliable and public)
+const JUPITER_V6_API = 'https://quote-api.jup.ag/v6';
 const JUPITER_API_KEY = import.meta.env.JUPITER_ULTRA_API_KEY || 'bca82c35-07e5-4ab0-9a8f-7d23333ffa93';
 
 // Ultra API Types
@@ -94,7 +95,7 @@ export class JupiterUltraService {
 
   constructor() {
     this.apiKey = JUPITER_API_KEY;
-    this.baseUrl = JUPITER_V6_API;
+    this.baseUrl = JUPITER_V6_API; // Fixed: was undefined
     
     console.log('⚡ Jupiter V6 Service initialized (Ultra API fallback)');
     console.log('🚀 Using standard Jupiter V6 API for quotes');
