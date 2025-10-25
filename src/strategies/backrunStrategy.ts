@@ -62,9 +62,7 @@ class BackrunStrategy {
         const opportunity = await this.detectBackrunOpportunity();
         
         if (opportunity) {
-          console.log(`🏃 BACKRUN OPPORTUNITY: ${opportunity.targetSwap.inputMint.slice(0, 8)} → ${opportunity.targetSwap.outputMint.slice(0, 8)}`);
-          console.log(`   Target swap impact: ${(opportunity.targetSwap.priceImpact * 100).toFixed(2)}%`);
-          console.log(`   Expected profit: $${opportunity.backrunTrade.expectedProfit.toFixed(4)}`);
+          console.log(`🏃 BACKRUN FOUND: Impact ${(opportunity.targetSwap.priceImpact * 100).toFixed(2)}% | Profit: $${opportunity.backrunTrade.expectedProfit.toFixed(4)}`);
           onOpportunity(opportunity);
         }
       } catch (error) {

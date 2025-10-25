@@ -55,11 +55,7 @@ class LongTailArbitrageStrategy {
           const opportunity = await this.checkTokenArbitrage(token);
           
           if (opportunity) {
-            console.log(`🎯 LONG-TAIL ARBITRAGE: ${opportunity.token.symbol}`);
-            console.log(`   Buy: ${opportunity.buyDex} @ $${opportunity.buyPrice.toFixed(6)}`);
-            console.log(`   Sell: ${opportunity.sellDex} @ $${opportunity.sellPrice.toFixed(6)}`);
-            console.log(`   Spread: ${(opportunity.priceDifference * 100).toFixed(2)}%`);
-            console.log(`   Profit: $${opportunity.expectedProfit.toFixed(4)}`);
+            console.log(`🎯 LONG-TAIL: ${opportunity.token.symbol} | Spread ${(opportunity.priceDifference * 100).toFixed(2)}% | Profit: $${opportunity.expectedProfit.toFixed(4)}`);
             onOpportunity(opportunity);
           }
         } catch (error) {

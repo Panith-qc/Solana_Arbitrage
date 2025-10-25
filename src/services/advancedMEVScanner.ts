@@ -201,7 +201,10 @@ class AdvancedMEVScanner {
     this.metrics.totalScans++;
     this.metrics.lastScanTime = new Date();
 
-    console.log(`🔍 MEV SCAN #${this.metrics.totalScans} - Searching for opportunities...`);
+    // Only log every 5th scan to reduce clutter
+    if (this.metrics.totalScans % 5 === 0) {
+      console.log(`🔍 MEV SCAN #${this.metrics.totalScans} - Searching...`);
+    }
 
     const opportunities: MEVOpportunity[] = [];
     const tokenPairs = this.getTokenPairs();
@@ -237,15 +240,17 @@ class AdvancedMEVScanner {
     this.metrics.avgExecutionTime = (this.metrics.avgExecutionTime + (Date.now() - startTime)) / 2;
 
     // ALWAYS CALL CALLBACK - CRITICAL FIX
-    console.log(`📊 SENDING ${limitedOpportunities.length} OPPORTUNITIES TO UI`);
-    if (this.onOpportunityCallback) {
-      console.log('🎯 CALLING UI CALLBACK WITH OPPORTUNITIES:', limitedOpportunities.map(o => `${o.pair}: $${(o.profitUsd != null && !isNaN(o.profitUsd) && typeof o.profitUsd === 'number' ? o.profitUsd.toFixed(6) : '0.000000')}`));
-      this.onOpportunityCallback([...limitedOpportunities]); // Send a copy of the array
-    } else {
-      console.log('❌ NO CALLBACK REGISTERED - UI WILL NOT UPDATE');
+    // Only log if opportunities found or every 10th scan
+    if (limitedOpportunities.length > 0) {
+      console.log(`📊 SENDING ${limitedOpportunities.length} OPPORTUNITIES TO UI`);
+      console.log('🎯 Profitable opportunities:', limitedOpportunities.map(o => `${o.pair}: $${(o.profitUsd != null && !isNaN(o.profitUsd) && typeof o.profitUsd === 'number' ? o.profitUsd.toFixed(6) : '0.000000')}`));
+    } else if (this.metrics.totalScans % 10 === 0) {
+      console.log(`✅ Scan #${this.metrics.totalScans} complete: No profitable opportunities (all < $${config.trading.minProfitUsd})`);
     }
-
-    console.log(`✅ Scan complete: ${limitedOpportunities.length} opportunities found`);
+    
+    if (this.onOpportunityCallback) {
+      this.onOpportunityCallback([...limitedOpportunities]); // Send a copy of the array
+    }
   }
 
   private async checkMicroMevOpportunity(pair: TokenPair, amount: number): Promise<MEVOpportunity | null> {
@@ -256,11 +261,8 @@ class AdvancedMEVScanner {
       // CRITICAL FIX: We want SOL → Token → SOL cycles
       // So we ALWAYS start with SOL, regardless of what pair.inputMint says
       
-      console.log(`📊 CHECKING COMPLETE CYCLE: SOL → ${pair.name.split('/')[0]} → SOL`);
-      
-      // Step 1: Get quote for SOL → Token
+      // Reduced logging - only log when checking (not every detail)
       const solAmount = amount; // Amount in lamports
-      console.log(`   Step 1: SOL → Token (${solAmount / 1e9} SOL)`);
       
       const forwardQuote = await realJupiterService.getQuote(
         SOL_MINT,
@@ -270,15 +272,10 @@ class AdvancedMEVScanner {
       );
 
       if (!forwardQuote) {
-        console.log('   ❌ Forward quote failed');
         return null;
       }
 
       const tokenAmount = parseInt(forwardQuote.outAmount);
-      console.log(`   ✅ Got ${tokenAmount} tokens`);
-
-      // Step 2: Get quote for Token → SOL
-      console.log(`   Step 2: Token → SOL (${tokenAmount} tokens)`);
       
       const reverseQuote = await realJupiterService.getQuote(
         pair.inputMint, // The token we're selling
@@ -288,14 +285,12 @@ class AdvancedMEVScanner {
       );
 
       if (!reverseQuote) {
-        console.log('   ❌ Reverse quote failed');
         return null;
       }
 
       const finalSolAmount = parseInt(reverseQuote.outAmount);
-      console.log(`   ✅ Got ${finalSolAmount / 1e9} SOL back`);
 
-      // Step 3: Calculate profit
+      // Calculate profit
       const startSolAmount = solAmount;
       const endSolAmount = finalSolAmount;
       const profitLamports = endSolAmount - startSolAmount;
@@ -304,13 +299,13 @@ class AdvancedMEVScanner {
       const solPrice = await priceService.getPriceUsd(SOL_MINT);
       const profitUsd = profitSol * solPrice;
       
-      console.log(`💰 CYCLE PROFIT: Start=${startSolAmount / 1e9} SOL, End=${endSolAmount / 1e9} SOL, Profit=${profitSol.toFixed(6)} SOL ($${profitUsd.toFixed(4)})`);
-      
       // Use configurable minimum profit threshold
       if (profitUsd < config.trading.minProfitUsd) {
-        console.log(`   ❌ Profit too low: $${profitUsd.toFixed(4)} < $${config.trading.minProfitUsd}`);
         return null;
       }
+      
+      // FOUND PROFITABLE OPPORTUNITY!
+      console.log(`💰 PROFITABLE CYCLE: SOL→${pair.name}→SOL | ${(solAmount / 1e9).toFixed(2)} SOL → ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: ${profitSol.toFixed(6)} SOL ($${profitUsd.toFixed(4)})`);
 
       // Calculate price impact
       const forwardImpact = parseFloat(forwardQuote.priceImpactPct || '0');
