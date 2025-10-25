@@ -286,7 +286,7 @@ export class AutoConfigService {
 // Export singleton instance
 export const autoConfigService = new AutoConfigService(
   import.meta.env.VITE_HELIUS_RPC_URL || 
-  'https://mainnet.helius-rpc.com/?api-key=f84c0f8a-4329-40f0-8601-3fd422d718c3'
+  'https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d'
 );
 
 // Helper function for easy use

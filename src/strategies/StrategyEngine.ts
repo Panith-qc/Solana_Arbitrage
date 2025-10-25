@@ -238,10 +238,13 @@ export class StrategyEngine {
     this.isRunning = true;
     this.onOpportunityCallback = onOpportunity;
 
-    // PHASE 1: Start mempool monitoring for sandwich attacks
-    if (this.useJitoBundles) {
-      await this.startMempoolMonitoring();
-    }
+    // PHASE 1: Mempool monitoring DISABLED for Phase 2 (causes 429 rate limits)
+    // Mempool monitor scans transactions too aggressively
+    // Re-enable in Phase 3 with proper rate limiting
+    // if (this.useJitoBundles) {
+    //   await this.startMempoolMonitoring();
+    // }
+    console.log('⏸️  Mempool monitoring disabled - reduces RPC load for Phase 2');
 
     // Start capital optimizer
     await capitalOptimizer.start();

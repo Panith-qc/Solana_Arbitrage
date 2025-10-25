@@ -64,7 +64,7 @@ class ProductionWalletManager {
 
   // REAL RPC ENDPOINTS - NO MOCK
   private readonly RPC_ENDPOINTS = [
-    'https://mainnet.helius-rpc.com/?api-key=f84c0f8a-4329-40f0-8601-3fd422d718c3',
+    'https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d',
     'https://distinguished-soft-sound.solana-mainnet.quiknode.pro/dc3a1c3d732e4773cc0f83c5d58b578f053d07e0'
   ];
 

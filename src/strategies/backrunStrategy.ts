@@ -42,7 +42,7 @@ class BackrunStrategy {
     this.isMonitoring = true;
 
     // Initialize connection if needed
-    const heliusApiKey = import.meta.env.VITE_HELIUS_API_KEY || 'c3b1a2d9-41e7-46c2-b6ff-f9b7e4cb8a23';
+    const heliusApiKey = import.meta.env.VITE_HELIUS_API_KEY || '926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
     this.connection = new Connection(
       `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`,
       'confirmed'
