@@ -2,9 +2,13 @@
 // Only executes trades that are profitable AFTER all fees
 
 import { Connection, Keypair, Transaction, VersionedTransaction, PublicKey } from '@solana/web3.js';
+import { multiAPIService } from './multiAPIQuoteService';
 import { getJupiterUltraService } from './jupiterUltraService';
 import { priorityFeeOptimizer } from './priorityFeeOptimizer';
 import { jitoBundleService } from './jitoBundleService';
+
+// Use Jupiter Ultra for swap transactions (only Jupiter supports this)
+const jupiterUltra = getJupiterUltraService();
 
 export interface TradeParams {
   inputMint: string;
@@ -65,8 +69,8 @@ class RealTradeExecutor {
       ? 1_000_000 // 0.001 SOL for Jito bundles (higher for priority)
       : await priorityFeeOptimizer.getRecommendedFee('high'); // Standard priority
 
-    // Get Jupiter quote to estimate platform fees
-    const quote = await realJupiterService.getQuote(
+    // Get quote using multi-API service (auto-failover)
+    const quote = await multiAPIService.getQuote(
       inputMint,
       outputMint,
       amount,
@@ -200,7 +204,7 @@ class RealTradeExecutor {
 
       // Step 2: Get Jupiter quote for expected output
       console.log('📊 Step 2: Getting Jupiter quote...');
-      const quote = await realJupiterService.getQuote(
+      const quote = await multiAPIService.getQuote(
         params.inputMint,
         params.outputMint,
         params.amount,
@@ -247,7 +251,7 @@ class RealTradeExecutor {
 
       // Step 4: Build swap transaction
       console.log('📊 Step 4: Building swap transaction...');
-      const swapTransaction = await realJupiterService.getSwapTransaction(
+      const swapTransaction = await jupiterUltra.getSwapTransaction(
         quote,
         params.wallet.publicKey.toString(),
         params.slippageBps
