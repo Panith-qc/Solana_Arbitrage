@@ -305,11 +305,11 @@ class AdvancedMEVScanner {
         config.trading.slippageBps
       );
 
-      if (!reverseOrder) {
+      if (!reverseQuote) {
         return null;
       }
 
-      const finalSolAmount = parseInt(reverseOrder.order.outAmount);
+      const finalSolAmount = parseInt(reverseQuote.outAmount);
       const startSolAmount = parseInt(solAmount);
 
       // Calculate profit
@@ -328,9 +328,9 @@ class AdvancedMEVScanner {
       // FOUND PROFITABLE OPPORTUNITY!
       console.log(`      💰 PROFITABLE! ${(finalSolAmount / 1e9).toFixed(6)} SOL | Profit: $${profitUsd.toFixed(4)} | ✅ ABOVE THRESHOLD!`);
 
-      // Calculate price impact (Ultra provides this)
-      const forwardImpact = parseFloat(forwardOrder.order.priceImpactPct || '0');
-      const reverseImpact = parseFloat(reverseOrder.order.priceImpactPct || '0');
+      // Calculate price impact
+      const forwardImpact = parseFloat(forwardQuote.priceImpactPct || '0');
+      const reverseImpact = parseFloat(reverseQuote.priceImpactPct || '0');
       const totalImpact = Math.abs(forwardImpact) + Math.abs(reverseImpact);
       
       // Calculate confidence based on price impact
@@ -355,21 +355,7 @@ class AdvancedMEVScanner {
         confidence: confidence,
         riskLevel: riskLevel as 'LOW' | 'MEDIUM' | 'HIGH',
         timestamp: new Date(),
-        quote: {
-          // Convert Ultra format to expected format
-          inputMint: forwardOrder.order.inputMint,
-          inAmount: forwardOrder.order.inAmount,
-          outputMint: forwardOrder.order.outputMint,
-          outAmount: forwardOrder.order.outAmount,
-          otherAmountThreshold: forwardOrder.order.outAmount,
-          swapMode: 'ExactIn',
-          slippageBps: forwardOrder.order.estimatedSlippageBps,
-          platformFee: null,
-          priceImpactPct: forwardOrder.order.priceImpactPct,
-          routePlan: forwardOrder.order.routes,
-          contextSlot: 0,
-          timeTaken: forwardOrder.timeTakenMs
-        },
+        quote: forwardQuote,
         priceImpact: totalImpact,
         executionPriority: Math.floor(profitUsd * 1000),
         capitalRequired: capitalRequired
