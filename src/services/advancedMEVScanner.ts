@@ -275,7 +275,6 @@ class AdvancedMEVScanner {
     try {
       const config = tradingConfigManager.getConfig();
       const SOL_MINT = config.tokens.SOL;
-      const ultra = getJupiterUltraService();
       
       // Show what we're checking
       const solAmt = amount / 1e9;
@@ -283,28 +282,28 @@ class AdvancedMEVScanner {
       
       const solAmount = amount.toString(); // Convert to string for API
       
-      // ULTRA API: Direct quotes with MEV protection & sub-second execution
+      // Use Supabase proxy (ONLY thing that works!)
       // First get the forward quote to know how much tokens we'll get
-      const forwardOrder = await ultra.createOrder({
-        inputMint: SOL_MINT,
-        outputMint: pair.inputMint,
-        amount: solAmount,
-        slippageBps: config.trading.slippageBps
-      });
+      const forwardQuote = await realJupiterService.getQuote(
+        SOL_MINT,
+        pair.inputMint,
+        solAmount,
+        config.trading.slippageBps
+      );
 
-      if (!forwardOrder) {
+      if (!forwardQuote) {
         return null;
       }
 
-      const tokenAmount = forwardOrder.order.outAmount; // Keep as string
+      const tokenAmount = forwardQuote.outAmount; // Keep as string
       
       // Now get reverse quote
-      const reverseOrder = await ultra.createOrder({
-        inputMint: pair.outputMint,
-        outputMint: SOL_MINT,
-        amount: tokenAmount,
-        slippageBps: config.trading.slippageBps
-      });
+      const reverseQuote = await realJupiterService.getQuote(
+        pair.inputMint,
+        SOL_MINT,
+        tokenAmount,
+        config.trading.slippageBps
+      );
 
       if (!reverseOrder) {
         return null;
