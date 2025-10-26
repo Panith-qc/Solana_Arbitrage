@@ -94,7 +94,7 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   },
 
   scanner: {
-    scanIntervalMs: 10000, // FIXED: 10 seconds to prevent Jupiter rate limiting (429 errors)
+    scanIntervalMs: 5000, // OPTIMAL: 5 seconds = 120 calls/min (20% under 150 limit)
     circuitBreakerFailureThreshold: 5,
     circuitBreakerRecoveryTimeoutMs: 30000, // 30 seconds
     maxOpportunities: 5, // Allow more opportunities
