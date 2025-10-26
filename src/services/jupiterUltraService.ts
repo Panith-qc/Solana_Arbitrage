@@ -158,8 +158,8 @@ export class JupiterV6Service {
     const startTime = Date.now();
     
     try {
-      // CORRECT URL construction
-      const url = new URL(`${this.baseUrl}/quote`);
+      // CORRECT URL construction - /ultra/v1/order (not /v6/quote!)
+      const url = new URL(`${this.baseUrl}/order`);
       url.searchParams.append('inputMint', inputMint);
       url.searchParams.append('outputMint', outputMint);
       url.searchParams.append('amount', amount.toString());
@@ -178,7 +178,7 @@ export class JupiterV6Service {
       );
 
       if (!response.ok) {
-        throw new Error(`Jupiter V6 Quote API error: ${response.status}`);
+        throw new Error(`Jupiter Ultra V1 API error: ${response.status}`);
       }
 
       const data: JupiterQuoteResponse = await response.json();
