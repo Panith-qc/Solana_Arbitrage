@@ -94,7 +94,7 @@ class MultiAPIQuoteService {
     }
   ];
 
-  private requestDelay = 200; // 200ms between requests to avoid bursts
+  private requestDelay = 100; // 100ms between requests (BALANCED: fast but safe)
 
   /**
    * Auto-select best API based on:
