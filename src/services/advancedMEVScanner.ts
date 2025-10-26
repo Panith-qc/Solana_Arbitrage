@@ -285,12 +285,12 @@ class AdvancedMEVScanner {
       
       // ULTRA API: Direct quotes with MEV protection & sub-second execution
       // First get the forward quote to know how much tokens we'll get
-      const forwardOrder = await ultra.createOrder(
-        SOL_MINT,
-        pair.inputMint,
-        solAmount,
-        config.trading.slippageBps
-      );
+      const forwardOrder = await ultra.createOrder({
+        inputMint: SOL_MINT,
+        outputMint: pair.inputMint,
+        amount: solAmount,
+        slippageBps: config.trading.slippageBps
+      });
 
       if (!forwardOrder) {
         return null;
@@ -299,12 +299,12 @@ class AdvancedMEVScanner {
       const tokenAmount = forwardOrder.order.outAmount; // Keep as string
       
       // Now get reverse quote
-      const reverseOrder = await ultra.createOrder(
-        pair.inputMint,
-        SOL_MINT,
-        tokenAmount,
-        config.trading.slippageBps
-      );
+      const reverseOrder = await ultra.createOrder({
+        inputMint: pair.outputMint,
+        outputMint: SOL_MINT,
+        amount: tokenAmount,
+        slippageBps: config.trading.slippageBps
+      });
 
       if (!reverseOrder) {
         return null;
