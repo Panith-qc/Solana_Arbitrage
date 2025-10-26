@@ -552,6 +552,9 @@ export default function Phase2AutoTrading() {
           )}
         </CardContent>
       </Card>
+      
+      {/* API Health Dashboard - Always visible when trading */}
+      {isTrading && <APIHealthDashboard />}
     </div>
   );
 }

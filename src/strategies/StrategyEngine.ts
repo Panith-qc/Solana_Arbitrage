@@ -230,6 +230,19 @@ export class StrategyEngine {
       return;
     }
 
+    // TEST ALL APIs BEFORE STARTING
+    console.log('\n════════════════════════════════════════════════════════');
+    console.log('🧪 TESTING ALL API ENDPOINTS BEFORE TRADING...');
+    console.log('════════════════════════════════════════════════════════\n');
+    
+    try {
+      await multiAPIService.testAllAPIs();
+      console.log('\n✅ API TESTING COMPLETE - Ready to trade\n');
+    } catch (error) {
+      console.error('\n❌ API testing failed:', error);
+      console.log('⚠️  Continuing anyway - APIs will be tested during trading\n');
+    }
+
     console.log('🚀 STARTING ALL MEV STRATEGIES WITH PHASE 1 ENHANCEMENTS...');
     console.log(`💰 Available Capital: ${availableCapital} SOL`);
     console.log(`🎯 Jito Bundles: ${this.useJitoBundles ? 'ENABLED' : 'DISABLED'}`);

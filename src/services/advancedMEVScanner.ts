@@ -3,7 +3,7 @@
 
 import { tradingConfigManager } from '../config/tradingConfig';
 import { priceService } from './priceService';
-import { getJupiterUltraService } from './jupiterUltraService';
+import { multiAPIService } from './multiAPIQuoteService';
 
 interface JupiterQuote {
   inputMint: string;
@@ -275,7 +275,6 @@ class AdvancedMEVScanner {
     try {
       const config = tradingConfigManager.getConfig();
       const SOL_MINT = config.tokens.SOL;
-      const ultra = getJupiterUltraService();
       
       // Show what we're checking
       const solAmt = amount / 1e9;
@@ -283,9 +282,9 @@ class AdvancedMEVScanner {
       
       const solAmount = amount.toString(); // Convert to string for API
       
-      // Use Jupiter Ultra V1 (ACTUAL working endpoint!)
+      // Use Multi-API Service with automatic failover
       // First get the forward quote to know how much tokens we'll get
-      const forwardQuote = await ultra.getQuote(
+      const forwardQuote = await multiAPIService.getQuote(
         SOL_MINT,
         pair.inputMint,
         parseInt(solAmount),
@@ -299,7 +298,7 @@ class AdvancedMEVScanner {
       const tokenAmount = forwardQuote.outAmount; // Keep as string
       
       // Now get reverse quote
-      const reverseQuote = await ultra.getQuote(
+      const reverseQuote = await multiAPIService.getQuote(
         pair.inputMint,
         SOL_MINT,
         parseInt(tokenAmount),
