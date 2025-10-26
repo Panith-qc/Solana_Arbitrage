@@ -8,6 +8,7 @@ import { advancedMEVScanner, MEVOpportunity } from '../services/advancedMEVScann
 import { crossDexArbitrageService } from '../services/crossDexArbitrageService';
 import { capitalOptimizer } from '../services/capitalOptimizer';
 import { realJupiterTrading } from '../services/realJupiterTrading';
+import { multiAPIService } from '../services/multiAPIQuoteService';
 
 // PHASE 1: MEV Infrastructure
 import { jitoBundleService } from '../services/jitoBundleService';
