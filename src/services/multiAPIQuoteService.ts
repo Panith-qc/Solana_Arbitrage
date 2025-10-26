@@ -60,8 +60,44 @@ class MultiAPIQuoteService {
       name: 'Jupiter Ultra V1',
       type: 'rest',
       endpoint: 'https://lite-api.jup.ag/ultra/v1/order',
-      rateLimit: 60, // Conservative: 60 calls/min = 1 call/sec
-      priority: 1, // Primary API (fastest, most reliable)
+      rateLimit: 60, // 60 calls/min = 1 call/sec
+      priority: 1, // Primary (fastest, best routes)
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      avgLatency: 0,
+      lastError: null,
+      lastErrorTime: 0,
+      consecutiveFailures: 0,
+      callsThisMinute: 0,
+      minuteWindowStart: Date.now(),
+      isPaused: false,
+      pausedUntil: 0
+    },
+    {
+      name: 'Raydium V3',
+      type: 'rest',
+      endpoint: 'https://api-v3.raydium.io',
+      rateLimit: 300, // Higher limit, direct DEX
+      priority: 2, // Second choice - real DEX quotes
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      avgLatency: 0,
+      lastError: null,
+      lastErrorTime: 0,
+      consecutiveFailures: 0,
+      callsThisMinute: 0,
+      minuteWindowStart: Date.now(),
+      isPaused: false,
+      pausedUntil: 0
+    },
+    {
+      name: 'Orca Whirlpool',
+      type: 'rest',
+      endpoint: 'https://api.mainnet.orca.so',
+      rateLimit: 300, // Higher limit, direct DEX
+      priority: 3, // Third choice - real DEX quotes
       totalCalls: 0,
       successfulCalls: 0,
       failedCalls: 0,
@@ -78,8 +114,8 @@ class MultiAPIQuoteService {
       name: 'DexScreener',
       type: 'rest',
       endpoint: 'https://api.dexscreener.com/latest/dex',
-      rateLimit: 300, // Higher limit (verified working)
-      priority: 2, // Fallback when Jupiter is rate limited
+      rateLimit: 300,
+      priority: 4, // Last resort (price data only, not real quotes)
       totalCalls: 0,
       successfulCalls: 0,
       failedCalls: 0,
@@ -326,7 +362,172 @@ class MultiAPIQuoteService {
   }
 
   /**
-   * Fetch price from DexScreener (approximation)
+   * Fetch quote from Raydium V3 API (REAL DEX)
+   */
+  private async fetchRaydiumV3(
+    inputMint: string,
+    outputMint: string,
+    amount: number,
+    slippageBps: number = 50
+  ): Promise<JupiterQuoteResponse> {
+    // Get pool info for this pair
+    const poolsUrl = `https://api-v3.raydium.io/pools/info/mint?mint1=${inputMint}&mint2=${outputMint}&poolType=all&poolSortField=default&sortType=desc&pageSize=1&page=1`;
+    
+    const poolsResponse = await fetch(poolsUrl);
+    
+    if (!poolsResponse.ok) {
+      throw {
+        status: poolsResponse.status,
+        message: `Raydium pools API error: ${poolsResponse.status}`
+      };
+    }
+
+    const poolsData = await poolsResponse.json();
+    
+    if (!poolsData.data || !poolsData.data.data || poolsData.data.data.length === 0) {
+      throw new Error('No Raydium pool found for this pair');
+    }
+
+    const pool = poolsData.data.data[0];
+    
+    // Calculate output based on pool reserves (simplified AMM math)
+    const isMint1Input = pool.mintA.address === inputMint;
+    const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount) : parseFloat(pool.mintB.amount);
+    const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount) : parseFloat(pool.mintA.amount);
+    
+    // Constant product formula: amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
+    const amountInNum = amount / Math.pow(10, isMint1Input ? pool.mintA.decimals : pool.mintB.decimals);
+    const amountOutNum = (amountInNum * reserveOut) / (reserveIn + amountInNum);
+    const outputDecimals = isMint1Input ? pool.mintB.decimals : pool.mintA.decimals;
+    const outputAmount = Math.floor(amountOutNum * Math.pow(10, outputDecimals));
+
+    return {
+      inputMint,
+      inAmount: String(amount),
+      outputMint,
+      outAmount: String(outputAmount),
+      otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+      swapMode: 'ExactIn',
+      slippageBps,
+      platformFee: null,
+      priceImpactPct: ((amountInNum / reserveIn) * 100).toFixed(2),
+      routePlan: [{
+        swapInfo: {
+          ammKey: pool.id,
+          label: 'Raydium',
+          inputMint,
+          outputMint,
+          inAmount: String(amount),
+          outAmount: String(outputAmount),
+          feeAmount: '0',
+          feeMint: inputMint
+        }
+      }]
+    };
+  }
+
+  /**
+   * Fetch quote from Orca Whirlpool API (REAL DEX)
+   */
+  private async fetchOrcaWhirlpool(
+    inputMint: string,
+    outputMint: string,
+    amount: number,
+    slippageBps: number = 50
+  ): Promise<JupiterQuoteResponse> {
+    // Get whirlpool for this pair
+    const whirlpoolsUrl = `https://api.mainnet.orca.so/v1/whirlpool/list`;
+    
+    const response = await fetch(whirlpoolsUrl);
+    
+    if (!response.ok) {
+      throw {
+        status: response.status,
+        message: `Orca API error: ${response.status}`
+      };
+    }
+
+    const data = await response.json();
+    
+    // Find pool with matching tokens
+    const pool = data.whirlpools.find((p: any) => 
+      (p.tokenA.mint === inputMint && p.tokenB.mint === outputMint) ||
+      (p.tokenB.mint === inputMint && p.tokenA.mint === outputMint)
+    );
+
+    if (!pool) {
+      throw new Error('No Orca pool found for this pair');
+    }
+
+    // Get quote from Orca's quote endpoint
+    const quoteUrl = `https://api.mainnet.orca.so/v1/whirlpool/${pool.address}/quote?` +
+      `inputToken=${inputMint}&` +
+      `amount=${amount}&` +
+      `slippageTolerance=${slippageBps / 100}`;
+
+    const quoteResponse = await fetch(quoteUrl);
+    
+    if (!quoteResponse.ok) {
+      // Fallback: estimate using pool data
+      const isTokenA = pool.tokenA.mint === inputMint;
+      const amountInNum = amount / Math.pow(10, isTokenA ? pool.tokenA.decimals : pool.tokenB.decimals);
+      const price = parseFloat(pool.price || '1');
+      const outputAmount = Math.floor(amountInNum * price * Math.pow(10, isTokenA ? pool.tokenB.decimals : pool.tokenA.decimals));
+
+      return {
+        inputMint,
+        inAmount: String(amount),
+        outputMint,
+        outAmount: String(outputAmount),
+        otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+        swapMode: 'ExactIn',
+        slippageBps,
+        platformFee: null,
+        priceImpactPct: '0.3',
+        routePlan: [{
+          swapInfo: {
+            ammKey: pool.address,
+            label: 'Orca',
+            inputMint,
+            outputMint,
+            inAmount: String(amount),
+            outAmount: String(outputAmount),
+            feeAmount: '0',
+            feeMint: inputMint
+          }
+        }]
+      };
+    }
+
+    const quoteData = await quoteResponse.json();
+    
+    return {
+      inputMint,
+      inAmount: String(amount),
+      outputMint,
+      outAmount: quoteData.estimatedAmountOut || quoteData.outputAmount || '0',
+      otherAmountThreshold: quoteData.otherAmountThreshold || '0',
+      swapMode: 'ExactIn',
+      slippageBps,
+      platformFee: null,
+      priceImpactPct: quoteData.priceImpact || '0',
+      routePlan: [{
+        swapInfo: {
+          ammKey: pool.address,
+          label: 'Orca Whirlpool',
+          inputMint,
+          outputMint,
+          inAmount: String(amount),
+          outAmount: quoteData.estimatedAmountOut || '0',
+          feeAmount: '0',
+          feeMint: inputMint
+        }
+      }]
+    };
+  }
+
+  /**
+   * Fetch price from DexScreener (approximation - FALLBACK ONLY)
    */
   private async fetchDexScreener(
     inputMint: string,
@@ -413,6 +614,10 @@ class MultiAPIQuoteService {
         // Route to appropriate fetcher
         if (api.name === 'Jupiter Ultra V1') {
           quote = await this.fetchJupiterUltra(inputMint, outputMint, amount, slippageBps);
+        } else if (api.name === 'Raydium V3') {
+          quote = await this.fetchRaydiumV3(inputMint, outputMint, amount, slippageBps);
+        } else if (api.name === 'Orca Whirlpool') {
+          quote = await this.fetchOrcaWhirlpool(inputMint, outputMint, amount, slippageBps);
         } else if (api.name === 'DexScreener') {
           quote = await this.fetchDexScreener(inputMint, outputMint, amount);
         } else {
@@ -494,6 +699,10 @@ class MultiAPIQuoteService {
 
         if (api.name === 'Jupiter Ultra V1') {
           quote = await this.fetchJupiterUltra(SOL_MINT, USDC_MINT, testAmount);
+        } else if (api.name === 'Raydium V3') {
+          quote = await this.fetchRaydiumV3(SOL_MINT, USDC_MINT, testAmount);
+        } else if (api.name === 'Orca Whirlpool') {
+          quote = await this.fetchOrcaWhirlpool(SOL_MINT, USDC_MINT, testAmount);
         } else if (api.name === 'DexScreener') {
           quote = await this.fetchDexScreener(SOL_MINT, USDC_MINT, testAmount);
         } else {
