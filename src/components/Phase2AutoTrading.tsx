@@ -15,6 +15,7 @@ import { privateKeyWallet } from '../services/privateKeyWallet';
 import { strategyEngine, StrategyOpportunity } from '../strategies/StrategyEngine';
 import { realTradeExecutor } from '../services/realTradeExecutor';
 import { Keypair } from '@solana/web3.js';
+import { APIHealthDashboard } from './APIHealthDashboard';
 
 export default function Phase2AutoTrading() {
   const [privateKey, setPrivateKey] = useState('');

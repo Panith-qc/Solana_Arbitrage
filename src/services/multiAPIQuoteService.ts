@@ -390,10 +390,57 @@ class MultiAPIQuoteService {
 
     const pool = poolsData.data.data[0];
     
-    // Calculate output based on pool reserves (simplified AMM math)
+    // Raydium uses 'tvl' field for reserves, not 'amount'
+    // Check if this is CLMM (concentrated) or Standard pool
+    const isConcentrated = pool.type === 'Concentrated';
+    
+    if (isConcentrated) {
+      // For concentrated liquidity, use price directly
+      const price = parseFloat(pool.price || '0');
+      if (price === 0 || isNaN(price)) {
+        throw new Error('Invalid price from Raydium pool');
+      }
+      
+      const inputDecimals = pool.mintA.address === inputMint ? pool.mintA.decimals : pool.mintB.decimals;
+      const outputDecimals = pool.mintA.address === inputMint ? pool.mintB.decimals : pool.mintA.decimals;
+      
+      const amountInFloat = amount / Math.pow(10, inputDecimals);
+      const amountOutFloat = pool.mintA.address === inputMint ? amountInFloat * price : amountInFloat / price;
+      const outputAmount = Math.floor(amountOutFloat * Math.pow(10, outputDecimals));
+      
+      return {
+        inputMint,
+        inAmount: String(amount),
+        outputMint,
+        outAmount: String(outputAmount),
+        otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+        swapMode: 'ExactIn',
+        slippageBps,
+        platformFee: null,
+        priceImpactPct: '0.1',
+        routePlan: [{
+          swapInfo: {
+            ammKey: pool.id,
+            label: 'Raydium CLMM',
+            inputMint,
+            outputMint,
+            inAmount: String(amount),
+            outAmount: String(outputAmount),
+            feeAmount: '0',
+            feeMint: inputMint
+          }
+        }]
+      };
+    }
+    
+    // For standard pools, use AMM formula
     const isMint1Input = pool.mintA.address === inputMint;
-    const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount) : parseFloat(pool.mintB.amount);
-    const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount) : parseFloat(pool.mintA.amount);
+    const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount || pool.mintA.vault || '0') : parseFloat(pool.mintB.amount || pool.mintB.vault || '0');
+    const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount || pool.mintB.vault || '0') : parseFloat(pool.mintA.amount || pool.mintA.vault || '0');
+    
+    if (reserveIn === 0 || reserveOut === 0 || isNaN(reserveIn) || isNaN(reserveOut)) {
+      throw new Error('Invalid reserves from Raydium pool');
+    }
     
     // Constant product formula: amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
     const amountInNum = amount / Math.pow(10, isMint1Input ? pool.mintA.decimals : pool.mintB.decimals);
