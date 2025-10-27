@@ -58,7 +58,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --region "$REGION" \
     --platform managed \
     --allow-unauthenticated \
-    --port 5173 \
+    --port 8080 \
     --memory 2Gi \
     --cpu 2 \
     --min-instances 0 \

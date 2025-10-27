@@ -110,7 +110,7 @@ gcloud run deploy solana-mev-bot \
     --source . \
     --region us-central1 \
     --allow-unauthenticated \
-    --port 5173 \
+    --port 8080 \
     --memory 2Gi \
     --cpu 2 \
     --timeout 3600

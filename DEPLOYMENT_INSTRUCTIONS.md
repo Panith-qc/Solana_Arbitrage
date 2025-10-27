@@ -96,7 +96,7 @@ gcloud config set project YOUR_PROJECT_ID
 
 The script uses port 8080 (Cloud Run default). If needed, modify `DEPLOY_FIXED_BOT_NOW.sh`:
 ```bash
---port 5173  # Change to your preferred port
+--port 8080  # Express backend exposes 8080
 ```
 
 ---

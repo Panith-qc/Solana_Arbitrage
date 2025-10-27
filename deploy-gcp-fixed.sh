@@ -22,10 +22,13 @@ pnpm run build
 echo -e "${GREEN}✅ Build complete!${NC}"
 echo ""
 
-# Step 2: Use production Dockerfile
-echo -e "${YELLOW}📝 Step 2: Using production Dockerfile...${NC}"
-cp Dockerfile.production Dockerfile
-echo -e "${GREEN}✅ Dockerfile ready${NC}"
+# Step 2: Use backend Dockerfile with Express API (no overwrite)
+echo -e "${YELLOW}📝 Step 2: Ensuring backend Dockerfile (Express) is used...${NC}"
+if grep -q "CMD \[\"node\", \"server.js\"\]" Dockerfile ; then
+  echo -e "${GREEN}✅ Backend Dockerfile detected${NC}"
+else
+  echo -e "${YELLOW}⚠️ Dockerfile not configured for Express. Using repository Dockerfile (expects server.js).${NC}"
+fi
 echo ""
 
 # Step 3: Deploy to Cloud Run
@@ -34,7 +37,7 @@ gcloud run deploy solana-mev-bot \
     --source . \
     --region us-central1 \
     --allow-unauthenticated \
-    --port 5173 \
+    --port 8080 \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
