@@ -94,42 +94,9 @@ class MultiAPIQuoteService {
       isPaused: false,
       pausedUntil: 0
     },
-    {
-      name: 'Orca Whirlpool',
-      type: 'rest',
-      endpoint: 'https://api.mainnet.orca.so',
-      rateLimit: 300, // Higher limit, direct DEX
-      priority: 3, // Third choice - real DEX quotes
-      totalCalls: 0,
-      successfulCalls: 0,
-      failedCalls: 0,
-      avgLatency: 0,
-      lastError: null,
-      lastErrorTime: 0,
-      consecutiveFailures: 0,
-      callsThisMinute: 0,
-      minuteWindowStart: Date.now(),
-      isPaused: false,
-      pausedUntil: 0
-    },
-    {
-      name: 'DexScreener',
-      type: 'rest',
-      endpoint: 'https://api.dexscreener.com',
-      rateLimit: 300, // Price API limit
-      priority: 4, // Last resort - price validation only
-      totalCalls: 0,
-      successfulCalls: 0,
-      failedCalls: 0,
-      avgLatency: 0,
-      lastError: null,
-      lastErrorTime: 0,
-      consecutiveFailures: 0,
-      callsThisMinute: 0,
-      minuteWindowStart: Date.now(),
-      isPaused: false,
-      pausedUntil: 0
-    }
+    // ORCA DISABLED: CORS blocked on client-side (React SPA, not backend)
+    // DEXSCREENER DISABLED: Price validation breaking everything
+    // ONLY Jupiter Ultra V1 and Raydium V3 are reliable
   ];
 
   private requestDelay = 100; // 100ms between requests (BALANCED: fast but safe)
@@ -745,10 +712,11 @@ class MultiAPIQuoteService {
         const latency = Date.now() - startTime;
         this.recordSuccess(api, latency);
 
-        // ✅ Validate quote before returning (prevents fake profits)
-        if (!this.isRealisticQuote(quote, amount)) {
-          console.warn(`⚠️ ${api.name} returned unrealistic quote, trying next API`);
-          this.recordFailure(api, new Error('Unrealistic quote'));
+        // ✅ Basic validation only (NaN/zero check)
+        const outputAmt = parseFloat(quote.outAmount);
+        if (isNaN(outputAmt) || outputAmt === 0) {
+          console.warn(`⚠️ ${api.name} returned invalid output (NaN or zero), trying next API`);
+          this.recordFailure(api, new Error('Invalid output'));
           continue;
         }
 
