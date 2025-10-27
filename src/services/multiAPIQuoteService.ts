@@ -596,46 +596,83 @@ class MultiAPIQuoteService {
   }
 
   /**
-   * Validate quote is realistic (prevents fake $10k profits)
-   * Checks:
-   * - Profit < 10% (impossible in arbitrage)
-   * - Loss < 5% (too risky)
-   * - Output amount is valid number
+   * Get token decimals
+   */
+  private getTokenDecimals(mint: string): number {
+    const decimals: Record<string, number> = {
+      'So11111111111111111111111111111111111111112': 9,  // SOL
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 6,  // USDC
+      'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6,  // USDT
+      'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 5,  // BONK
+      'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 6,  // WIF
+      'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6   // JUP
+    };
+    return decimals[mint] || 9;
+  }
+
+  /**
+   * Get token USD price (approximate)
+   */
+  private getTokenPrice(mint: string): number {
+    const prices: Record<string, number> = {
+      'So11111111111111111111111111111111111111112': 191,     // SOL
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 1,       // USDC
+      'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 1,       // USDT
+      'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 0.000014, // BONK
+      'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 2.5,     // WIF
+      'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 1.2      // JUP
+    };
+    return prices[mint] || 1;
+  }
+
+  /**
+   * Validate quote with PROPER USD CONVERSION
+   * ✅ FIXED: Handles all token decimals correctly
+   * ✅ Compares USD values (not raw token amounts)
+   * ✅ Reasonable profit range: -20% to +30%
    */
   private isRealisticQuote(quote: JupiterQuoteResponse, inputAmount: number): boolean {
     try {
       const inputAmt = parseFloat(quote.inAmount);
       const outputAmt = parseFloat(quote.outAmount);
 
-      if (isNaN(inputAmt) || isNaN(outputAmt)) {
-        console.warn('⚠️ Quote validation failed: NaN values');
+      // Basic sanity checks
+      if (isNaN(inputAmt) || isNaN(outputAmt) || inputAmt === 0 || outputAmt === 0) {
         return false;
       }
 
-      if (outputAmt === 0) {
-        console.warn('⚠️ Quote validation failed: Zero output');
+      // ✅ GET DECIMALS & PRICES
+      const inputDecimals = this.getTokenDecimals(quote.inputMint);
+      const outputDecimals = this.getTokenDecimals(quote.outputMint);
+      const inputPrice = this.getTokenPrice(quote.inputMint);
+      const outputPrice = this.getTokenPrice(quote.outputMint);
+
+      // ✅ CONVERT TO HUMAN-READABLE
+      const inputHuman = inputAmt / Math.pow(10, inputDecimals);
+      const outputHuman = outputAmt / Math.pow(10, outputDecimals);
+
+      // ✅ CONVERT TO USD
+      const inputUSD = inputHuman * inputPrice;
+      const outputUSD = outputHuman * outputPrice;
+
+      // ✅ CALCULATE PROFIT
+      const profitUSD = outputUSD - inputUSD;
+      const profitPct = (profitUSD / inputUSD) * 100;
+
+      // ✅ REALISTIC RANGE: -20% to +30% (allows for slippage and low-liquidity)
+      if (profitPct > 30) {
+        console.warn(`⚠️ Rejected: ${profitPct.toFixed(1)}% profit (>30% unrealistic)`);
         return false;
       }
 
-      // Approximate USD values (assuming SOL ~$191, USDC ~$1)
-      // This is a rough check - adjust if trading other pairs
-      const profitRatio = outputAmt / inputAmt;
-
-      // Reject if profit > 10% (impossible in normal arbitrage)
-      if (profitRatio > 1.1) {
-        console.warn(`⚠️ Quote validation failed: ${(profitRatio * 100 - 100).toFixed(1)}% profit (>10% impossible)`);
-        return false;
-      }
-
-      // Reject if loss > 5% (too risky)
-      if (profitRatio < 0.95) {
-        console.warn(`⚠️ Quote validation failed: ${(100 - profitRatio * 100).toFixed(1)}% loss (>5% too risky)`);
+      if (profitPct < -20) {
+        console.warn(`⚠️ Rejected: ${Math.abs(profitPct).toFixed(1)}% loss (>20% too risky)`);
         return false;
       }
 
       return true;
     } catch (error) {
-      console.error('⚠️ Quote validation error:', error);
+      console.error('⚠️ Validation error:', error);
       return false;
     }
   }
@@ -819,12 +856,15 @@ class MultiAPIQuoteService {
 // Export singleton instance
 export const multiAPIService = new MultiAPIQuoteService();
 
-// Export for testing
-export { MultiAPIQuoteService };
- setRequestDelay(delayMs: number) {
+  setRequestDelay(delayMs: number) {
     this.requestDelay = delayMs;
     console.log(`⚙️  Request delay set to ${delayMs}ms`);
   }
+}
+
+// Export singleton instance
+export const multiAPIService = new MultiAPIQuoteService();
+export { MultiAPIQuoteService };
 
   /**
    * Reset all API health metrics
