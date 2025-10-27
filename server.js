@@ -124,8 +124,8 @@ app.post('/api/swap', async (req, res) => {
       skipUserAccountsRpcCalls: false,
     };
 
-    console.log('📡 Calling Jupiter V6 /swap...');
-    const response = await fetch('https://lite-api.jup.ag/v6/swap', {
+    console.log('📡 Calling Jupiter LEGACY /swap (swap/v1/swap)...');
+    const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

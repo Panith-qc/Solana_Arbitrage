@@ -5,8 +5,10 @@
 
 import { Connection, PublicKey } from '@solana/web3.js';
 
-// CORRECT BASE URL from Jupiter docs
+// CORRECT BASE URLS from Jupiter docs
 const JUPITER_ULTRA_BASE = 'https://lite-api.jup.ag/ultra/v1';
+const JUPITER_LEGACY_SWAP = 'https://lite-api.jup.ag/swap/v1/swap';
+const JUPITER_LEGACY_QUOTE = 'https://lite-api.jup.ag/swap/v1/quote';
 const JUPITER_PRICE_API = 'https://lite-api.jup.ag/price/v3';
 const JUPITER_API_KEY = import.meta.env.JUPITER_ULTRA_API_KEY || 'bca82c35-07e5-4ab0-9a8f-7d23333ffa93';
 
@@ -140,8 +142,7 @@ export class JupiterV6Service {
   }
 
   /**
-   * GET /ultra/v1/order - Get best price quote
-   * CORRECT ENDPOINT: https://lite-api.jup.ag/ultra/v1/quote
+   * GET /ultra/v1/order - Get best price quote (Ultra)
    * 
    * @param inputMint - Token to sell
    * @param outputMint - Token to buy
@@ -158,7 +159,6 @@ export class JupiterV6Service {
     const startTime = Date.now();
     
     try {
-      // CORRECT URL construction - /ultra/v1/order (not /ultra/v1/order!)
       const url = new URL(`${this.baseUrl}/order`);
       url.searchParams.append('inputMint', inputMint);
       url.searchParams.append('outputMint', outputMint);
@@ -315,7 +315,7 @@ export class JupiterV6Service {
 
       // Fallback: call Jupiter V6 /swap directly (lite-api supports CORS)
       const direct = await this.fetchWithTimeout(
-        `https://lite-api.jup.ag/v6/swap`,
+        JUPITER_LEGACY_SWAP,
         {
           method: 'POST',
           headers: {
