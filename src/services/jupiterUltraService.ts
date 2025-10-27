@@ -285,8 +285,8 @@ export class JupiterV6Service {
         skipUserAccountsRpcCalls: false,
       };
 
-      // Use Jupiter V6 for legacy swap execution
-      const v6BaseUrl = 'https://quote-api.jup.ag/v6';
+      // Use Jupiter V6 for legacy swap execution (lite-api, not quote-api)
+      const v6BaseUrl = 'https://lite-api.jup.ag/v6';
       
       const response = await this.fetchWithTimeout(
         `${v6BaseUrl}/swap`,

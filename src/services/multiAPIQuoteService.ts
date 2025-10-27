@@ -574,7 +574,9 @@ class MultiAPIQuoteService {
       const profitUSD = outputUSD - inputUSD;
       const profitPct = (profitUSD / inputUSD) * 100;
 
-      // ✅ Reject extreme outliers (>10000x = API error)
+      // ✅ ONLY reject extreme outliers (>10000x = API error)
+      // DO NOT validate profit/loss % - hardcoded prices are inaccurate
+      // Let scanner validate round-trip profitability (SOL → Token → SOL)
       const ratio = outputAmt / inputAmt;
       
       if (ratio > 10000 || ratio < 0.0001) {
@@ -582,13 +584,7 @@ class MultiAPIQuoteService {
         return false;
       }
 
-      // ✅ Reject unrealistic profits/losses (>15% on single swap = fake)
-      // Individual swaps should be roughly 1:1 in USD (minus fees/slippage)
-      if (Math.abs(profitPct) > 15) {
-        console.warn(`⚠️ Rejected: Unrealistic ${profitPct > 0 ? 'profit' : 'loss'} (${Math.abs(profitPct).toFixed(1)}% on single swap)`);
-        return false;
-      }
-
+      // ✅ All other quotes are valid - scanner handles profitability
       return true;
     } catch (error) {
       console.error('⚠️ Validation error:', error);

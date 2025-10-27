@@ -262,104 +262,55 @@ class RealTradeExecutor {
       console.log('📊 Step 4: Executing trade...');
       let txSignature: string;
 
-      // Check if quote is from Jupiter Ultra V1 and has requestId
-      if (quote.provider === 'Jupiter Ultra V1' && quote.requestId) {
-        console.log(`🚀 Using Jupiter Ultra V1 /execute (requestId: ${quote.requestId})`);
+      // Use V6 /swap for all trades (Ultra /execute requires signedTransaction)
+      console.log('📡 Using Jupiter V6 /swap');
+      
+      const swapResponse = await jupiterUltra.getSwapTransaction(
+        quote,
+        params.wallet.publicKey.toString(),
+        params.slippageBps
+      );
+
+      if (!swapResponse || !swapResponse.swapTransaction) {
+        throw new Error('Failed to get swap transaction from Jupiter');
+      }
+
+      // Step 5: Deserialize and sign transaction
+      console.log('📊 Step 5: Deserializing and signing transaction...');
+      
+      // Deserialize base64 transaction
+      const transactionBuf = Buffer.from(swapResponse.swapTransaction, 'base64');
+      const transaction = VersionedTransaction.deserialize(transactionBuf);
+      
+      // Sign with wallet
+      transaction.sign([params.wallet]);
+
+      // Step 6: Send to blockchain
+      console.log('📊 Step 6: Sending to Solana mainnet...');
+
+      if (params.useJito) {
+        console.log('🚀 Using Jito bundle for MEV protection...');
+        const jitoResult = await jitoBundleService.sendBundle([transaction], {
+          tipLamports: fees.priorityFeeLamports
+        });
         
-        try {
-          const executeResult = await jupiterUltra.executeOrder(
-            quote.requestId,
-            params.wallet.publicKey.toString()
-          );
-          
-          txSignature = executeResult.signature;
-          console.log(`✅ Jupiter Ultra V1 execution succeeded: ${txSignature}`);
-        } catch (error: any) {
-          console.warn(`⚠️ Jupiter Ultra V1 /execute failed: ${error.message}`);
-          console.log('🔄 Falling back to V6 /swap method...');
-          
-          // Fallback to V6 swap
-          const swapTransaction = await jupiterUltra.getSwapTransaction(
-            quote,
-            params.wallet.publicKey.toString(),
-            params.slippageBps
-          );
-          
-          // Sign and send V6 transaction
-          let transaction: Transaction | VersionedTransaction;
-          
-          if ('serialize' in swapTransaction) {
-            transaction = swapTransaction as VersionedTransaction;
-            transaction.sign([params.wallet]);
-          } else {
-            transaction = swapTransaction as Transaction;
-            transaction.partialSign(params.wallet);
-          }
-          
-          const rawTransaction = transaction.serialize();
-          txSignature = await this.connection.sendRawTransaction(rawTransaction, {
-            skipPreflight: false,
-            maxRetries: 3,
-            preflightCommitment: 'confirmed'
-          });
-          
-          await this.connection.confirmTransaction(txSignature, 'confirmed');
+        if (!jitoResult.success || !jitoResult.bundleId) {
+          throw new Error('Jito bundle failed to land');
         }
+        
+        txSignature = jitoResult.bundleId;
       } else {
-        // Use V6 /swap for non-Jupiter quotes
-        console.log('📡 Using Jupiter V6 /swap (legacy method)');
-        
-        const swapTransaction = await jupiterUltra.getSwapTransaction(
-          quote,
-          params.wallet.publicKey.toString(),
-          params.slippageBps
-        );
+        console.log('📡 Sending standard transaction...');
+        const rawTransaction = transaction.serialize();
+        txSignature = await this.connection.sendRawTransaction(rawTransaction, {
+          skipPreflight: false,
+          maxRetries: 3,
+          preflightCommitment: 'confirmed'
+        });
 
-        if (!swapTransaction) {
-          throw new Error('Failed to build swap transaction');
-        }
-
-        // Step 5: Sign transaction
-        console.log('📊 Step 5: Signing transaction...');
-        let transaction: Transaction | VersionedTransaction;
-        
-        if ('serialize' in swapTransaction) {
-          // VersionedTransaction
-          transaction = swapTransaction as VersionedTransaction;
-          transaction.sign([params.wallet]);
-        } else {
-          // Legacy Transaction
-          transaction = swapTransaction as Transaction;
-          transaction.partialSign(params.wallet);
-        }
-
-        // Step 6: Send to blockchain
-        console.log('📊 Step 6: Sending to Solana mainnet...');
-
-        if (params.useJito) {
-          console.log('🚀 Using Jito bundle for MEV protection...');
-          const jitoResult = await jitoBundleService.sendBundle([transaction], {
-            tipLamports: fees.priorityFeeLamports
-          });
-          
-          if (!jitoResult.success || !jitoResult.bundleId) {
-            throw new Error('Jito bundle failed to land');
-          }
-          
-          txSignature = jitoResult.bundleId;
-        } else {
-          console.log('📡 Sending standard transaction...');
-          const rawTransaction = transaction.serialize();
-          txSignature = await this.connection.sendRawTransaction(rawTransaction, {
-            skipPreflight: false,
-            maxRetries: 3,
-            preflightCommitment: 'confirmed'
-          });
-
-          // Wait for confirmation
-          console.log('⏳ Waiting for confirmation...');
-          await this.connection.confirmTransaction(txSignature, 'confirmed');
-        }
+        // Wait for confirmation
+        console.log('⏳ Waiting for confirmation...');
+        await this.connection.confirmTransaction(txSignature, 'confirmed');
       }
 
       const executionTimeMs = Date.now() - startTime;
