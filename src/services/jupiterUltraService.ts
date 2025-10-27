@@ -159,47 +159,72 @@ export class JupiterV6Service {
     const startTime = Date.now();
     
     try {
-      //const url = new URL(`${this.baseUrl}/order`);
-      const url = new URL(`https://lite-api.jup.ag/swap/v1/quote`);
-
-      url.searchParams.append('inputMint', inputMint);
-      url.searchParams.append('outputMint', outputMint);
-      url.searchParams.append('amount', amount.toString());
-      url.searchParams.append('slippageBps', slippageBps.toString());
-      url.searchParams.append('onlyDirectRoutes', 'false');
+      // TRY ULTRA FIRST
+      const ultraUrl = new URL(`${this.baseUrl}/order`);
+      ultraUrl.searchParams.append('inputMint', inputMint);
+      ultraUrl.searchParams.append('outputMint', outputMint);
+      ultraUrl.searchParams.append('amount', amount.toString());
+      ultraUrl.searchParams.append('slippageBps', slippageBps.toString());
+      ultraUrl.searchParams.append('onlyDirectRoutes', 'false');
+      
+      try {
+        const response = await this.fetchWithTimeout(
+          ultraUrl.toString(),
+          { method: 'GET', headers: { 'Accept': 'application/json' } },
+          5000
+        );
+  
+        if (response.ok) {
+          const data: JupiterQuoteResponse = await response.json();
+          const timeTaken = Date.now() - startTime;
+          
+          this.metrics.totalQuotes++;
+          this.metrics.successfulQuotes++;
+          this.metrics.avgQuoteTimeMs = 
+            (this.metrics.avgQuoteTimeMs * (this.metrics.totalQuotes - 1) + timeTaken) / 
+            this.metrics.totalQuotes;
+  
+          console.log(`✅ Ultra V1 quote in ${timeTaken}ms`);
+          return data;
+        }
+      } catch (ultraError: any) {
+        console.warn(`⚠️ Ultra failed, trying Legacy: ${ultraError.message}`);
+      }
+  
+      // FALLBACK TO LEGACY
+      const legacyUrl = new URL(JUPITER_LEGACY_QUOTE);
+      legacyUrl.searchParams.append('inputMint', inputMint);
+      legacyUrl.searchParams.append('outputMint', outputMint);
+      legacyUrl.searchParams.append('amount', amount.toString());
+      legacyUrl.searchParams.append('slippageBps', slippageBps.toString());
       
       const response = await this.fetchWithTimeout(
-        url.toString(),
-        {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-          },
-        },
-        5000 // 5s timeout
+        legacyUrl.toString(),
+        { method: 'GET', headers: { 'Accept': 'application/json' } },
+        5000
       );
-
+  
       if (!response.ok) {
-        throw new Error(`Jupiter Ultra V1 API error: ${response.status}`);
+        throw new Error(`Both Ultra and Legacy failed: ${response.status}`);
       }
-
+  
       const data: JupiterQuoteResponse = await response.json();
       const timeTaken = Date.now() - startTime;
-
-      // Update metrics
+  
       this.metrics.totalQuotes++;
       this.metrics.successfulQuotes++;
       this.metrics.avgQuoteTimeMs = 
         (this.metrics.avgQuoteTimeMs * (this.metrics.totalQuotes - 1) + timeTaken) / 
         this.metrics.totalQuotes;
-
+  
+      console.log(`✅ Legacy quote in ${timeTaken}ms`);
       return data;
     } catch (error: any) {
       const timeTaken = Date.now() - startTime;
       this.metrics.totalQuotes++;
       this.metrics.failedQuotes++;
       
-      console.error(`❌ Jupiter Ultra V1 Quote failed (${timeTaken}ms):`, error.message);
+      console.error(`❌ Quote failed (${timeTaken}ms):`, error.message);
       throw error;
     }
   }
