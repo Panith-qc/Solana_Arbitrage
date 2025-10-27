@@ -4,23 +4,16 @@
 pnpm install
 pnpm run build
 
-# Step 2: Create a simple Dockerfile that just serves pre-built files
-cat > Dockerfile << 'DOCKERFILE'
-FROM node:20-alpine
-WORKDIR /app
-RUN npm install -g serve
-COPY dist ./dist
-ENV PORT=5173
-EXPOSE 5173
-CMD ["serve", "-s", "dist", "-l", "5173"]
-DOCKERFILE
+# Step 2: Ensure backend Dockerfile (Express) is used (no overwrite)
+echo "Ensuring backend Dockerfile (Express) is used..."
+grep -q "CMD \[\"node\", \"server.js\"\]" Dockerfile && echo "Backend Dockerfile detected" || echo "Using repository Dockerfile (expects server.js)"
 
 # Step 3: Deploy with the fixed setup
 gcloud run deploy solana-mev-bot \
     --source . \
     --region us-central1 \
     --allow-unauthenticated \
-    --port 5173 \
+    --port 8080 \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300

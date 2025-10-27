@@ -211,7 +211,7 @@ gcloud run deploy solana-mev-bot \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
-  --port 5173
+  --port 8080
 ```
 
 ---

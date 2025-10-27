@@ -36,9 +36,13 @@ pnpm install
 pnpm run build
 ```
 
-### **Step 2: Use Fixed Dockerfile**
-```bash
-cp Dockerfile.production Dockerfile
+### **Step 2: Use Backend Dockerfile (Express)**
+Ensure your `Dockerfile` contains:
+```dockerfile
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
+CMD ["node", "server.js"]
 ```
 
 ### **Step 3: Deploy**
@@ -47,7 +51,7 @@ gcloud run deploy solana-mev-bot \
     --source . \
     --region us-central1 \
     --allow-unauthenticated \
-    --port 5173 \
+    --port 8080 \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300
@@ -110,7 +114,7 @@ cd ~/Solana_Arbitrage
 pnpm run build
 
 # 2. Use fixed Dockerfile
-cp Dockerfile.production Dockerfile
+## Note: Do NOT overwrite backend Dockerfile with static-only Dockerfile.production if you need /api routes.
 
 # 3. Deploy
 gcloud run deploy solana-mev-bot \
