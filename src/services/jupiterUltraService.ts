@@ -285,11 +285,37 @@ export class JupiterV6Service {
         skipUserAccountsRpcCalls: false,
       };
 
-      // Use backend API proxy (bypasses CORS)
-      const apiBaseUrl = window.location.origin; // Same origin as frontend
-      
-      const response = await this.fetchWithTimeout(
-        `${apiBaseUrl}/api/swap`,
+      // Prefer backend API proxy (bypasses CORS) when available
+      const apiBaseUrl = window.location.origin;
+      let response: Response | null = null;
+      let lastError: any = null;
+
+      try {
+        response = await this.fetchWithTimeout(
+          `${apiBaseUrl}/api/swap`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: JSON.stringify(swapRequest),
+          },
+          10000
+        );
+        if (response && response.ok) {
+          const data: JupiterSwapResponse = await response.json();
+          return data;
+        }
+        // If backend returns 404 or other non-ok, fall through to direct Jupiter call
+        lastError = new Error(`Backend /api/swap returned ${response?.status}`);
+      } catch (e: any) {
+        lastError = e;
+      }
+
+      // Fallback: call Jupiter V6 /swap directly (lite-api supports CORS)
+      const direct = await this.fetchWithTimeout(
+        `https://lite-api.jup.ag/v6/swap`,
         {
           method: 'POST',
           headers: {
@@ -298,16 +324,14 @@ export class JupiterV6Service {
           },
           body: JSON.stringify(swapRequest),
         },
-        10000 // 10s timeout (server-side might be slower)
+        10000
       );
 
-      if (!response.ok) {
-        throw new Error(`Jupiter V6 Swap API error: ${response.status}`);
+      if (!direct.ok) {
+        throw new Error(`Jupiter V6 Swap API error: ${direct.status}`);
       }
 
-      const data: JupiterSwapResponse = await response.json();
-      const timeTaken = Date.now() - startTime;
-
+      const data: JupiterSwapResponse = await direct.json();
       return data;
     } catch (error: any) {
       const timeTaken = Date.now() - startTime;

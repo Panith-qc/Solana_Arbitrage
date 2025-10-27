@@ -241,6 +241,10 @@ class MultiAPIQuoteService {
    * Record failed API call
    */
   private recordFailure(api: APIProvider, error: any) {
+    if (!api) {
+      console.error('Attempted to record failure for a null API provider.', error);
+      return;
+    }
     api.totalCalls++;
     api.failedCalls++;
     api.consecutiveFailures++;
@@ -612,7 +616,13 @@ class MultiAPIQuoteService {
 
     while (attemptCount < maxAttempts) {
       const api = this.selectBestAPI();
-      // Will throw if all unavailable - no infinite wait
+      if (!api) {
+        // All APIs unavailable - brief cooldown before next attempt
+        lastError = new Error('All APIs unavailable - cooling down');
+        attemptCount++;
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
 
       attemptCount++;
       const startTime = Date.now();

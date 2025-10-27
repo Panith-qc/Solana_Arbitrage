@@ -330,7 +330,7 @@ class RealTradeExecutor {
         txSignature,
         actualProfit: profitCheck.netProfitUSD,
         actualProfitSOL: profitCheck.netProfitUSD / this.SOL_PRICE_USD,
-        actualOutputAmount: expectedOutputAmount, // BUG FIX: Store actual output for arbitrage
+        actualOutputAmount: expectedOutput, // BUG FIX: Store actual output for arbitrage
         fees,
         executionTimeMs,
         profitableBeforeExecution: true
