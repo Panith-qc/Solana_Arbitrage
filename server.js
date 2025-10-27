@@ -352,6 +352,8 @@ app.use(express.static(path.join(__dirname, 'dist')));
 // All other routes serve index.html (React Router) - MUST BE LAST
 app.get('*', (req, res) => {
   try {
+    // Prevent stale SPA shell (forces latest bundle to load)
+    res.set('Cache-Control', 'no-store');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   } catch (error) {
     res.status(500).send('Frontend not available');
