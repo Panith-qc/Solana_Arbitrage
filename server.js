@@ -307,7 +307,8 @@ async function executeTradeServerSide(opportunity) {
       prioritizationFeeLamports: 100000,
     };
 
-    const response = await fetch('https://lite-api.jup.ag/v6/swap', {
+    //const response = await fetch('https://lite-api.jup.ag/v6/swap', {
+    const response = await fetch('lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(swapRequest),
