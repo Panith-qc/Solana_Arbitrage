@@ -92,9 +92,42 @@ class MultiAPIQuoteService {
       isPaused: false,
       pausedUntil: 0
     },
-    // ORCA DISABLED: CORS blocked from browser - can't call API from frontend
-    // DEXSCREENER DISABLED: Returns PRICES not QUOTES - causes fake $10k profits
-    // Only Jupiter Ultra V1 and Raydium V3 are real DEX quote providers
+    {
+      name: 'Orca Whirlpool',
+      type: 'rest',
+      endpoint: 'https://api.mainnet.orca.so',
+      rateLimit: 300, // Higher limit, direct DEX
+      priority: 3, // Third choice - real DEX quotes
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      avgLatency: 0,
+      lastError: null,
+      lastErrorTime: 0,
+      consecutiveFailures: 0,
+      callsThisMinute: 0,
+      minuteWindowStart: Date.now(),
+      isPaused: false,
+      pausedUntil: 0
+    },
+    {
+      name: 'DexScreener',
+      type: 'rest',
+      endpoint: 'https://api.dexscreener.com',
+      rateLimit: 300, // Price API limit
+      priority: 4, // Last resort - price validation only
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      avgLatency: 0,
+      lastError: null,
+      lastErrorTime: 0,
+      consecutiveFailures: 0,
+      callsThisMinute: 0,
+      minuteWindowStart: Date.now(),
+      isPaused: false,
+      pausedUntil: 0
+    }
   ];
 
   private requestDelay = 100; // 100ms between requests (BALANCED: fast but safe)
@@ -541,7 +574,8 @@ class MultiAPIQuoteService {
   }
 
   /**
-   * Fetch price from DexScreener (approximation - FALLBACK ONLY)
+   * Fetch price from DexScreener with SANITY CHECKS
+   * ⚠️ PRICE VALIDATION: Rejects unrealistic profits (>150% or <50%)
    */
   private async fetchDexScreener(
     inputMint: string,
@@ -573,7 +607,23 @@ class MultiAPIQuoteService {
 
     // Calculate approximate output
     const price = parseFloat(pair.priceUsd || pair.priceNative || '0');
-    const outputAmount = price > 0 ? Math.floor(amount * price) : 0;
+    
+    if (price === 0 || isNaN(price)) {
+      throw new Error('Invalid price from DexScreener');
+    }
+
+    const outputAmount = Math.floor(amount * price);
+
+    // ✅ SANITY CHECK: Prevent fake profits
+    const profitRatio = outputAmount / amount;
+    
+    if (profitRatio > 1.5) {
+      throw new Error(`Unrealistic price: ${price} (>150% profit impossible)`);
+    }
+    
+    if (profitRatio < 0.5) {
+      throw new Error(`Unrealistic price: ${price} (<50% loss impossible)`);
+    }
 
     return {
       inputMint,
@@ -587,6 +637,51 @@ class MultiAPIQuoteService {
       priceImpactPct: '0.5',
       routePlan: []
     };
+  }
+
+  /**
+   * Validate quote is realistic (prevents fake $10k profits)
+   * Checks:
+   * - Profit < 10% (impossible in arbitrage)
+   * - Loss < 5% (too risky)
+   * - Output amount is valid number
+   */
+  private isRealisticQuote(quote: JupiterQuoteResponse, inputAmount: number): boolean {
+    try {
+      const inputAmt = parseFloat(quote.inAmount);
+      const outputAmt = parseFloat(quote.outAmount);
+
+      if (isNaN(inputAmt) || isNaN(outputAmt)) {
+        console.warn('⚠️ Quote validation failed: NaN values');
+        return false;
+      }
+
+      if (outputAmt === 0) {
+        console.warn('⚠️ Quote validation failed: Zero output');
+        return false;
+      }
+
+      // Approximate USD values (assuming SOL ~$191, USDC ~$1)
+      // This is a rough check - adjust if trading other pairs
+      const profitRatio = outputAmt / inputAmt;
+
+      // Reject if profit > 10% (impossible in normal arbitrage)
+      if (profitRatio > 1.1) {
+        console.warn(`⚠️ Quote validation failed: ${(profitRatio * 100 - 100).toFixed(1)}% profit (>10% impossible)`);
+        return false;
+      }
+
+      // Reject if loss > 5% (too risky)
+      if (profitRatio < 0.95) {
+        console.warn(`⚠️ Quote validation failed: ${(100 - profitRatio * 100).toFixed(1)}% loss (>5% too risky)`);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('⚠️ Quote validation error:', error);
+      return false;
+    }
   }
 
   /**
@@ -640,6 +735,13 @@ class MultiAPIQuoteService {
 
         const latency = Date.now() - startTime;
         this.recordSuccess(api, latency);
+
+        // ✅ Validate quote before returning (prevents fake profits)
+        if (!this.isRealisticQuote(quote, amount)) {
+          console.warn(`⚠️ ${api.name} returned unrealistic quote, trying next API`);
+          this.recordFailure(api, new Error('Unrealistic quote'));
+          continue;
+        }
 
         console.log(`✅ ${api.name} succeeded in ${latency}ms`);
         return quote;

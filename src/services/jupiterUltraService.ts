@@ -203,12 +203,71 @@ export class JupiterV6Service {
   }
 
   /**
-   * POST /ultra/v1/swap - Convert quote into executable transaction
-   * CORRECT ENDPOINT: https://lite-api.jup.ag/ultra/v1/swap
+   * POST /ultra/v1/execute - Execute trade using Jupiter Ultra V1
+   * CORRECT FLOW:
+   * 1. GET /ultra/v1/order (returns requestId + quote)
+   * 2. POST /ultra/v1/execute (executes with requestId)
    * 
-   * @param quoteResponse - Quote from getQuote()
+   * @param requestId - Request ID from /order response
    * @param userPublicKey - User's wallet address
-   * @returns Swap transaction ready to sign
+   * @returns Execution response with transaction signature
+   */
+  async executeOrder(
+    requestId: string,
+    userPublicKey: string
+  ): Promise<{ signature: string; transaction: string }> {
+    const startTime = Date.now();
+    
+    try {
+      const executeRequest = {
+        requestId,
+        taker: userPublicKey,
+        // Ultra V1 handles transaction building
+      };
+
+      const response = await this.fetchWithTimeout(
+        `${this.baseUrl}/execute`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify(executeRequest),
+        },
+        10000 // 10s timeout for execution
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Jupiter Ultra V1 Execute API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const timeTaken = Date.now() - startTime;
+
+      // Update metrics
+      this.metrics.totalSwaps++;
+      this.metrics.successfulSwaps++;
+      this.metrics.avgSwapTimeMs = 
+        (this.metrics.avgSwapTimeMs * (this.metrics.totalSwaps - 1) + timeTaken) / 
+        this.metrics.totalSwaps;
+
+      console.log(`✅ Jupiter Ultra V1 execution completed in ${timeTaken}ms`);
+      return data;
+    } catch (error: any) {
+      const timeTaken = Date.now() - startTime;
+      this.metrics.totalSwaps++;
+      this.metrics.failedSwaps++;
+      
+      console.error(`❌ Jupiter Ultra V1 Execute failed (${timeTaken}ms):`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * LEGACY: getSwapTransaction for backward compatibility
+   * Uses Jupiter V6 for non-Ultra execution
    */
   async getSwapTransaction(
     quoteResponse: JupiterQuoteResponse,
@@ -226,8 +285,7 @@ export class JupiterV6Service {
         skipUserAccountsRpcCalls: false,
       };
 
-      // CRITICAL: Jupiter Ultra V1 doesn't have /swap endpoint
-      // Use Jupiter V6 for swaps instead
+      // Use Jupiter V6 for legacy swap execution
       const v6BaseUrl = 'https://quote-api.jup.ag/v6';
       
       const response = await this.fetchWithTimeout(
@@ -244,26 +302,16 @@ export class JupiterV6Service {
       );
 
       if (!response.ok) {
-        throw new Error(`Jupiter Ultra V1 Swap API error: ${response.status}`);
+        throw new Error(`Jupiter V6 Swap API error: ${response.status}`);
       }
 
       const data: JupiterSwapResponse = await response.json();
       const timeTaken = Date.now() - startTime;
 
-      // Update metrics
-      this.metrics.totalSwaps++;
-      this.metrics.successfulSwaps++;
-      this.metrics.avgSwapTimeMs = 
-        (this.metrics.avgSwapTimeMs * (this.metrics.totalSwaps - 1) + timeTaken) / 
-        this.metrics.totalSwaps;
-
       return data;
     } catch (error: any) {
       const timeTaken = Date.now() - startTime;
-      this.metrics.totalSwaps++;
-      this.metrics.failedSwaps++;
-      
-      console.error(`❌ Jupiter Ultra V1 Swap failed (${timeTaken}ms):`, error.message);
+      console.error(`❌ Jupiter V6 Swap failed (${timeTaken}ms):`, error.message);
       throw error;
     }
   }
@@ -379,9 +427,6 @@ export class JupiterV6Service {
   /**
    * Legacy compatibility methods (kept for backward compatibility)
    */
-  async executeOrder() {
-    throw new Error('executeOrder() not implemented - use getSwapTransaction() instead');
-  }
 
   async getHoldings() {
     throw new Error('getHoldings() not implemented - use Helius RPC instead');
