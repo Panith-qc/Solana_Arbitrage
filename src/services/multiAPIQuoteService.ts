@@ -29,6 +29,8 @@ export interface JupiterQuoteResponse {
   routePlan: any[];
   contextSlot?: number;
   timeTaken?: number;
+  requestId?: string; // Jupiter Ultra V1 order ID for /execute
+  provider?: string; // Track which API provided this quote
 }
 
 interface APIProvider {
@@ -323,7 +325,9 @@ class MultiAPIQuoteService {
       priceImpactPct: '0',
       routePlan: [],
       contextSlot: data.contextSlot,
-      timeTaken: data.timeTaken
+      timeTaken: data.timeTaken,
+      requestId: data.requestId || data.orderId, // Jupiter Ultra V1 /order returns requestId
+      provider: 'Jupiter Ultra V1'
     };
   }
 
@@ -429,7 +433,8 @@ class MultiAPIQuoteService {
             feeAmount: '0',
             feeMint: inputMint
           }
-        }]
+        }],
+        provider: 'Raydium V3'
       };
     }
     
@@ -469,7 +474,8 @@ class MultiAPIQuoteService {
           feeAmount: '0',
           feeMint: inputMint
         }
-      }]
+      }],
+      provider: 'Raydium V3'
     };
   }
 
@@ -542,7 +548,8 @@ class MultiAPIQuoteService {
             feeAmount: '0',
             feeMint: inputMint
           }
-        }]
+        }],
+        provider: 'Orca Whirlpool'
       };
     }
 
@@ -569,7 +576,8 @@ class MultiAPIQuoteService {
           feeAmount: '0',
           feeMint: inputMint
         }
-      }]
+      }],
+      provider: 'Orca Whirlpool'
     };
   }
 
@@ -635,7 +643,8 @@ class MultiAPIQuoteService {
       slippageBps: 100,
       platformFee: null,
       priceImpactPct: '0.5',
-      routePlan: []
+      routePlan: [],
+      provider: 'DexScreener'
     };
   }
 

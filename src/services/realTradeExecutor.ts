@@ -258,35 +258,83 @@ class RealTradeExecutor {
       console.log('✅ PROFITABLE! Proceeding with execution...');
       console.log(`💰 Expected Net Profit: $${profitCheck.netProfitUSD.toFixed(4)}`);
 
-      // Step 4: Build swap transaction
-      console.log('📊 Step 4: Building swap transaction...');
-      const swapTransaction = await jupiterUltra.getSwapTransaction(
-        quote,
-        params.wallet.publicKey.toString(),
-        params.slippageBps
-      );
-
-      if (!swapTransaction) {
-        throw new Error('Failed to build swap transaction');
-      }
-
-      // Step 5: Sign transaction
-      console.log('📊 Step 5: Signing transaction...');
-      let transaction: Transaction | VersionedTransaction;
-      
-      if ('serialize' in swapTransaction) {
-        // VersionedTransaction
-        transaction = swapTransaction as VersionedTransaction;
-        transaction.sign([params.wallet]);
-      } else {
-        // Legacy Transaction
-        transaction = swapTransaction as Transaction;
-        transaction.partialSign(params.wallet);
-      }
-
-      // Step 6: Send to blockchain
-      console.log('📊 Step 6: Sending to Solana mainnet...');
+      // Step 4: Execute trade (use Jupiter Ultra V1 /execute if available)
+      console.log('📊 Step 4: Executing trade...');
       let txSignature: string;
+
+      // Check if quote is from Jupiter Ultra V1 and has requestId
+      if (quote.provider === 'Jupiter Ultra V1' && quote.requestId) {
+        console.log(`🚀 Using Jupiter Ultra V1 /execute (requestId: ${quote.requestId})`);
+        
+        try {
+          const executeResult = await jupiterUltra.executeOrder(
+            quote.requestId,
+            params.wallet.publicKey.toString()
+          );
+          
+          txSignature = executeResult.signature;
+          console.log(`✅ Jupiter Ultra V1 execution succeeded: ${txSignature}`);
+        } catch (error: any) {
+          console.warn(`⚠️ Jupiter Ultra V1 /execute failed: ${error.message}`);
+          console.log('🔄 Falling back to V6 /swap method...');
+          
+          // Fallback to V6 swap
+          const swapTransaction = await jupiterUltra.getSwapTransaction(
+            quote,
+            params.wallet.publicKey.toString(),
+            params.slippageBps
+          );
+          
+          // Sign and send V6 transaction
+          let transaction: Transaction | VersionedTransaction;
+          
+          if ('serialize' in swapTransaction) {
+            transaction = swapTransaction as VersionedTransaction;
+            transaction.sign([params.wallet]);
+          } else {
+            transaction = swapTransaction as Transaction;
+            transaction.partialSign(params.wallet);
+          }
+          
+          const rawTransaction = transaction.serialize();
+          txSignature = await this.connection.sendRawTransaction(rawTransaction, {
+            skipPreflight: false,
+            maxRetries: 3,
+            preflightCommitment: 'confirmed'
+          });
+          
+          await this.connection.confirmTransaction(txSignature, 'confirmed');
+        }
+      } else {
+        // Use V6 /swap for non-Jupiter quotes
+        console.log('📡 Using Jupiter V6 /swap (legacy method)');
+        
+        const swapTransaction = await jupiterUltra.getSwapTransaction(
+          quote,
+          params.wallet.publicKey.toString(),
+          params.slippageBps
+        );
+
+        if (!swapTransaction) {
+          throw new Error('Failed to build swap transaction');
+        }
+
+        // Step 5: Sign transaction
+        console.log('📊 Step 5: Signing transaction...');
+        let transaction: Transaction | VersionedTransaction;
+        
+        if ('serialize' in swapTransaction) {
+          // VersionedTransaction
+          transaction = swapTransaction as VersionedTransaction;
+          transaction.sign([params.wallet]);
+        } else {
+          // Legacy Transaction
+          transaction = swapTransaction as Transaction;
+          transaction.partialSign(params.wallet);
+        }
+
+        // Step 6: Send to blockchain
+        console.log('📊 Step 6: Sending to Solana mainnet...');
 
       if (params.useJito) {
         console.log('🚀 Using Jito bundle for MEV protection...');
