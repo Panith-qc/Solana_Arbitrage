@@ -694,14 +694,12 @@ class MultiAPIQuoteService {
       const profitUSD = outputUSD - inputUSD;
       const profitPct = (profitUSD / inputUSD) * 100;
 
-      // \u2705 REALISTIC RANGE: -20% to +30% (allows for slippage and low-liquidity)
-      if (profitPct > 30) {
-        console.warn(`⚠️ Rejected: ${profitPct.toFixed(1)}% profit (>30% unrealistic)`);
-        return false;
-      }
-
-      if (profitPct < -20) {
-        console.warn(`⚠️ Rejected: ${Math.abs(profitPct).toFixed(1)}% loss (>20% too risky)`);
+      // ✅ NO PROFIT/LOSS VALIDATION - Let scanner handle round-trip profit
+      // Only reject extreme outliers (>10000x = API error)
+      const ratio = outputAmt / inputAmt;
+      
+      if (ratio > 10000 || ratio < 0.0001) {
+        console.warn(`⚠️ Rejected: Extreme outlier (${ratio > 1 ? ratio.toFixed(0) + "x" : (1/ratio).toFixed(0) + "x loss"}, API error)`);
         return false;
       }
 
