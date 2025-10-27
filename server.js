@@ -31,14 +31,27 @@ let botStats = {
 
 // RPC connection
 const RPC_URL = process.env.HELIUS_RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY';
-const connection = new Connection(RPC_URL, 'confirmed');
+let connection = null;
+
+try {
+  connection = new Connection(RPC_URL, 'confirmed');
+  console.log('✅ RPC connection initialized');
+} catch (error) {
+  console.error('⚠️ RPC connection failed:', error.message);
+}
 
 // Wallet
 let wallet = null;
 if (process.env.PRIVATE_KEY) {
-  const privateKeyArray = bs58.decode(process.env.PRIVATE_KEY);
-  wallet = Keypair.fromSecretKey(privateKeyArray);
-  console.log('✅ Wallet loaded:', wallet.publicKey.toString());
+  try {
+    const privateKeyArray = bs58.decode(process.env.PRIVATE_KEY);
+    wallet = Keypair.fromSecretKey(privateKeyArray);
+    console.log('✅ Wallet loaded:', wallet.publicKey.toString());
+  } catch (error) {
+    console.error('⚠️ Wallet loading failed:', error.message);
+  }
+} else {
+  console.log('⚠️ No PRIVATE_KEY env var - wallet disabled');
 }
 
 // ==========================================
@@ -264,6 +277,10 @@ async function executeTradeServerSide(opportunity) {
       return { success: false, error: 'No wallet' };
     }
 
+    if (!connection) {
+      return { success: false, error: 'No RPC connection' };
+    }
+
     // Get swap transaction from Jupiter
     const swapRequest = {
       quoteResponse: opportunity.forwardQuote,
@@ -314,16 +331,20 @@ async function executeTradeServerSide(opportunity) {
 // Serve static files from dist
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// All other routes serve index.html (React Router)
+// All other routes serve index.html (React Router) - MUST BE LAST
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  try {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  } catch (error) {
+    res.status(500).send('Frontend not available');
+  }
 });
 
 // ==========================================
 // START SERVER
 // ==========================================
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔════════════════════════════════════════════════════════╗
 ║           MEV BOT BACKEND SERVER                       ║
