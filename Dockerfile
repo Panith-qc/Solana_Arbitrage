@@ -23,11 +23,20 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install serve globally
-RUN npm install -g serve
+# Install pnpm for production dependencies
+RUN npm install -g pnpm@8.10.0
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install production dependencies only
+RUN pnpm install --prod --frozen-lockfile
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
+
+# Copy server file
+COPY server.js ./
 
 # Set environment for Cloud Run
 ENV NODE_ENV=production
@@ -38,7 +47,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
 
-# Start the application on Cloud Run's PORT
-CMD ["sh", "-c", "serve -s dist -l $PORT --no-clipboard --no-port-switching"]
+# Start the Express server (serves React + runs trading bot)
+CMD ["node", "server.js"]

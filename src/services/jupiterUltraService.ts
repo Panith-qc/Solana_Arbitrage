@@ -285,11 +285,11 @@ export class JupiterV6Service {
         skipUserAccountsRpcCalls: false,
       };
 
-      // Use Jupiter V6 for legacy swap execution (lite-api, not quote-api)
-      const v6BaseUrl = 'https://lite-api.jup.ag/v6';
+      // Use backend API proxy (bypasses CORS)
+      const apiBaseUrl = window.location.origin; // Same origin as frontend
       
       const response = await this.fetchWithTimeout(
-        `${v6BaseUrl}/swap`,
+        `${apiBaseUrl}/api/swap`,
         {
           method: 'POST',
           headers: {
@@ -298,7 +298,7 @@ export class JupiterV6Service {
           },
           body: JSON.stringify(swapRequest),
         },
-        5000 // 5s timeout
+        10000 // 10s timeout (server-side might be slower)
       );
 
       if (!response.ok) {
