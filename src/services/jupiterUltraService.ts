@@ -342,8 +342,8 @@ export class JupiterV6Service {
 
       // Fallback: call Jupiter legacy swap (swap/v1/swap) directly (lite-api supports CORS)
       const direct = await this.fetchWithTimeout(
-        //JUPITER_LEGACY_SWAP,
-        `${window.location.origin}/api/swap`,
+        JUPITER_LEGACY_SWAP,
+        //`${window.location.origin}/api/swap`,
 
 
         {
