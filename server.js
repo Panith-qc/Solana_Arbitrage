@@ -1,5 +1,5 @@
 // EXPRESS BACKEND SERVER FOR 24/7 MEV BOT
-// Handles trading logic server-side, serves React frontend
+// Uses Jupiter LEGACY API (swap/v1/quote + swap/v1/swap)
 
 import express from 'express';
 import cors from 'cors';
@@ -17,6 +17,14 @@ const PORT = process.env.PORT || 8080;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Simple auth middleware
+function requireAdmin(req, res, next) {
+  const token = process.env.ADMIN_TOKEN;
+  if (!token) return next(); // Dev mode
+  if (req.headers['x-admin-token'] === token) return next();
+  return res.status(403).json({ error: 'Forbidden' });
+}
 
 // Bot state
 let botRunning = false;
@@ -58,8 +66,7 @@ if (process.env.PRIVATE_KEY) {
 // API ENDPOINTS
 // ==========================================
 
-// Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', requireAdmin, (req, res) => {
   res.json({ 
     status: 'ok', 
     botRunning,
@@ -68,8 +75,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Get bot status
-app.get('/api/status', (req, res) => {
+app.get('/api/status', requireAdmin, (req, res) => {
   res.json({
     ...botStats,
     botRunning,
@@ -77,54 +83,43 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Start bot
-app.post('/api/start', async (req, res) => {
+app.post('/api/start', requireAdmin, async (req, res) => {
   if (botRunning) {
     return res.json({ success: false, message: 'Bot already running' });
   }
-
   if (!wallet) {
     return res.json({ success: false, message: 'No wallet configured' });
   }
-
   botRunning = true;
   botStats.status = 'running';
-  
-  // Start MEV scanning loop
   startMEVBot();
-
   res.json({ success: true, message: 'Bot started' });
 });
 
-// Stop bot
-app.post('/api/stop', (req, res) => {
+app.post('/api/stop', requireAdmin, (req, res) => {
   botRunning = false;
   botStats.status = 'stopped';
   res.json({ success: true, message: 'Bot stopped' });
 });
 
-// Execute swap (proxy for Jupiter API)
-app.post('/api/swap', async (req, res) => {
+// LEGACY swap endpoint
+app.post('/api/swap', requireAdmin, async (req, res) => {
   try {
     console.log('📡 /api/swap called');
     const { quoteResponse, userPublicKey } = req.body;
 
     if (!quoteResponse || !userPublicKey) {
-      console.error('❌ Missing quoteResponse or userPublicKey');
       return res.status(400).json({ error: 'Missing quoteResponse or userPublicKey' });
     }
 
-    // Call Jupiter V6 /swap from server-side (no CORS)
     const swapRequest = {
       quoteResponse,
       userPublicKey,
       wrapAndUnwrapSol: true,
       prioritizationFeeLamports: 'auto',
       dynamicComputeUnitLimit: true,
-      skipUserAccountsRpcCalls: false,
     };
 
-    console.log('📡 Calling Jupiter LEGACY /swap (swap/v1/swap)...');
     const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
       headers: {
@@ -133,8 +128,6 @@ app.post('/api/swap', async (req, res) => {
       },
       body: JSON.stringify(swapRequest),
     });
-
-    console.log(`📡 Jupiter response status: ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -149,35 +142,34 @@ app.post('/api/swap', async (req, res) => {
     console.log('✅ Jupiter swap success');
     res.json(data);
   } catch (error) {
-    console.error('❌ Swap error:', error.message, error.stack);
-    res.status(500).json({ 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    console.error('❌ Swap error:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Get Jupiter quote (proxy)
-app.post('/api/quote', async (req, res) => {
+// LEGACY quote endpoint
+app.post('/api/quote', requireAdmin, async (req, res) => {
   try {
     const { inputMint, outputMint, amount, slippageBps } = req.body;
 
-    const url = new URL('https://lite-api.jup.ag/ultra/v1/order');
+    if (!amount || !/^[0-9]+$/.test(amount.toString())) {
+      return res.status(400).json({ error: 'amount must be integer base units (lamports)' });
+    }
+
+    const url = new URL('https://lite-api.jup.ag/swap/v1/quote');
     url.searchParams.append('inputMint', inputMint);
     url.searchParams.append('outputMint', outputMint);
     url.searchParams.append('amount', amount.toString());
     url.searchParams.append('slippageBps', (slippageBps || 50).toString());
-    url.searchParams.append('onlyDirectRoutes', 'false');
 
     const response = await fetch(url.toString(), {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
     });
 
     if (!response.ok) {
-      throw new Error(`Jupiter API error: ${response.status}`);
+      const text = await response.text();
+      return res.status(response.status).json({ error: 'Jupiter quote failed', details: text });
     }
 
     const data = await response.json();
@@ -189,7 +181,7 @@ app.post('/api/quote', async (req, res) => {
 });
 
 // ==========================================
-// MEV BOT LOGIC (24/7 LOOP)
+// MEV BOT LOGIC
 // ==========================================
 
 async function startMEVBot() {
@@ -200,14 +192,12 @@ async function startMEVBot() {
       botStats.totalScans++;
       botStats.lastScanTime = new Date().toISOString();
 
-      // Scan for opportunities
       const opportunities = await scanForOpportunities();
 
       if (opportunities.length > 0) {
         console.log(`💎 Found ${opportunities.length} opportunities`);
         botStats.profitableFound += opportunities.length;
 
-        // Execute best opportunity
         for (const opp of opportunities) {
           if (!botRunning) break;
           
@@ -221,11 +211,10 @@ async function startMEVBot() {
         }
       }
 
-      // Wait before next scan (800ms)
       await new Promise(resolve => setTimeout(resolve, 800));
     } catch (error) {
       console.error('❌ Bot error:', error.message);
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s on error
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
 
@@ -233,7 +222,6 @@ async function startMEVBot() {
 }
 
 async function scanForOpportunities() {
-  // Simple scan logic - check SOL → Token → SOL cycles
   const tokens = [
     { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP' },
     { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK' },
@@ -244,11 +232,10 @@ async function scanForOpportunities() {
 
   for (const token of tokens) {
     try {
-      // Check 0.1 SOL cycle
       const forwardQuote = await getQuote(
         'So11111111111111111111111111111111111111112',
         token.mint,
-        100000000 // 0.1 SOL
+        100000000
       );
 
       const backwardQuote = await getQuote(
@@ -258,7 +245,7 @@ async function scanForOpportunities() {
       );
 
       const profit = (parseInt(backwardQuote.outAmount) - 100000000) / 1e9;
-      const profitUSD = profit * 200; // Assume $200 SOL
+      const profitUSD = profit * 200;
 
       if (profitUSD > 0.01) {
         opportunities.push({
@@ -278,7 +265,7 @@ async function scanForOpportunities() {
 }
 
 async function getQuote(inputMint, outputMint, amount) {
-  const url = new URL('https://lite-api.jup.ag/ultra/v1/order');
+  const url = new URL('https://lite-api.jup.ag/swap/v1/quote');
   url.searchParams.append('inputMint', inputMint);
   url.searchParams.append('outputMint', outputMint);
   url.searchParams.append('amount', amount.toString());
@@ -291,15 +278,10 @@ async function getQuote(inputMint, outputMint, amount) {
 
 async function executeTradeServerSide(opportunity) {
   try {
-    if (!wallet) {
-      return { success: false, error: 'No wallet' };
+    if (!wallet || !connection) {
+      return { success: false, error: 'No wallet or RPC' };
     }
 
-    if (!connection) {
-      return { success: false, error: 'No RPC connection' };
-    }
-
-    // Get swap transaction from Jupiter
     const swapRequest = {
       quoteResponse: opportunity.forwardQuote,
       userPublicKey: wallet.publicKey.toString(),
@@ -307,10 +289,12 @@ async function executeTradeServerSide(opportunity) {
       prioritizationFeeLamports: 100000,
     };
 
-    //const response = await fetch('https://lite-api.jup.ag/v6/swap', {
     const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       body: JSON.stringify(swapRequest),
     });
 
@@ -320,7 +304,6 @@ async function executeTradeServerSide(opportunity) {
 
     const { swapTransaction } = await response.json();
 
-    // Deserialize, sign, and send
     const txBuf = Buffer.from(swapTransaction, 'base64');
     const tx = VersionedTransaction.deserialize(txBuf);
     tx.sign([wallet]);
@@ -347,13 +330,10 @@ async function executeTradeServerSide(opportunity) {
 // SERVE REACT FRONTEND
 // ==========================================
 
-// Serve static files from dist
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// All other routes serve index.html (React Router) - MUST BE LAST
 app.get('*', (req, res) => {
   try {
-    // Prevent stale SPA shell (forces latest bundle to load)
     res.set('Cache-Control', 'no-store');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   } catch (error) {
@@ -374,14 +354,6 @@ app.listen(PORT, '0.0.0.0', () => {
 🚀 Server running on port ${PORT}
 📊 React UI: http://localhost:${PORT}
 🔌 API: http://localhost:${PORT}/api/*
-
-Endpoints:
-  GET  /api/health  - Health check
-  GET  /api/status  - Bot status
-  POST /api/start   - Start bot
-  POST /api/stop    - Stop bot
-  POST /api/swap    - Execute swap (proxy)
-  POST /api/quote   - Get quote (proxy)
 
 ${wallet ? '✅ Wallet loaded: ' + wallet.publicKey.toString() : '⚠️  No wallet configured'}
 
