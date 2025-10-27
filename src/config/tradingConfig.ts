@@ -81,7 +81,7 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
 
   trading: {
     // ENHANCED: Meaningful profit thresholds for 10 SOL capital
-    minProfitUsd: 0.01, // $0.01 minimum for worthwhile trades
+    minProfitUsd: 0.005, // $0.005 minimum (capture more opportunities)
     maxPositionSol: 5.0, // Use up to 50% of capital per trade (5 SOL)
     slippageBps: 100, // 1.0% slippage for better execution
     priorityFeeLamports: 500000, // Higher priority for faster execution

@@ -92,42 +92,9 @@ class MultiAPIQuoteService {
       isPaused: false,
       pausedUntil: 0
     },
-    {
-      name: 'Orca Whirlpool',
-      type: 'rest',
-      endpoint: 'https://api.mainnet.orca.so',
-      rateLimit: 300, // Higher limit, direct DEX
-      priority: 3, // Third choice - real DEX quotes
-      totalCalls: 0,
-      successfulCalls: 0,
-      failedCalls: 0,
-      avgLatency: 0,
-      lastError: null,
-      lastErrorTime: 0,
-      consecutiveFailures: 0,
-      callsThisMinute: 0,
-      minuteWindowStart: Date.now(),
-      isPaused: false,
-      pausedUntil: 0
-    },
-    {
-      name: 'DexScreener',
-      type: 'rest',
-      endpoint: 'https://api.dexscreener.com/latest/dex',
-      rateLimit: 300,
-      priority: 4, // Last resort (price data only, not real quotes)
-      totalCalls: 0,
-      successfulCalls: 0,
-      failedCalls: 0,
-      avgLatency: 0,
-      lastError: null,
-      lastErrorTime: 0,
-      consecutiveFailures: 0,
-      callsThisMinute: 0,
-      minuteWindowStart: Date.now(),
-      isPaused: false,
-      pausedUntil: 0
-    }
+    // ORCA DISABLED: CORS blocked from browser - can't call API from frontend
+    // DEXSCREENER DISABLED: Returns PRICES not QUOTES - causes fake $10k profits
+    // Only Jupiter Ultra V1 and Raydium V3 are real DEX quote providers
   ];
 
   private requestDelay = 100; // 100ms between requests (BALANCED: fast but safe)

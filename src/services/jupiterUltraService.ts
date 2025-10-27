@@ -226,8 +226,12 @@ export class JupiterV6Service {
         skipUserAccountsRpcCalls: false,
       };
 
+      // CRITICAL: Jupiter Ultra V1 doesn't have /swap endpoint
+      // Use Jupiter V6 for swaps instead
+      const v6BaseUrl = 'https://quote-api.jup.ag/v6';
+      
       const response = await this.fetchWithTimeout(
-        `${this.baseUrl}/swap`,
+        `${v6BaseUrl}/swap`,
         {
           method: 'POST',
           headers: {
