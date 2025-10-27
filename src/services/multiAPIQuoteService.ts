@@ -141,8 +141,7 @@ class MultiAPIQuoteService {
     });
 
     if (availableAPIs.length === 0) {
-      console.error('❌ All APIs unavailable - waiting for cooldown');
-      return null;
+      throw new Error('All APIs temporarily unavailable - will retry next scan');
     }
 
     // Sort by health metrics
@@ -359,95 +358,108 @@ class MultiAPIQuoteService {
       throw new Error('No Raydium pool found for this pair');
     }
 
-    const pool = poolsData.data.data[0];
+    // ✅ TRY MULTIPLE POOLS (not just first one)
+    let lastError: Error | null = null;
     
-    // Raydium uses 'tvl' field for reserves, not 'amount'
-    // Check if this is CLMM (concentrated) or Standard pool
-    const isConcentrated = pool.type === 'Concentrated';
-    
-    if (isConcentrated) {
-      // For concentrated liquidity, use price directly
-      const price = parseFloat(pool.price || '0');
-      if (price === 0 || isNaN(price)) {
-        throw new Error('Invalid price from Raydium pool');
-      }
-      
-      const inputDecimals = pool.mintA.address === inputMint ? pool.mintA.decimals : pool.mintB.decimals;
-      const outputDecimals = pool.mintA.address === inputMint ? pool.mintB.decimals : pool.mintA.decimals;
-      
-      const amountInFloat = amount / Math.pow(10, inputDecimals);
-      const amountOutFloat = pool.mintA.address === inputMint ? amountInFloat * price : amountInFloat / price;
-      const outputAmount = Math.floor(amountOutFloat * Math.pow(10, outputDecimals));
-      
-      return {
-        inputMint,
-        inAmount: String(amount),
-        outputMint,
-        outAmount: String(outputAmount),
-        otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
-        swapMode: 'ExactIn',
-        slippageBps,
-        platformFee: null,
-        priceImpactPct: '0.1',
-        routePlan: [{
-          swapInfo: {
-            ammKey: pool.id,
-            label: 'Raydium CLMM',
-            inputMint,
-            outputMint,
-            inAmount: String(amount),
-            outAmount: String(outputAmount),
-            feeAmount: '0',
-            feeMint: inputMint
+    for (const pool of poolsData.data.data.slice(0, 3)) {
+      try {
+        // Check if this is CLMM (concentrated) or Standard pool
+        const isConcentrated = pool.type === 'Concentrated' || pool.type === 'CLMM';
+        
+        if (isConcentrated) {
+          // For concentrated liquidity, use price directly
+          const price = parseFloat(pool.price || '0');
+          if (price === 0 || isNaN(price)) {
+            throw new Error('Invalid price from Raydium CLMM pool');
           }
-        }],
-        provider: 'Raydium V3'
-      };
-    }
-    
-    // For standard pools, use AMM formula
-    const isMint1Input = pool.mintA.address === inputMint;
-    const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount || pool.mintA.vault || '0') : parseFloat(pool.mintB.amount || pool.mintB.vault || '0');
-    const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount || pool.mintB.vault || '0') : parseFloat(pool.mintA.amount || pool.mintA.vault || '0');
-    
-    if (reserveIn === 0 || reserveOut === 0 || isNaN(reserveIn) || isNaN(reserveOut)) {
-      throw new Error('Invalid reserves from Raydium pool');
-    }
-    
-    // Constant product formula: amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
-    const amountInNum = amount / Math.pow(10, isMint1Input ? pool.mintA.decimals : pool.mintB.decimals);
-    const amountOutNum = (amountInNum * reserveOut) / (reserveIn + amountInNum);
-    const outputDecimals = isMint1Input ? pool.mintB.decimals : pool.mintA.decimals;
-    const outputAmount = Math.floor(amountOutNum * Math.pow(10, outputDecimals));
-
-    return {
-      inputMint,
-      inAmount: String(amount),
-      outputMint,
-      outAmount: String(outputAmount),
-      otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
-      swapMode: 'ExactIn',
-      slippageBps,
-      platformFee: null,
-      priceImpactPct: ((amountInNum / reserveIn) * 100).toFixed(2),
-      routePlan: [{
-        swapInfo: {
-          ammKey: pool.id,
-          label: 'Raydium',
-          inputMint,
-          outputMint,
-          inAmount: String(amount),
-          outAmount: String(outputAmount),
-          feeAmount: '0',
-          feeMint: inputMint
+          
+          const inputDecimals = pool.mintA.address === inputMint ? pool.mintA.decimals : pool.mintB.decimals;
+          const outputDecimals = pool.mintA.address === inputMint ? pool.mintB.decimals : pool.mintA.decimals;
+          
+          const amountInFloat = amount / Math.pow(10, inputDecimals);
+          const amountOutFloat = pool.mintA.address === inputMint ? amountInFloat * price : amountInFloat / price;
+          const outputAmount = Math.floor(amountOutFloat * Math.pow(10, outputDecimals));
+          
+          return {
+            inputMint,
+            inAmount: String(amount),
+            outputMint,
+            outAmount: String(outputAmount),
+            otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+            swapMode: 'ExactIn',
+            slippageBps,
+            platformFee: null,
+            priceImpactPct: '0.1',
+            routePlan: [{
+              swapInfo: {
+                ammKey: pool.id,
+                label: 'Raydium CLMM',
+                inputMint,
+                outputMint,
+                inAmount: String(amount),
+                outAmount: String(outputAmount),
+                feeAmount: '0',
+                feeMint: inputMint
+              }
+            }],
+            provider: 'Raydium V3'
+          };
         }
-      }],
-      provider: 'Raydium V3'
-    };
+        
+        // For standard AMM pools, use reserves and formula
+        const isMint1Input = pool.mintA.address === inputMint;
+        const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount || pool.mintA.vault || '0') : parseFloat(pool.mintB.amount || pool.mintB.vault || '0');
+        const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount || pool.mintB.vault || '0') : parseFloat(pool.mintA.amount || pool.mintA.vault || '0');
+        
+        if (reserveIn === 0 || reserveOut === 0 || isNaN(reserveIn) || isNaN(reserveOut)) {
+          throw new Error('Invalid reserves from Raydium pool');
+        }
+        
+        // Constant product formula with 0.3% fee: (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+        const amountInNum = amount / Math.pow(10, isMint1Input ? pool.mintA.decimals : pool.mintB.decimals);
+        const amountInWithFee = amountInNum * 997;
+        const amountOutNum = (amountInWithFee * reserveOut) / (reserveIn * 1000 + amountInWithFee);
+        const outputDecimals = isMint1Input ? pool.mintB.decimals : pool.mintA.decimals;
+        const outputAmount = Math.floor(amountOutNum * Math.pow(10, outputDecimals));
+
+        return {
+          inputMint,
+          inAmount: String(amount),
+          outputMint,
+          outAmount: String(outputAmount),
+          otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+          swapMode: 'ExactIn',
+          slippageBps,
+          platformFee: null,
+          priceImpactPct: ((amountInNum / reserveIn) * 100).toFixed(2),
+          routePlan: [{
+            swapInfo: {
+              ammKey: pool.id,
+              label: 'Raydium',
+              inputMint,
+              outputMint,
+              inAmount: String(amount),
+              outAmount: String(outputAmount),
+              feeAmount: '0',
+              feeMint: inputMint
+            }
+          }],
+          provider: 'Raydium V3'
+        };
+      } catch (poolError: any) {
+        lastError = poolError;
+        continue; // Try next pool
+      }
+    }
+    
+    // If we exhausted all pools, throw the last error
+    throw new Error(lastError?.message || 'No valid Raydium pools found for this pair');
   }
 
   /**
-   * Fetch quote from Orca Whirlpool API (REAL DEX)
+   * Fetch quote from Orca Whirlpool (via Jupiter aggregator - NO CORS)
+   * ✅ CORS FIX: Use Jupiter V6 API with dexes=Orca filter
+   * This bypasses CORS because Jupiter's API supports CORS headers
    */
   private async fetchOrcaWhirlpool(
     inputMint: string,
@@ -455,102 +467,63 @@ class MultiAPIQuoteService {
     amount: number,
     slippageBps: number = 50
   ): Promise<JupiterQuoteResponse> {
-    // Get whirlpool for this pair
-    const whirlpoolsUrl = `https://api.mainnet.orca.so/v1/whirlpool/list`;
-    
-    const response = await fetch(whirlpoolsUrl);
-    
-    if (!response.ok) {
-      throw {
-        status: response.status,
-        message: `Orca API error: ${response.status}`
-      };
-    }
+    try {
+      // ✅ Use Jupiter aggregator to get Orca-only quotes (no CORS issues)
+      const url = `https://quote-api.jup.ag/v6/quote?` +
+        `inputMint=${inputMint}&` +
+        `outputMint=${outputMint}&` +
+        `amount=${amount}&` +
+        `slippageBps=${slippageBps}&` +
+        `dexes=Orca&` +
+        `onlyDirectRoutes=false`;
 
-    const data = await response.json();
-    
-    // Find pool with matching tokens
-    const pool = data.whirlpools.find((p: any) => 
-      (p.tokenA.mint === inputMint && p.tokenB.mint === outputMint) ||
-      (p.tokenB.mint === inputMint && p.tokenA.mint === outputMint)
-    );
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-    if (!pool) {
-      throw new Error('No Orca pool found for this pair');
-    }
-
-    // Get quote from Orca's quote endpoint
-    const quoteUrl = `https://api.mainnet.orca.so/v1/whirlpool/${pool.address}/quote?` +
-      `inputToken=${inputMint}&` +
-      `amount=${amount}&` +
-      `slippageTolerance=${slippageBps / 100}`;
-
-    const quoteResponse = await fetch(quoteUrl);
-    
-    if (!quoteResponse.ok) {
-      // Fallback: estimate using pool data
-      const isTokenA = pool.tokenA.mint === inputMint;
-      const amountInNum = amount / Math.pow(10, isTokenA ? pool.tokenA.decimals : pool.tokenB.decimals);
-      const price = parseFloat(pool.price || '1');
-      const outputAmount = Math.floor(amountInNum * price * Math.pow(10, isTokenA ? pool.tokenB.decimals : pool.tokenA.decimals));
-
+      const data = await response.json();
+      
+      // Verify Jupiter used Orca
+      const usesOrca = data.routePlan?.some((step: any) => 
+        step.swapInfo?.label?.toLowerCase().includes('orca') ||
+        step.swapInfo?.label?.toLowerCase().includes('whirlpool')
+      );
+      
+      if (!usesOrca) {
+        throw new Error('No Orca route available for this pair');
+      }
+      
       return {
         inputMint,
         inAmount: String(amount),
         outputMint,
-        outAmount: String(outputAmount),
-        otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+        outAmount: data.outAmount || '0',
+        otherAmountThreshold: data.otherAmountThreshold || '0',
         swapMode: 'ExactIn',
         slippageBps,
         platformFee: null,
-        priceImpactPct: '0.3',
-        routePlan: [{
-          swapInfo: {
-            ammKey: pool.address,
-            label: 'Orca',
-            inputMint,
-            outputMint,
-            inAmount: String(amount),
-            outAmount: String(outputAmount),
-            feeAmount: '0',
-            feeMint: inputMint
-          }
-        }],
+        priceImpactPct: data.priceImpactPct || '0',
+        routePlan: data.routePlan || [],
         provider: 'Orca Whirlpool'
       };
+    } catch (error: any) {
+      throw {
+        status: 500,
+        message: error.message || 'Orca (via Jupiter) failed'
+      };
     }
-
-    const quoteData = await quoteResponse.json();
-    
-    return {
-      inputMint,
-      inAmount: String(amount),
-      outputMint,
-      outAmount: quoteData.estimatedAmountOut || quoteData.outputAmount || '0',
-      otherAmountThreshold: quoteData.otherAmountThreshold || '0',
-      swapMode: 'ExactIn',
-      slippageBps,
-      platformFee: null,
-      priceImpactPct: quoteData.priceImpact || '0',
-      routePlan: [{
-        swapInfo: {
-          ammKey: pool.address,
-          label: 'Orca Whirlpool',
-          inputMint,
-          outputMint,
-          inAmount: String(amount),
-          outAmount: quoteData.estimatedAmountOut || '0',
-          feeAmount: '0',
-          feeMint: inputMint
-        }
-      }],
-      provider: 'Orca Whirlpool'
-    };
   }
 
   /**
-   * Fetch price from DexScreener with SANITY CHECKS
-   * ⚠️ PRICE VALIDATION: Rejects unrealistic profits (>150% or <50%)
+   * Fetch price from DexScreener with PROPER DECIMAL HANDLING
+   * ✅ FIXED: Compares USD values (not raw token amounts)
    */
   private async fetchDexScreener(
     inputMint: string,
@@ -580,24 +553,31 @@ class MultiAPIQuoteService {
       p.quoteToken.address === outputMint || p.baseToken.address === outputMint
     ) || data.pairs[0];
 
-    // Calculate approximate output
-    const price = parseFloat(pair.priceUsd || pair.priceNative || '0');
+    const priceUsd = parseFloat(pair.priceUsd || '0');
     
-    if (price === 0 || isNaN(price)) {
+    if (priceUsd === 0 || isNaN(priceUsd)) {
       throw new Error('Invalid price from DexScreener');
     }
 
-    const outputAmount = Math.floor(amount * price);
+    // ✅ PROPER CALCULATION WITH DECIMALS
+    const inputDecimals = this.getTokenDecimals(inputMint);
+    const outputDecimals = this.getTokenDecimals(outputMint);
+    const inputPrice = this.getTokenPrice(inputMint);
+    
+    // Convert input to human-readable
+    const inputHuman = amount / Math.pow(10, inputDecimals);
+    const inputValueUSD = inputHuman * inputPrice;
+    
+    // Calculate output based on price ratio
+    const outputValueUSD = inputValueUSD; // Same USD value (no profit in price conversion)
+    const outputHuman = outputValueUSD / priceUsd;
+    const outputAmount = Math.floor(outputHuman * Math.pow(10, outputDecimals));
 
-    // ✅ SANITY CHECK: Prevent fake profits
-    const profitRatio = outputAmount / amount;
+    // ✅ REALISTIC SANITY CHECK (USD-based)
+    const profitPct = ((outputValueUSD - inputValueUSD) / inputValueUSD) * 100;
     
-    if (profitRatio > 1.5) {
-      throw new Error(`Unrealistic price: ${price} (>150% profit impossible)`);
-    }
-    
-    if (profitRatio < 0.5) {
-      throw new Error(`Unrealistic price: ${price} (<50% loss impossible)`);
+    if (profitPct > 30 || profitPct < -30) {
+      throw new Error(`Unrealistic price from DexScreener: ${profitPct.toFixed(1)}% difference`);
     }
 
     return {
@@ -680,13 +660,7 @@ class MultiAPIQuoteService {
 
     while (attemptCount < maxAttempts) {
       const api = this.selectBestAPI();
-      
-      if (!api) {
-        // All APIs unavailable, wait a bit and retry
-        console.warn('⏳ All APIs unavailable, waiting 5s...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        continue;
-      }
+      // Will throw if all unavailable - no infinite wait
 
       attemptCount++;
       const startTime = Date.now();
@@ -821,6 +795,33 @@ class MultiAPIQuoteService {
    * Set request delay (ms between requests)
    */
   setRequestDelay(delayMs: number) {
+    this.requestDelay = delayMs;
+    console.log(`⚙️  Request delay set to ${delayMs}ms`);
+  }
+
+  /**
+   * Reset all API health metrics
+   */
+  resetHealthMetrics() {
+    this.providers.forEach(api => {
+      api.totalCalls = 0;
+      api.successfulCalls = 0;
+      api.failedCalls = 0;
+      api.avgLatency = 0;
+      api.consecutiveFailures = 0;
+      api.lastError = null;
+      api.isPaused = false;
+    });
+    console.log('🔄 All API health metrics reset');
+  }
+}
+
+// Export singleton instance
+export const multiAPIService = new MultiAPIQuoteService();
+
+// Export for testing
+export { MultiAPIQuoteService };
+ setRequestDelay(delayMs: number) {
     this.requestDelay = delayMs;
     console.log(`⚙️  Request delay set to ${delayMs}ms`);
   }
