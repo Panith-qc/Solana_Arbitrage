@@ -313,7 +313,7 @@ export class JupiterV6Service {
         lastError = e;
       }
 
-      // Fallback: call Jupiter V6 /swap directly (lite-api supports CORS)
+      // Fallback: call Jupiter legacy swap (swap/v1/swap) directly (lite-api supports CORS)
       const direct = await this.fetchWithTimeout(
         JUPITER_LEGACY_SWAP,
         {
@@ -328,7 +328,7 @@ export class JupiterV6Service {
       );
 
       if (!direct.ok) {
-        throw new Error(`Jupiter V6 Swap API error: ${direct.status}`);
+        throw new Error(`Jupiter legacy Swap API error: ${direct.status}`);
       }
 
       const data: JupiterSwapResponse = await direct.json();
