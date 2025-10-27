@@ -111,25 +111,8 @@ class MultiAPIQuoteService {
       minuteWindowStart: Date.now(),
       isPaused: false,
       pausedUntil: 0
-    },
-    {
-      name: 'DexScreener',
-      type: 'rest',
-      endpoint: 'https://api.dexscreener.com',
-      rateLimit: 300, // Price API limit
-      priority: 4, // Last resort - price validation only
-      totalCalls: 0,
-      successfulCalls: 0,
-      failedCalls: 0,
-      avgLatency: 0,
-      lastError: null,
-      lastErrorTime: 0,
-      consecutiveFailures: 0,
-      callsThisMinute: 0,
-      minuteWindowStart: Date.now(),
-      isPaused: false,
-      pausedUntil: 0
     }
+    // DexScreener DISABLED - causes fake billion-dollar profit reports
   ];
 
   private requestDelay = 100; // 100ms between requests (BALANCED: fast but safe)
@@ -502,131 +485,28 @@ class MultiAPIQuoteService {
     amount: number,
     slippageBps: number = 50
   ): Promise<JupiterQuoteResponse> {
-    try {
-      // \u2705 Use Jupiter aggregator to get Orca-only quotes (no CORS issues)
-      const url = `https://quote-api.jup.ag/v6/quote?` +
-        `inputMint=${inputMint}&` +
-        `outputMint=${outputMint}&` +
-        `amount=${amount}&` +
-        `slippageBps=${slippageBps}&` +
-        `dexes=Orca&` +
-        `onlyDirectRoutes=false`;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Verify Jupiter used Orca
-      const usesOrca = data.routePlan?.some((step: any) => 
-        step.swapInfo?.label?.toLowerCase().includes('orca') ||
-        step.swapInfo?.label?.toLowerCase().includes('whirlpool')
-      );
-      
-      if (!usesOrca) {
-        throw new Error('No Orca route available for this pair');
-      }
-      
-      return {
-        inputMint,
-        inAmount: String(amount),
-        outputMint,
-        outAmount: data.outAmount || '0',
-        otherAmountThreshold: data.otherAmountThreshold || '0',
-        swapMode: 'ExactIn',
-        slippageBps,
-        platformFee: null,
-        priceImpactPct: data.priceImpactPct || '0',
-        routePlan: data.routePlan || [],
-        provider: 'Orca Whirlpool'
-      };
-    } catch (error: any) {
-      throw {
-        status: 500,
-        message: error.message || 'Orca (via Jupiter) failed'
-      };
-    }
+    // ✅ Route through Jupiter Ultra V1 (aggregates Orca + all DEXes)
+    const quote = await this.fetchJupiterUltra(inputMint, outputMint, amount, slippageBps);
+    
+    // Mark as Orca for tracking purposes
+    quote.provider = 'Orca Whirlpool (via Jupiter Ultra)';
+    
+    return quote;
   }
 
   /**
-   * Fetch price from DexScreener with PROPER DECIMAL HANDLING
-   * \u2705 FIXED: Compares USD values (not raw token amounts)
+   * Fetch price from DexScreener - DISABLED
+   * ❌ DexScreener returns unreliable data causing fake profit reports ($1B+ fake profits)
+   * Use Jupiter/Raydium for real quotes only
    */
   private async fetchDexScreener(
     inputMint: string,
     outputMint: string,
     amount: number
   ): Promise<JupiterQuoteResponse> {
-    // Get pair info
-    const url = `https://api.dexscreener.com/latest/dex/tokens/${inputMint}`;
-    
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw {
-        status: response.status,
-        message: `HTTP ${response.status}`
-      };
-    }
-
-    const data = await response.json();
-    
-    if (!data.pairs || data.pairs.length === 0) {
-      throw new Error('No pairs found for token');
-    }
-
-    // Find pair with output token
-    const pair = data.pairs.find((p: any) => 
-      p.quoteToken.address === outputMint || p.baseToken.address === outputMint
-    ) || data.pairs[0];
-
-    const priceUsd = parseFloat(pair.priceUsd || '0');
-    
-    if (priceUsd === 0 || isNaN(priceUsd)) {
-      throw new Error('Invalid price from DexScreener');
-    }
-
-    // \u2705 PROPER CALCULATION WITH DECIMALS
-    const inputDecimals = this.getTokenDecimals(inputMint);
-    const outputDecimals = this.getTokenDecimals(outputMint);
-    const inputPrice = this.getTokenPrice(inputMint);
-    
-    // Convert input to human-readable
-    const inputHuman = amount / Math.pow(10, inputDecimals);
-    const inputValueUSD = inputHuman * inputPrice;
-    
-    // Calculate output based on price ratio
-    const outputValueUSD = inputValueUSD; // Same USD value
-    const outputHuman = outputValueUSD / priceUsd;
-    const outputAmount = Math.floor(outputHuman * Math.pow(10, outputDecimals));
-
-    // \u2705 REALISTIC SANITY CHECK (USD-based)
-    const profitPct = ((outputValueUSD - inputValueUSD) / inputValueUSD) * 100;
-    
-    if (Math.abs(profitPct) > 30) {
-      throw new Error(`Unrealistic price from DexScreener: ${profitPct.toFixed(1)}% difference`);
-    }
-
-    return {
-      inputMint,
-      inAmount: String(amount),
-      outputMint,
-      outAmount: String(outputAmount),
-      otherAmountThreshold: String(Math.floor(outputAmount * 0.99)),
-      swapMode: 'ExactIn',
-      slippageBps: 100,
-      platformFee: null,
-      priceImpactPct: '0.5',
-      routePlan: [],
-      provider: 'DexScreener'
+    throw {
+      status: 503,
+      message: 'DexScreener disabled due to unreliable data (fake billion-dollar profits)'
     };
   }
 
@@ -694,12 +574,18 @@ class MultiAPIQuoteService {
       const profitUSD = outputUSD - inputUSD;
       const profitPct = (profitUSD / inputUSD) * 100;
 
-      // ✅ NO PROFIT/LOSS VALIDATION - Let scanner handle round-trip profit
-      // Only reject extreme outliers (>10000x = API error)
+      // ✅ Reject extreme outliers (>10000x = API error)
       const ratio = outputAmt / inputAmt;
       
       if (ratio > 10000 || ratio < 0.0001) {
         console.warn(`⚠️ Rejected: Extreme outlier (${ratio > 1 ? ratio.toFixed(0) + "x" : (1/ratio).toFixed(0) + "x loss"}, API error)`);
+        return false;
+      }
+
+      // ✅ Reject unrealistic profits/losses (>15% on single swap = fake)
+      // Individual swaps should be roughly 1:1 in USD (minus fees/slippage)
+      if (Math.abs(profitPct) > 15) {
+        console.warn(`⚠️ Rejected: Unrealistic ${profitPct > 0 ? 'profit' : 'loss'} (${Math.abs(profitPct).toFixed(1)}% on single swap)`);
         return false;
       }
 
@@ -747,8 +633,6 @@ class MultiAPIQuoteService {
           quote = await this.fetchRaydiumV3(inputMint, outputMint, amount, slippageBps);
         } else if (api.name === 'Orca Whirlpool') {
           quote = await this.fetchOrcaWhirlpool(inputMint, outputMint, amount, slippageBps);
-        } else if (api.name === 'DexScreener') {
-          quote = await this.fetchDexScreener(inputMint, outputMint, amount);
         } else {
           throw new Error(`Unknown API provider: ${api.name}`);
         }
@@ -839,8 +723,6 @@ class MultiAPIQuoteService {
           quote = await this.fetchRaydiumV3(SOL_MINT, USDC_MINT, testAmount);
         } else if (api.name === 'Orca Whirlpool') {
           quote = await this.fetchOrcaWhirlpool(SOL_MINT, USDC_MINT, testAmount);
-        } else if (api.name === 'DexScreener') {
-          quote = await this.fetchDexScreener(SOL_MINT, USDC_MINT, testAmount);
         } else {
           continue;
         }
