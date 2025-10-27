@@ -94,9 +94,42 @@ class MultiAPIQuoteService {
       isPaused: false,
       pausedUntil: 0
     },
-    // ORCA DISABLED: CORS blocked on client-side (React SPA, not backend)
-    // DEXSCREENER DISABLED: Price validation breaking everything
-    // ONLY Jupiter Ultra V1 and Raydium V3 are reliable
+    {
+      name: 'Orca Whirlpool',
+      type: 'rest',
+      endpoint: 'https://api.mainnet.orca.so',
+      rateLimit: 300, // Higher limit, direct DEX
+      priority: 3, // Third choice - real DEX quotes
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      avgLatency: 0,
+      lastError: null,
+      lastErrorTime: 0,
+      consecutiveFailures: 0,
+      callsThisMinute: 0,
+      minuteWindowStart: Date.now(),
+      isPaused: false,
+      pausedUntil: 0
+    },
+    {
+      name: 'DexScreener',
+      type: 'rest',
+      endpoint: 'https://api.dexscreener.com',
+      rateLimit: 300, // Price API limit
+      priority: 4, // Last resort - price validation only
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      avgLatency: 0,
+      lastError: null,
+      lastErrorTime: 0,
+      consecutiveFailures: 0,
+      callsThisMinute: 0,
+      minuteWindowStart: Date.now(),
+      isPaused: false,
+      pausedUntil: 0
+    }
   ];
 
   private requestDelay = 100; // 100ms between requests (BALANCED: fast but safe)
@@ -141,7 +174,8 @@ class MultiAPIQuoteService {
     });
 
     if (availableAPIs.length === 0) {
-      throw new Error('All APIs temporarily unavailable - will retry next scan');
+      console.error('❌ All APIs unavailable - waiting for cooldown');
+      return null;
     }
 
     // Sort by health metrics
@@ -363,89 +397,90 @@ class MultiAPIQuoteService {
     
     for (const pool of poolsData.data.data.slice(0, 3)) {
       try {
-        // Check if this is CLMM (concentrated) or Standard pool
-        const isConcentrated = pool.type === 'Concentrated' || pool.type === 'CLMM';
-        
-        if (isConcentrated) {
-          // For concentrated liquidity, use price directly
-          const price = parseFloat(pool.price || '0');
-          if (price === 0 || isNaN(price)) {
-            throw new Error('Invalid price from Raydium CLMM pool');
-          }
-          
-          const inputDecimals = pool.mintA.address === inputMint ? pool.mintA.decimals : pool.mintB.decimals;
-          const outputDecimals = pool.mintA.address === inputMint ? pool.mintB.decimals : pool.mintA.decimals;
-          
-          const amountInFloat = amount / Math.pow(10, inputDecimals);
-          const amountOutFloat = pool.mintA.address === inputMint ? amountInFloat * price : amountInFloat / price;
-          const outputAmount = Math.floor(amountOutFloat * Math.pow(10, outputDecimals));
-          
-          return {
+    
+    // Raydium uses 'tvl' field for reserves, not 'amount'
+    // Check if this is CLMM (concentrated) or Standard pool
+    const isConcentrated = pool.type === 'Concentrated';
+    
+    if (isConcentrated) {
+      // For concentrated liquidity, use price directly
+      const price = parseFloat(pool.price || '0');
+      if (price === 0 || isNaN(price)) {
+        throw new Error('Invalid price from Raydium pool');
+      }
+      
+      const inputDecimals = pool.mintA.address === inputMint ? pool.mintA.decimals : pool.mintB.decimals;
+      const outputDecimals = pool.mintA.address === inputMint ? pool.mintB.decimals : pool.mintA.decimals;
+      
+      const amountInFloat = amount / Math.pow(10, inputDecimals);
+      const amountOutFloat = pool.mintA.address === inputMint ? amountInFloat * price : amountInFloat / price;
+      const outputAmount = Math.floor(amountOutFloat * Math.pow(10, outputDecimals));
+      
+      return {
+        inputMint,
+        inAmount: String(amount),
+        outputMint,
+        outAmount: String(outputAmount),
+        otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+        swapMode: 'ExactIn',
+        slippageBps,
+        platformFee: null,
+        priceImpactPct: '0.1',
+        routePlan: [{
+          swapInfo: {
+            ammKey: pool.id,
+            label: 'Raydium CLMM',
             inputMint,
-            inAmount: String(amount),
             outputMint,
+            inAmount: String(amount),
             outAmount: String(outputAmount),
-            otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
-            swapMode: 'ExactIn',
-            slippageBps,
-            platformFee: null,
-            priceImpactPct: '0.1',
-            routePlan: [{
-              swapInfo: {
-                ammKey: pool.id,
-                label: 'Raydium CLMM',
-                inputMint,
-                outputMint,
-                inAmount: String(amount),
-                outAmount: String(outputAmount),
-                feeAmount: '0',
-                feeMint: inputMint
-              }
-            }],
-            provider: 'Raydium V3'
-          };
-        }
-        
-        // For standard AMM pools, use reserves and formula
+            feeAmount: '0',
+            feeMint: inputMint
+          }
+        }],
+        provider: 'Raydium V3'
+      };
+    }
+    
+        // For standard AMM pools, use AMM formula
         const isMint1Input = pool.mintA.address === inputMint;
-        const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount || pool.mintA.vault || '0') : parseFloat(pool.mintB.amount || pool.mintB.vault || '0');
-        const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount || pool.mintB.vault || '0') : parseFloat(pool.mintA.amount || pool.mintA.vault || '0');
-        
-        if (reserveIn === 0 || reserveOut === 0 || isNaN(reserveIn) || isNaN(reserveOut)) {
-          throw new Error('Invalid reserves from Raydium pool');
-        }
-        
-        // Constant product formula with 0.3% fee: (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
-        const amountInNum = amount / Math.pow(10, isMint1Input ? pool.mintA.decimals : pool.mintB.decimals);
-        const amountInWithFee = amountInNum * 997;
-        const amountOutNum = (amountInWithFee * reserveOut) / (reserveIn * 1000 + amountInWithFee);
-        const outputDecimals = isMint1Input ? pool.mintB.decimals : pool.mintA.decimals;
-        const outputAmount = Math.floor(amountOutNum * Math.pow(10, outputDecimals));
+    const reserveIn = isMint1Input ? parseFloat(pool.mintA.amount || pool.mintA.vault || '0') : parseFloat(pool.mintB.amount || pool.mintB.vault || '0');
+    const reserveOut = isMint1Input ? parseFloat(pool.mintB.amount || pool.mintB.vault || '0') : parseFloat(pool.mintA.amount || pool.mintA.vault || '0');
+    
+    if (reserveIn === 0 || reserveOut === 0 || isNaN(reserveIn) || isNaN(reserveOut)) {
+      throw new Error('Invalid reserves from Raydium pool');
+    }
+    
+    // Constant product formula: amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
+    const amountInNum = amount / Math.pow(10, isMint1Input ? pool.mintA.decimals : pool.mintB.decimals);
+    const amountOutNum = (amountInNum * reserveOut) / (reserveIn + amountInNum);
+    const outputDecimals = isMint1Input ? pool.mintB.decimals : pool.mintA.decimals;
+    const outputAmount = Math.floor(amountOutNum * Math.pow(10, outputDecimals));
 
-        return {
+    return {
+      inputMint,
+      inAmount: String(amount),
+      outputMint,
+      outAmount: String(outputAmount),
+      otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
+      swapMode: 'ExactIn',
+      slippageBps,
+      platformFee: null,
+      priceImpactPct: ((amountInNum / reserveIn) * 100).toFixed(2),
+      routePlan: [{
+        swapInfo: {
+          ammKey: pool.id,
+          label: 'Raydium',
           inputMint,
-          inAmount: String(amount),
           outputMint,
+          inAmount: String(amount),
           outAmount: String(outputAmount),
-          otherAmountThreshold: String(Math.floor(outputAmount * (1 - slippageBps / 10000))),
-          swapMode: 'ExactIn',
-          slippageBps,
-          platformFee: null,
-          priceImpactPct: ((amountInNum / reserveIn) * 100).toFixed(2),
-          routePlan: [{
-            swapInfo: {
-              ammKey: pool.id,
-              label: 'Raydium',
-              inputMint,
-              outputMint,
-              inAmount: String(amount),
-              outAmount: String(outputAmount),
-              feeAmount: '0',
-              feeMint: inputMint
-            }
-          }],
-          provider: 'Raydium V3'
-        };
+          feeAmount: '0',
+          feeMint: inputMint
+        }
+      }],
+      provider: 'Raydium V3'
+    };
       } catch (poolError: any) {
         lastError = poolError;
         continue; // Try next pool
@@ -457,8 +492,8 @@ class MultiAPIQuoteService {
   }
 
   /**
-   * Fetch quote from Orca Whirlpool (via Jupiter aggregator - NO CORS)
-   * ✅ CORS FIX: Use Jupiter V6 API with dexes=Orca filter
+   * Fetch quote from Orca (via Jupiter aggregator - CORS BYPASS)
+   * \u2705 CORS FIX: Use Jupiter V6 API with dexes=Orca filter
    * This bypasses CORS because Jupiter's API supports CORS headers
    */
   private async fetchOrcaWhirlpool(
@@ -468,7 +503,7 @@ class MultiAPIQuoteService {
     slippageBps: number = 50
   ): Promise<JupiterQuoteResponse> {
     try {
-      // ✅ Use Jupiter aggregator to get Orca-only quotes (no CORS issues)
+      // \u2705 Use Jupiter aggregator to get Orca-only quotes (no CORS issues)
       const url = `https://quote-api.jup.ag/v6/quote?` +
         `inputMint=${inputMint}&` +
         `outputMint=${outputMint}&` +
@@ -523,7 +558,7 @@ class MultiAPIQuoteService {
 
   /**
    * Fetch price from DexScreener with PROPER DECIMAL HANDLING
-   * ✅ FIXED: Compares USD values (not raw token amounts)
+   * \u2705 FIXED: Compares USD values (not raw token amounts)
    */
   private async fetchDexScreener(
     inputMint: string,
@@ -559,7 +594,7 @@ class MultiAPIQuoteService {
       throw new Error('Invalid price from DexScreener');
     }
 
-    // ✅ PROPER CALCULATION WITH DECIMALS
+    // \u2705 PROPER CALCULATION WITH DECIMALS
     const inputDecimals = this.getTokenDecimals(inputMint);
     const outputDecimals = this.getTokenDecimals(outputMint);
     const inputPrice = this.getTokenPrice(inputMint);
@@ -569,14 +604,14 @@ class MultiAPIQuoteService {
     const inputValueUSD = inputHuman * inputPrice;
     
     // Calculate output based on price ratio
-    const outputValueUSD = inputValueUSD; // Same USD value (no profit in price conversion)
+    const outputValueUSD = inputValueUSD; // Same USD value
     const outputHuman = outputValueUSD / priceUsd;
     const outputAmount = Math.floor(outputHuman * Math.pow(10, outputDecimals));
 
-    // ✅ REALISTIC SANITY CHECK (USD-based)
+    // \u2705 REALISTIC SANITY CHECK (USD-based)
     const profitPct = ((outputValueUSD - inputValueUSD) / inputValueUSD) * 100;
     
-    if (profitPct > 30 || profitPct < -30) {
+    if (Math.abs(profitPct) > 30) {
       throw new Error(`Unrealistic price from DexScreener: ${profitPct.toFixed(1)}% difference`);
     }
 
@@ -627,9 +662,9 @@ class MultiAPIQuoteService {
 
   /**
    * Validate quote with PROPER USD CONVERSION
-   * ✅ FIXED: Handles all token decimals correctly
-   * ✅ Compares USD values (not raw token amounts)
-   * ✅ Reasonable profit range: -20% to +30%
+   * \u2705 FIXED: Handles all token decimals correctly
+   * \u2705 Compares USD values (not raw token amounts)
+   * \u2705 Reasonable profit range: -20% to +30%
    */
   private isRealisticQuote(quote: JupiterQuoteResponse, inputAmount: number): boolean {
     try {
@@ -641,25 +676,25 @@ class MultiAPIQuoteService {
         return false;
       }
 
-      // ✅ GET DECIMALS & PRICES
+      // \u2705 GET DECIMALS & PRICES
       const inputDecimals = this.getTokenDecimals(quote.inputMint);
       const outputDecimals = this.getTokenDecimals(quote.outputMint);
       const inputPrice = this.getTokenPrice(quote.inputMint);
       const outputPrice = this.getTokenPrice(quote.outputMint);
 
-      // ✅ CONVERT TO HUMAN-READABLE
+      // \u2705 CONVERT TO HUMAN-READABLE
       const inputHuman = inputAmt / Math.pow(10, inputDecimals);
       const outputHuman = outputAmt / Math.pow(10, outputDecimals);
 
-      // ✅ CONVERT TO USD
+      // \u2705 CONVERT TO USD
       const inputUSD = inputHuman * inputPrice;
       const outputUSD = outputHuman * outputPrice;
 
-      // ✅ CALCULATE PROFIT
+      // \u2705 CALCULATE PROFIT
       const profitUSD = outputUSD - inputUSD;
       const profitPct = (profitUSD / inputUSD) * 100;
 
-      // ✅ REALISTIC RANGE: -20% to +30% (allows for slippage and low-liquidity)
+      // \u2705 REALISTIC RANGE: -20% to +30% (allows for slippage and low-liquidity)
       if (profitPct > 30) {
         console.warn(`⚠️ Rejected: ${profitPct.toFixed(1)}% profit (>30% unrealistic)`);
         return false;
@@ -723,11 +758,10 @@ class MultiAPIQuoteService {
         const latency = Date.now() - startTime;
         this.recordSuccess(api, latency);
 
-        // ✅ Basic validation only (NaN/zero check)
-        const outputAmt = parseFloat(quote.outAmount);
-        if (isNaN(outputAmt) || outputAmt === 0) {
-          console.warn(`⚠️ ${api.name} returned invalid output (NaN or zero), trying next API`);
-          this.recordFailure(api, new Error('Invalid output'));
+        // ✅ Validate quote before returning (prevents fake profits)
+        if (!this.isRealisticQuote(quote, amount)) {
+          console.warn(`⚠️ ${api.name} returned unrealistic quote, trying next API`);
+          this.recordFailure(api, new Error('Unrealistic quote'));
           continue;
         }
 
@@ -835,36 +869,6 @@ class MultiAPIQuoteService {
     this.requestDelay = delayMs;
     console.log(`⚙️  Request delay set to ${delayMs}ms`);
   }
-
-  /**
-   * Reset all API health metrics
-   */
-  resetHealthMetrics() {
-    this.providers.forEach(api => {
-      api.totalCalls = 0;
-      api.successfulCalls = 0;
-      api.failedCalls = 0;
-      api.avgLatency = 0;
-      api.consecutiveFailures = 0;
-      api.lastError = null;
-      api.isPaused = false;
-    });
-    console.log('🔄 All API health metrics reset');
-  }
-}
-
-// Export singleton instance
-export const multiAPIService = new MultiAPIQuoteService();
-
-  setRequestDelay(delayMs: number) {
-    this.requestDelay = delayMs;
-    console.log(`⚙️  Request delay set to ${delayMs}ms`);
-  }
-}
-
-// Export singleton instance
-export const multiAPIService = new MultiAPIQuoteService();
-export { MultiAPIQuoteService };
 
   /**
    * Reset all API health metrics
