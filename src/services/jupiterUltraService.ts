@@ -159,7 +159,9 @@ export class JupiterV6Service {
     const startTime = Date.now();
     
     try {
-      const url = new URL(`${this.baseUrl}/order`);
+      //const url = new URL(`${this.baseUrl}/order`);
+      const url = new URL(`https://lite-api.jup.ag/swap/v1/quote`);
+
       url.searchParams.append('inputMint', inputMint);
       url.searchParams.append('outputMint', outputMint);
       url.searchParams.append('amount', amount.toString());
