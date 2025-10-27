@@ -336,29 +336,30 @@ class RealTradeExecutor {
         // Step 6: Send to blockchain
         console.log('📊 Step 6: Sending to Solana mainnet...');
 
-      if (params.useJito) {
-        console.log('🚀 Using Jito bundle for MEV protection...');
-        const jitoResult = await jitoBundleService.sendBundle([transaction], {
-          tipLamports: fees.priorityFeeLamports
-        });
-        
-        if (!jitoResult.success || !jitoResult.bundleId) {
-          throw new Error('Jito bundle failed to land');
-        }
-        
-        txSignature = jitoResult.bundleId;
-      } else {
-        console.log('📡 Sending standard transaction...');
-        const rawTransaction = transaction.serialize();
-        txSignature = await this.connection.sendRawTransaction(rawTransaction, {
-          skipPreflight: false,
-          maxRetries: 3,
-          preflightCommitment: 'confirmed'
-        });
+        if (params.useJito) {
+          console.log('🚀 Using Jito bundle for MEV protection...');
+          const jitoResult = await jitoBundleService.sendBundle([transaction], {
+            tipLamports: fees.priorityFeeLamports
+          });
+          
+          if (!jitoResult.success || !jitoResult.bundleId) {
+            throw new Error('Jito bundle failed to land');
+          }
+          
+          txSignature = jitoResult.bundleId;
+        } else {
+          console.log('📡 Sending standard transaction...');
+          const rawTransaction = transaction.serialize();
+          txSignature = await this.connection.sendRawTransaction(rawTransaction, {
+            skipPreflight: false,
+            maxRetries: 3,
+            preflightCommitment: 'confirmed'
+          });
 
-        // Wait for confirmation
-        console.log('⏳ Waiting for confirmation...');
-        await this.connection.confirmTransaction(txSignature, 'confirmed');
+          // Wait for confirmation
+          console.log('⏳ Waiting for confirmation...');
+          await this.connection.confirmTransaction(txSignature, 'confirmed');
+        }
       }
 
       const executionTimeMs = Date.now() - startTime;
