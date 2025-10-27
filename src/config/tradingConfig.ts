@@ -112,9 +112,12 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   },
 
   apis: {
-    jupiterQuote: 'https://quote-api.jup.ag/v6',
-    jupiterSwap: 'https://quote-api.jup.ag/v6/swap',
-    jupiterPrice: 'https://price.jup.ag/v4/price',
+    // Use Jupiter Ultra V1 base for quotes (GET /ultra/v1/order)
+    jupiterQuote: 'https://lite-api.jup.ag/ultra/v1',
+    // Legacy V6 swap endpoint (POST /v6/swap) - proxy via backend
+    jupiterSwap: 'https://lite-api.jup.ag/v6/swap',
+    // Price V3 endpoint base (GET /price/v3/price)
+    jupiterPrice: 'https://lite-api.jup.ag/price/v3',
     solscanBase: 'https://solscan.io',
     corsProxies: [
       'https://api.allorigins.win/raw?url=',
@@ -152,8 +155,22 @@ class TradingConfigManager {
       const saved = localStorage.getItem('trading_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Merge with enhanced defaults to ensure new parameters are included
-        const mergedConfig = { ...DEFAULT_TRADING_CONFIG, ...parsed };
+        // Deep-merge nested sections to preserve new defaults
+        const mergedConfig: TradingConfig = {
+          ...DEFAULT_TRADING_CONFIG,
+          ...parsed,
+          prices: { ...DEFAULT_TRADING_CONFIG.prices, ...(parsed.prices || {}) },
+          trading: {
+            ...DEFAULT_TRADING_CONFIG.trading,
+            ...(parsed.trading || {}),
+            // Force-enable auto-trading unless explicitly disabled by runtime intent
+            autoTradingEnabled: true,
+          },
+          scanner: { ...DEFAULT_TRADING_CONFIG.scanner, ...(parsed.scanner || {}) },
+          tokens: { ...DEFAULT_TRADING_CONFIG.tokens, ...(parsed.tokens || {}) },
+          apis: { ...DEFAULT_TRADING_CONFIG.apis, ...(parsed.apis || {}) },
+          risk: { ...DEFAULT_TRADING_CONFIG.risk, ...(parsed.risk || {}) },
+        };
         console.log('✅ Loaded saved config with enhanced defaults');
         return mergedConfig;
       }
