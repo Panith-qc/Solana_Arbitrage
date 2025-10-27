@@ -106,7 +106,13 @@ app.post('/api/stop', (req, res) => {
 // Execute swap (proxy for Jupiter API)
 app.post('/api/swap', async (req, res) => {
   try {
+    console.log('📡 /api/swap called');
     const { quoteResponse, userPublicKey } = req.body;
+
+    if (!quoteResponse || !userPublicKey) {
+      console.error('❌ Missing quoteResponse or userPublicKey');
+      return res.status(400).json({ error: 'Missing quoteResponse or userPublicKey' });
+    }
 
     // Call Jupiter V6 /swap from server-side (no CORS)
     const swapRequest = {
@@ -118,6 +124,7 @@ app.post('/api/swap', async (req, res) => {
       skipUserAccountsRpcCalls: false,
     };
 
+    console.log('📡 Calling Jupiter V6 /swap...');
     const response = await fetch('https://lite-api.jup.ag/v6/swap', {
       method: 'POST',
       headers: {
@@ -127,15 +134,26 @@ app.post('/api/swap', async (req, res) => {
       body: JSON.stringify(swapRequest),
     });
 
+    console.log(`📡 Jupiter response status: ${response.status}`);
+
     if (!response.ok) {
-      throw new Error(`Jupiter API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`❌ Jupiter API error ${response.status}:`, errorText);
+      return res.status(response.status).json({ 
+        error: `Jupiter API error: ${response.status}`,
+        details: errorText 
+      });
     }
 
     const data = await response.json();
+    console.log('✅ Jupiter swap success');
     res.json(data);
   } catch (error) {
-    console.error('❌ Swap error:', error.message);
-    res.status(500).json({ error: error.message });
+    console.error('❌ Swap error:', error.message, error.stack);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
