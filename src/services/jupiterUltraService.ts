@@ -365,8 +365,9 @@ export class JupiterService {
 
     const body: JupiterUltraExecuteRequest = {
       requestId: args.requestId,
-      signedTransaction: args.signedTransactionBase58,
+      signedTransaction: signedTransactionBase58,  // ✅ CORRECT
     };
+
 
     try {
       const res = await this.fetchWithTimeout(
