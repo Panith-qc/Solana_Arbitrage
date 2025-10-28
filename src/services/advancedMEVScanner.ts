@@ -146,7 +146,7 @@ class AdvancedMEVScanner {
       console.log('⚠️ No wallet configured - skipping execution');
       return;
     }
-
+  
     try {
       const config = tradingConfigManager.getConfig();
       const { realTradeExecutor } = await import('./realTradeExecutor');
@@ -157,28 +157,28 @@ class AdvancedMEVScanner {
       console.log(`   Token: ${op.pair}`);
       console.log(`   Size: ${amountSol} SOL`);
       console.log(`   Expected Profit: $${op.profitUsd.toFixed(4)}`);
-
-      const result = await realTradeExecutor.executeArbitrageCycle({
-        tokenMint: op.outputMint,
-        amountSol,
-        slippageBps: config.trading.slippageBps,
-        wallet: this.walletKeypair,
-        useJito: false,
-        expectedCycleProfitUsd: op.profitUsd,
-        minNetProfitUsd: config.trading.minProfitUsd
-      });
-
+  
+      // ✅ FIX: Call with individual parameters, NOT an object
+      const result = await realTradeExecutor.executeArbitrageCycle(
+        op.outputMint,                      // tokenMint (string)
+        amountSol,                          // amountSOL (number)
+        config.trading.slippageBps,         // slippageBps (number)
+        this.walletKeypair,                 // wallet (Keypair)
+        false                               // useJito (boolean)
+      );
+  
       if (result.success) {
         this.recordSuccessfulTrade(result.netProfitUSD);
         console.log(`✅ TRADE EXECUTED! Net Profit: $${result.netProfitUSD.toFixed(4)}`);
         console.log(`   TX Signatures: ${result.txSignatures.join(', ')}`);
       } else {
-        console.log(`⚠️ Execution aborted: ${result.error || 'Not profitable after fees'}`);
+        console.log(`⚠️ Execution aborted: Not profitable after fees`);
       }
     } catch (err: any) {
       console.error('❌ Execution threw:', err.message);
     }
   }
+
 
 
 
