@@ -112,13 +112,23 @@ app.post('/api/swap', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Missing quoteResponse or userPublicKey' });
     }
 
+    const cleanedQuote = {
+      inputMint: quoteResponse.inputMint,
+      inAmount: quoteResponse.inAmount,
+      outputMint: quoteResponse.outputMint,
+      outAmount: quoteResponse.outAmount,
+      otherAmountThreshold: quoteResponse.otherAmountThreshold,
+      swapMode: quoteResponse.swapMode,
+      slippageBps: quoteResponse.slippageBps,
+      priceImpactPct: quoteResponse.priceImpactPct
+    };
+    
     const swapRequest = {
-      quoteResponse,
+      quoteResponse: cleanedQuote,
       userPublicKey,
       wrapAndUnwrapSol: true,
-      prioritizationFeeLamports: 'auto',
-      dynamicComputeUnitLimit: true,
     };
+
 
     const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
