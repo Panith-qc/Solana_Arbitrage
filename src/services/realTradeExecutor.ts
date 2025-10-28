@@ -265,7 +265,7 @@ class RealTradeExecutor {
       // Use V6 /swap for all trades (Ultra /execute requires signedTransaction)
       console.log('📡 Using Jupiter V6 /swap');
       
-      const swapResponse = await jupiterUltra.getSwapTransaction(
+      const swapResponse = await jupiterUltra.buildLegacySwapTransaction(
         quote,
         params.wallet.publicKey.toString(),
         params.slippageBps
