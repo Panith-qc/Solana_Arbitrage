@@ -8,7 +8,7 @@ import { priorityFeeOptimizer } from './priorityFeeOptimizer';
 import { jitoBundleService } from './jitoBundleService';
 
 // Use Jupiter Ultra for swap transactions (only Jupiter supports this)
-const jupiterUltra = jupiterUltraService();
+const jupiterUltra = jupiterUltraService;
 
 export interface TradeParams {
   inputMint: string;

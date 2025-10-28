@@ -225,7 +225,7 @@ export class CyclicArbitrageService {
     const startTime = Date.now();
     
     try {
-      const ultra = jupiterUltraService();
+      const ultra = jupiterUltraService;
       const inputAmountSol = 0.1; // Test with 0.1 SOL
       const SOL_LAMPORTS = 100_000_000; // 0.1 SOL in lamports
       
