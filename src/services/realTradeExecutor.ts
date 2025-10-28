@@ -263,7 +263,7 @@ class RealTradeExecutor {
       let txSignature: string;
 
       // Use V6 /swap for all trades (Ultra /execute requires signedTransaction)
-            // Step 4: Get Jupiter Ultra order (with requestId)
+      // Step 4: Get Jupiter Ultra order (with requestId)
       console.log('📊 Step 4: Getting Jupiter Ultra order...');
       const orderResponse = await jupiterUltra.getUltraOrder({
         inputMint: params.inputMint,
@@ -300,46 +300,7 @@ class RealTradeExecutor {
       }
 
       txSignature = executeResponse.signature;
-
-
-      // Step 5: Deserialize and sign transaction
-      console.log('📊 Step 5: Deserializing and signing transaction...');
       
-      // Deserialize base64 transaction
-      const transactionBuf = Buffer.from(swapResponse.swapTransaction, 'base64');
-      const transaction = VersionedTransaction.deserialize(transactionBuf);
-      
-      // Sign with wallet
-      transaction.sign([params.wallet]);
-
-      // Step 6: Send to blockchain
-      console.log('📊 Step 6: Sending to Solana mainnet...');
-
-      if (params.useJito) {
-        console.log('🚀 Using Jito bundle for MEV protection...');
-        const jitoResult = await jitoBundleService.sendBundle([transaction], {
-          tipLamports: fees.priorityFeeLamports
-        });
-        
-        if (!jitoResult.success || !jitoResult.bundleId) {
-          throw new Error('Jito bundle failed to land');
-        }
-        
-        txSignature = jitoResult.bundleId;
-      } else {
-        console.log('📡 Sending standard transaction...');
-        const rawTransaction = transaction.serialize();
-        txSignature = await this.connection.sendRawTransaction(rawTransaction, {
-          skipPreflight: false,
-          maxRetries: 3,
-          preflightCommitment: 'confirmed'
-        });
-
-        // Wait for confirmation
-        console.log('⏳ Waiting for confirmation...');
-        await this.connection.confirmTransaction(txSignature, 'confirmed');
-      }
-
       const executionTimeMs = Date.now() - startTime;
 
       console.log('═══════════════════════════════════════════════════════════');
