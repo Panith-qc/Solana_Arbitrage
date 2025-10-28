@@ -10,6 +10,20 @@ import { jitoBundleService } from './jitoBundleService';
 // Use Jupiter Ultra for swap transactions (only Jupiter supports this)
 const jupiterUltra = jupiterUltraService;
 
+// ✅ HELPER FUNCTION: Safely convert PublicKey or string to string
+function toMintString(mint: any): string {
+  if (typeof mint === 'string') {
+    return mint;
+  }
+  if (mint && typeof mint === 'object' && 'toString' in mint) {
+    return mint.toString();
+  }
+  if (mint && typeof mint === 'object' && 'toBase58' in mint) {
+    return mint.toBase58();
+  }
+  return String(mint);
+}
+
 export interface TradeParams {
   inputMint: string;
   outputMint: string;
@@ -151,11 +165,15 @@ class RealTradeExecutor {
    * Validate trade pair to prevent invalid trades (e.g., SOL → SOL)
    */
   private validateTradePair(inputMint: string, outputMint: string): { valid: boolean; error?: string } {
+    // ✅ FIX: Convert to strings before comparison
+    const inputMintStr = toMintString(inputMint);
+    const outputMintStr = toMintString(outputMint);
+    
     // BUG FIX: Prevent same-token trades
-    if (inputMint === outputMint) {
+    if (inputMintStr === outputMintStr) {
       return {
         valid: false,
-        error: `Cannot trade ${inputMint.slice(0, 8)}... for itself`
+        error: `Cannot trade ${inputMintStr.slice(0, 8)}... for itself`
       };
     }
     
@@ -169,11 +187,15 @@ class RealTradeExecutor {
   async executeTrade(params: TradeParams): Promise<TradeResult> {
     const startTime = Date.now();
     
+    // ✅ FIX: Convert mints to strings for logging
+    const inputMintStr = toMintString(params.inputMint);
+    const outputMintStr = toMintString(params.outputMint);
+    
     console.log('═══════════════════════════════════════════════════════════');
     console.log('🚀 REAL TRADE EXECUTION STARTING');
     console.log('═══════════════════════════════════════════════════════════');
-    console.log(`📊 Input: ${params.inputMint.slice(0, 8)}...`);
-    console.log(`📊 Output: ${params.outputMint.slice(0, 8)}...`);
+    console.log(`📊 Input: ${inputMintStr.slice(0, 8)}...`);
+    console.log(`📊 Output: ${outputMintStr.slice(0, 8)}...`);
     console.log(`💰 Amount: ${(params.amount / 1e9).toFixed(6)} (base units: ${params.amount})`);
     console.log(`🎯 Slippage: ${params.slippageBps / 100}%`);
     console.log(`🔗 Wallet: ${params.wallet.publicKey.toString()}`);
@@ -185,11 +207,12 @@ class RealTradeExecutor {
       if (!validation.valid) {
         throw new Error(`Invalid trade pair: ${validation.error}`);
       }
+      
       // Step 1: Calculate ALL fees
       console.log('📊 Step 1: Calculating all fees...');
       const fees = await this.calculateTotalFees(
-        params.inputMint,
-        params.outputMint,
+        inputMintStr,
+        outputMintStr,
         params.amount,
         params.useJito
       );
@@ -205,8 +228,8 @@ class RealTradeExecutor {
       // Step 2: Get Jupiter quote for expected output
       console.log('📊 Step 2: Getting Jupiter quote...');
       const quote = await multiAPIService.getQuote(
-        params.inputMint,
-        params.outputMint,
+        inputMintStr,
+        outputMintStr,
         params.amount,
         params.slippageBps
       );
@@ -266,13 +289,11 @@ class RealTradeExecutor {
       // Step 4: Get Jupiter Ultra order (with requestId)
       console.log('📊 Step 4: Getting Jupiter Ultra order...');
       const orderResponse = await jupiterUltra.getUltraOrder({
-        inputMint: params.inputMint,
-        outputMint: params.outputMint,
+        inputMint: inputMintStr,
+        outputMint: outputMintStr,
         rawAmount: params.amount.toString(),
         takerPubkey: params.wallet.publicKey.toString(),
-        //amount: params.amount.toString(),
         slippageBps: params.slippageBps,
-        //onlyDirectRoutes: false
       });
 
       if (!orderResponse || !orderResponse.requestId) {
