@@ -172,34 +172,39 @@ export default function Phase2AutoTrading() {
                 const SOL_MINT = 'So11111111111111111111111111111111111111112';
                 const amountSOL = opp.recommendedCapital || config.calculatedSettings.maxPositionSol * 0.5;
                 
-                const result = await realTradeExecutor.executeArbitrageCycle(
-                  opp.outputMint,
-                  amountSOL,
-                  config.profile.slippageBps,
-                  keypair,
-                  config.profile.level === 'AGGRESSIVE' // Use Jito for aggressive
-                );
+                const result = await realTradeExecutor.executeArbitrageCycle({
+                  tokenMint: opp.outputMint,
+                  amountSol: amountSOL,
+                  slippageBps: config.profile.slippageBps,
+                  wallet: keypair,
+                  useJito: config.profile.level === 'AGGRESSIVE',
+                  expectedCycleProfitUsd: opp.profitUsd,
+                  minNetProfitUsd: config.profile.minProfitUsd
+                });
                 
                 if (result.success) {
                   console.log(`✅ REAL TRADE EXECUTED!`);
-                  console.log(`   Net Profit: $${result.netProfitUSD.toFixed(4)}`);
+                  console.log(`   Net Profit: $${result.netProfitUsd.toFixed(4)}`);
                   console.log(`   TX Signatures: ${result.txSignatures.join(', ')}`);
                   
-                  setTotalProfit(prev => prev + result.netProfitUSD);
+                  setTotalProfit(prev => prev + result.netProfitUsd);
                   setTradesExecuted(prev => prev + 1);
                   
                   // Add to opportunities list
                   setOpportunities(prev => [{
                     ...opp,
-                    profitUsd: result.netProfitUSD
+                    profitUsd: result.netProfitUsd,
+                    executed: true,
+                    txSignatures: result.txSignatures
                   }, ...prev].slice(0, 20));
                 } else {
-                  console.log(`❌ Trade rejected or failed`);
+                  console.log(`❌ Trade rejected: ${result.error || 'Not profitable after fees'}`);
                 }
                 
               } catch (execError) {
                 console.error(`❌ Execution error for ${opp.pair}:`, execError);
               }
+
             }
           }
         }
