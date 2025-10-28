@@ -79,6 +79,8 @@ class AdvancedMEVScanner {
   private scanInterval: NodeJS.Timeout | null = null;
   private onOpportunityCallback: ((opportunities: MEVOpportunity[]) => void) | null = null;
   private currentOpportunities: MEVOpportunity[] = [];
+  private walletKeypair: any = null;
+
   
   // Metrics tracking
   private metrics: ScannerMetrics = {
@@ -134,6 +136,51 @@ class AdvancedMEVScanner {
       }
     ];
   }
+
+    setWallet(keypair: any): void {
+    this.walletKeypair = keypair;
+    console.log('✅ Scanner wallet configured');
+  }
+    private async tryExecute(op: MEVOpportunity): Promise<void> {
+    if (!this.walletKeypair) {
+      console.log('⚠️ No wallet configured - skipping execution');
+      return;
+    }
+
+    try {
+      const config = tradingConfigManager.getConfig();
+      const { realTradeExecutor } = await import('./realTradeExecutor');
+      
+      const amountSol = op.inputAmount / 1e9;
+      
+      console.log('🚀 EXECUTING OPPORTUNITY:');
+      console.log(`   Token: ${op.pair}`);
+      console.log(`   Size: ${amountSol} SOL`);
+      console.log(`   Expected Profit: $${op.profitUsd.toFixed(4)}`);
+
+      const result = await realTradeExecutor.executeArbitrageCycle({
+        tokenMint: op.outputMint,
+        amountSol,
+        slippageBps: config.trading.slippageBps,
+        wallet: this.walletKeypair,
+        useJito: false,
+        expectedCycleProfitUsd: op.profitUsd,
+        minNetProfitUsd: config.trading.minProfitUsd
+      });
+
+      if (result.success) {
+        this.recordSuccessfulTrade(result.netProfitUSD);
+        console.log(`✅ TRADE EXECUTED! Net Profit: $${result.netProfitUSD.toFixed(4)}`);
+        console.log(`   TX Signatures: ${result.txSignatures.join(', ')}`);
+      } else {
+        console.log(`⚠️ Execution aborted: ${result.error || 'Not profitable after fees'}`);
+      }
+    } catch (err: any) {
+      console.error('❌ Execution threw:', err.message);
+    }
+  }
+
+
 
   async startScanning(onOpportunity: (opportunities: MEVOpportunity[]) => void): Promise<void> {
     if (this.isScanning) {
@@ -266,9 +313,16 @@ class AdvancedMEVScanner {
       console.log(`❌ Scan #${this.metrics.totalScans} complete: No profitable trades found (${scanDuration}ms) - All opportunities < $${config.trading.minProfitUsd}`);
     }
     
-    if (this.onOpportunityCallback) {
-      this.onOpportunityCallback([...limitedOpportunities]); // Send a copy of the array
+    // EXECUTE THE BEST OPPORTUNITY
+    const best = limitedOpportunities[0];
+    if (best && best.profitUsd >= config.trading.minProfitUsd) {
+      await this.tryExecute(best);
     }
+    
+    if (this.onOpportunityCallback) {
+      this.onOpportunityCallback([...limitedOpportunities]);
+    }
+
   }
 
   private async checkMicroMevOpportunity(pair: TokenPair, amount: number): Promise<MEVOpportunity | null> {
