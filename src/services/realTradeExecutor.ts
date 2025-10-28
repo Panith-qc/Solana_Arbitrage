@@ -263,17 +263,44 @@ class RealTradeExecutor {
       let txSignature: string;
 
       // Use V6 /swap for all trades (Ultra /execute requires signedTransaction)
-      console.log('📡 Using Jupiter V6 /swap');
-      
-      const swapResponse = await jupiterUltra.executeUltraOrder(
-        quote,
-        params.wallet.publicKey.toString(),
-        params.slippageBps
-      );
+            // Step 4: Get Jupiter Ultra order (with requestId)
+      console.log('📊 Step 4: Getting Jupiter Ultra order...');
+      const orderResponse = await jupiterUltra.getUltraOrder({
+        inputMint: params.inputMint,
+        outputMint: params.outputMint,
+        amount: params.amount.toString(),
+        slippageBps: params.slippageBps,
+        onlyDirectRoutes: false
+      });
 
-      if (!swapResponse || !swapResponse.swapTransaction) {
-        throw new Error('Failed to get swap transaction from Jupiter');
+      if (!orderResponse || !orderResponse.requestId) {
+        throw new Error('Failed to get Jupiter Ultra order');
       }
+
+      console.log(`✅ Got Ultra order (requestId: ${orderResponse.requestId})`);
+
+      // Step 5: Sign the transaction
+      console.log('📊 Step 5: Signing transaction...');
+      const signedTx = await jupiterUltra.signUltraTransaction({
+        transaction: orderResponse.transaction,
+        wallet: params.wallet
+      });
+
+      console.log('✅ Transaction signed');
+
+      // Step 6: Execute Ultra order
+      console.log('📊 Step 6: Executing Ultra order...');
+      const executeResponse = await jupiterUltra.executeUltraOrder({
+        requestId: orderResponse.requestId,
+        signedTransactionBase64: signedTx
+      });
+
+      if (!executeResponse || executeResponse.status !== 'Success') {
+        throw new Error(`Ultra execution failed: ${executeResponse?.error || 'Unknown error'}`);
+      }
+
+      txSignature = executeResponse.signature;
+
 
       // Step 5: Deserialize and sign transaction
       console.log('📊 Step 5: Deserializing and signing transaction...');
