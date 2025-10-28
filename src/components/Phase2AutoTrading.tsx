@@ -16,6 +16,8 @@ import { strategyEngine, StrategyOpportunity } from '../strategies/StrategyEngin
 import { realTradeExecutor } from '../services/realTradeExecutor';
 import { Keypair } from '@solana/web3.js';
 import { APIHealthDashboard } from './APIHealthDashboard';
+import { advancedMEVScanner } from '../services/advancedMEVScanner';
+
 
 export default function Phase2AutoTrading() {
   const [privateKey, setPrivateKey] = useState('');
@@ -137,6 +139,7 @@ export default function Phase2AutoTrading() {
       enabled.forEach(s => console.log(`   ✅ ${s}`));
       
       // Start StrategyEngine with REAL EXECUTION CALLBACK
+      advancedMEVScanner.setWallet(keypair); 
       await strategyEngine.startAllStrategies(
         config.calculatedSettings.maxPositionSol,
         async (detectedOpps: StrategyOpportunity[]) => {
