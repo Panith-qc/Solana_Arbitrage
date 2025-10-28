@@ -6,7 +6,7 @@
 
 import { Connection } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
-import { getJupiterUltraService } from './jupiterUltraService';
+import { jupiterUltraService } from './jupiterUltraService';
 import { priceService } from './priceService';
 import { jupiterRateLimiter } from './advancedRateLimiter';
 
@@ -225,7 +225,7 @@ export class CyclicArbitrageService {
     const startTime = Date.now();
     
     try {
-      const ultra = getJupiterUltraService();
+      const ultra = jupiterUltraService();
       const inputAmountSol = 0.1; // Test with 0.1 SOL
       const SOL_LAMPORTS = 100_000_000; // 0.1 SOL in lamports
       

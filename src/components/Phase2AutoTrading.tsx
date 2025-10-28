@@ -412,7 +412,6 @@ export default function Phase2AutoTrading() {
                     size="lg"
                     onClick={handleStartTrading}
                     disabled={!config.readyToTrade}
-                    className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700"
                   >
                     🚀 Start Phase 2 Trading
                   </Button>

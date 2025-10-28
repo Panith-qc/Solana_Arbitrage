@@ -7,7 +7,7 @@
 import { Connection } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
 import { mempoolMonitor, PendingTransaction } from './mempoolMonitor';
-import { getJupiterUltraService } from './jupiterUltraService';
+import { jupiterUltraService } from './jupiterUltraService';
 
 export interface BackrunOpportunity {
   id: string;
@@ -135,7 +135,7 @@ export class BackrunService {
       const buyAmountSol = this.calculateBuyAmount(tx);
 
       // 🚀 ULTRA: Get quote for SOL → Token (MEV-protected)
-      const ultra = getJupiterUltraService();
+      const ultra = jupiterUltraService();
       const buyOrder = await ultra.createOrder(
         SOL_MINT,
         targetMint,
@@ -304,7 +304,7 @@ export class BackrunService {
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     
     // 🚀 ULTRA: Get buy quote with MEV protection
-    const ultra = getJupiterUltraService();
+    const ultra = jupiterUltraService();
     const order = await ultra.createOrder(
       SOL_MINT,
       opportunity.token.mint,
@@ -347,7 +347,7 @@ export class BackrunService {
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     
     // 🚀 ULTRA: Get sell quote with MEV protection
-    const ultra = getJupiterUltraService();
+    const ultra = jupiterUltraService();
     const order = await ultra.createOrder(
       opportunity.token.mint,
       SOL_MINT,

@@ -720,3 +720,6 @@ export function getJupiterService(
   }
   return singletonInstance;
 }
+
+// Export singleton instance
+export const jupiterUltraService = new JupiterService();

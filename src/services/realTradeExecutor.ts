@@ -3,12 +3,12 @@
 
 import { Connection, Keypair, Transaction, VersionedTransaction, PublicKey } from '@solana/web3.js';
 import { multiAPIService } from './multiAPIQuoteService';
-import { getJupiterUltraService } from './jupiterUltraService';
+import { jupiterUltraService } from './jupiterUltraService';
 import { priorityFeeOptimizer } from './priorityFeeOptimizer';
 import { jitoBundleService } from './jitoBundleService';
 
 // Use Jupiter Ultra for swap transactions (only Jupiter supports this)
-const jupiterUltra = getJupiterUltraService();
+const jupiterUltra = jupiterUltraService();
 
 export interface TradeParams {
   inputMint: string;

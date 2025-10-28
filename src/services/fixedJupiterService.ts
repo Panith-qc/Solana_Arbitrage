@@ -1,4 +1,4 @@
-import { getJupiterUltraService } from './jupiterUltraService'; // OLD: realJupiterService
+import { jupiterUltraService } from './jupiterUltraService'; // OLD: realJupiterService
 
 // This service now uses REAL CoinGecko data - NO MOCK DATA
 export class FixedJupiterService {

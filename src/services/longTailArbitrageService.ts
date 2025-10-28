@@ -6,7 +6,7 @@
 
 import { Connection } from '@solana/web3.js';
 import { privateKeyWallet } from './privateKeyWallet';
-import { getJupiterUltraService } from './jupiterUltraService';
+import { jupiterUltraService } from './jupiterUltraService';
 
 export interface LongTailToken {
   mint: string;
@@ -137,7 +137,7 @@ export class LongTailArbitrageService {
       for (const token of this.LONG_TAIL_TOKENS) {
         try {
           // 🚀 ULTRA: Get buy quote (SOL → Token) with MEV protection
-          const ultra = getJupiterUltraService();
+          const ultra = jupiterUltraService();
           const buyOrder = await ultra.createOrder(
             SOL_MINT,
             token.mint,
@@ -299,7 +299,7 @@ export class LongTailArbitrageService {
     console.log(`💰 Buying ${opportunity.token.symbol} with ${opportunity.tradeAmountSol.toFixed(4)} SOL...`);
     
     // 🚀 ULTRA: Get buy quote with MEV protection
-    const ultra = getJupiterUltraService();
+    const ultra = jupiterUltraService();
     const order = await ultra.createOrder(
       SOL_MINT,
       opportunity.token.mint,
@@ -333,7 +333,7 @@ export class LongTailArbitrageService {
     const tokenAmount = opportunity.tradeAmountSol / opportunity.buyPriceSol;
     
     // 🚀 ULTRA: Get sell quote with MEV protection
-    const ultra = getJupiterUltraService();
+    const ultra = jupiterUltraService();
     const order = await ultra.createOrder(
       opportunity.token.mint,
       SOL_MINT,
