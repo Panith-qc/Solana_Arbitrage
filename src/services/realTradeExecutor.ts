@@ -283,10 +283,10 @@ class RealTradeExecutor {
 
       // Step 5: Sign the transaction
       console.log('📊 Step 5: Signing transaction...');
-      const signedTx = await jupiterUltra.signUltraTransaction({
-        transaction: orderResponse.transaction,
-        wallet: params.wallet
-      });
+      const signedTx = await jupiterUltra.signUltraTransaction(
+        orderResponse.transaction,
+        params.wallet
+      );
 
       console.log('✅ Transaction signed');
 
