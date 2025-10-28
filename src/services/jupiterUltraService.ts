@@ -344,9 +344,13 @@ export class JupiterService {
   }): Promise<JupiterUltraExecuteResponse> {
     const start = Date.now();
 
+    const bs58 = await import('bs58');
+    const txBuffer = Buffer.from(args.signedTransactionBase64, 'base64');
+    const signedTransactionBase58 = bs58.default.encode(txBuffer);
+
     const body: JupiterUltraExecuteRequest = {
       requestId: args.requestId,
-      signedTransaction: args.signedTransactionBase64,
+      signedTransaction: args.signedTransactionBase58,
     };
 
     try {
