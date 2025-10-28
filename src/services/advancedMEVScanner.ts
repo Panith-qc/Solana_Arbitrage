@@ -160,12 +160,19 @@ class AdvancedMEVScanner {
   
       // ✅ FIX: Call with individual parameters, NOT an object
       const result = await realTradeExecutor.executeArbitrageCycle(
-        op.outputMint,                      // tokenMint (string)
-        amountSol,                          // amountSOL (number)
-        config.trading.slippageBps,         // slippageBps (number)
-        this.walletKeypair,                 // wallet (Keypair)
-        false                               // useJito (boolean)
+        op.outputMint,
+        amountSol,
+        config.trading.slippageBps,
+        this.walletKeypair,
+        false
       );
+      //const result = await realTradeExecutor.executeArbitrageCycle(
+       // op.outputMint,                      // tokenMint (string)
+       // amountSol,                          // amountSOL (number)
+      //  config.trading.slippageBps,         // slippageBps (number)
+      //  this.walletKeypair,                 // wallet (Keypair)
+      //  false                               // useJito (boolean)
+      // );
   
       if (result.success) {
         this.recordSuccessfulTrade(result.netProfitUSD);
