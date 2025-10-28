@@ -268,9 +268,11 @@ class RealTradeExecutor {
       const orderResponse = await jupiterUltra.getUltraOrder({
         inputMint: params.inputMint,
         outputMint: params.outputMint,
-        amount: params.amount.toString(),
+        rawAmount: params.amount.toString(),
+        takerPubkey: params.wallet.publicKey.toString(),
+        //amount: params.amount.toString(),
         slippageBps: params.slippageBps,
-        onlyDirectRoutes: false
+        //onlyDirectRoutes: false
       });
 
       if (!orderResponse || !orderResponse.requestId) {
