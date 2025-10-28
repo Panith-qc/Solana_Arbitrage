@@ -325,15 +325,28 @@ export class JupiterService {
   // Returns base64 of the signed transaction, ready for executeUltraOrder
   async signUltraTransaction(
     unsignedTxBase64: string,
-    signer: GenericSigner
+    signer: any  // Can be Keypair or Wallet adapter
   ): Promise<string> {
     const txBytes = Buffer.from(unsignedTxBase64, 'base64');
     const tx = VersionedTransaction.deserialize(txBytes);
+  
+    // Check if this is a Keypair (has secretKey) or a Wallet adapter (has signTransaction)
+    if ('secretKey' in signer) {
+      // This is a Keypair - use .sign() method
+      tx.sign([signer]);
+    } else if ('signTransaction' in signer) {
+      // This is a Wallet adapter - use .signTransaction() method
+      const signedTx = await signer.signTransaction(tx);
+      // Copy signed transaction back
+      tx.signatures = signedTx.signatures;
+    } else {
+      throw new Error('Invalid signer: must be Keypair or have signTransaction method');
+    }
 
-    const signedTx = await signer.signTransaction(tx);
-    const signedBytes = signedTx.serialize();
-    return Buffer.from(signedBytes).toString('base64');
-  }
+  const signedBytes = tx.serialize();
+  return Buffer.from(signedBytes).toString('base64');
+}
+
 
   // Step 2: Execute Ultra swap
   // You send the signed base64 tx + requestId back to Jupiter Ultra.
