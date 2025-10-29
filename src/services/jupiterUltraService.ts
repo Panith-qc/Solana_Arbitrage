@@ -327,7 +327,20 @@ export class JupiterService {
     unsignedTxBase64: string,
     signer: any
   ): Promise<string> {
+    // ✅ Validate input exists
+    if (!unsignedTxBase64) {
+      throw new Error('unsignedTxBase64 is required but was undefined or empty');
+    }
+  
     const txBytes = Buffer.from(unsignedTxBase64, 'base64');
+    
+    // ✅ Check buffer is not empty
+    if (txBytes.length === 0) {
+      throw new Error('Transaction buffer is empty - Jupiter Ultra returned invalid transaction');
+    }
+    
+    console.log(`📦 Transaction buffer: ${txBytes.length} bytes`);
+    
     const tx = VersionedTransaction.deserialize(txBytes);
   
     // Sign the transaction
@@ -358,17 +371,23 @@ export class JupiterService {
     signedTransactionBase64: string;
   }): Promise<JupiterUltraExecuteResponse> {
     const start = Date.now();
-
-    //const bs58 = await import('bs58');
-    //const txBuffer = Buffer.from(args.signedTransactionBase64, 'base64');
-    //const signedTransactionBase58 = bs58.default.encode(txBuffer);
-
+  
+    // ✅ Validate inputs exist
+    if (!args.signedTransactionBase64) {
+      throw new Error('signedTransactionBase64 is required but was undefined');
+    }
+    
+    if (!args.requestId) {
+      throw new Error('requestId is required but was undefined');
+    }
+    
+    console.log(`🚀 Executing Ultra order: ${args.requestId.substring(0, 8)}... (tx: ${args.signedTransactionBase64.length} chars)`);
+  
     const body: JupiterUltraExecuteRequest = {
       requestId: args.requestId,
-      signedTransaction: args.signedTransactionBase64,  // ✅ CORRECT
+      signedTransaction: args.signedTransactionBase64,
     };
-
-
+  
     try {
       const res = await this.fetchWithTimeout(
         `${ULTRA_BASE}/execute`,
@@ -382,17 +401,17 @@ export class JupiterService {
         },
         10000 // execution can take longer
       );
-
+  
       if (!res.ok) {
         const text = await res.text();
         throw new Error(
           `/ultra/v1/execute error: ${res.status} ${res.statusText} - ${text}`
         );
       }
-
+  
       const data: JupiterUltraExecuteResponse = await res.json();
       const elapsed = Date.now() - start;
-
+  
       this.metrics.totalUltraExecutes++;
       this.metrics.successfulUltraExecutes++;
       this.metrics.avgUltraExecuteMs =
@@ -400,13 +419,13 @@ export class JupiterService {
           (this.metrics.totalUltraExecutes - 1) +
           elapsed) /
         this.metrics.totalUltraExecutes;
-
+  
       return data;
     } catch (err: any) {
       const elapsed = Date.now() - start;
       this.metrics.totalUltraExecutes++;
       this.metrics.failedUltraExecutes++;
-
+  
       console.error(
         `Ultra execute failed (${elapsed}ms):`,
         err?.message || err
