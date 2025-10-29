@@ -416,6 +416,12 @@ class RealTradeExecutor {
       const actualTokenAmount = forwardResult.actualOutputAmount || amountLamports;
       console.log(`📊 Forward trade output: ${actualTokenAmount} tokens (not ${amountLamports} SOL lamports!)`);
 
+      // Wait for blockchain confirmation before reverse trade
+      console.log('⏳ Waiting 3s for blockchain confirmation...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      console.log('✅ Confirmed. Starting reverse trade...');
+
+
       // Reverse trade: Token → SOL
       console.log('⬅️  Reverse: Token → SOL');
       const reverseResult = await this.executeTrade({
