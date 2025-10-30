@@ -408,7 +408,7 @@ class AdvancedMEVScanner {
         type: 'ARBITRAGE',
         pair: `SOL/${pair.name.split('/')[0]}/SOL`, // Show it's a cycle
         inputMint: SOL_MINT, // ALWAYS starts with SOL
-        outputMint: pair.inputMint, // The token in the middle
+        outputMint: toMintString(pair.inputMint), // The token in the middle
         inputAmount: startSolAmount,
         expectedOutput: finalSolAmount, // Final SOL amount
         profitUsd: profitUsd,
