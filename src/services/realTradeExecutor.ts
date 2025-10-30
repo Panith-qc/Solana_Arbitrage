@@ -385,16 +385,22 @@ class RealTradeExecutor {
     useJito: boolean = false
   ): Promise<{ success: boolean; netProfitUSD: number; txSignatures: string[] }> {
     console.log('═══════════════════════════════════════════════════════════');
-    console.log('🔄 EXECUTING FULL ARBITRAGE CYCLE');
+    console.log('🔄 EXECUTING ARBITRAGE CYCLE (OPTIMIZED)');
     console.log('═══════════════════════════════════════════════════════════');
     
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
-    const amountLamports = Math.floor(amountSOL * 1e9);
+    const LAMPORTS_PER_SOL = 1000000000;
+    const amountLamports = Math.floor(amountSOL * LAMPORTS_PER_SOL);
     const txSignatures: string[] = [];
-
+    const startTime = Date.now();
+  
     try {
-      // Forward trade: SOL → Token
+      // ═══════════════════════════════════════════════════════════
+      // STEP 1: FORWARD TRADE (SOL → Token)
+      // ═══════════════════════════════════════════════════════════
       console.log('➡️  Forward: SOL → Token');
+      const forwardStartTime = Date.now();
+      
       const forwardResult = await this.executeTrade({
         inputMint: SOL_MINT,
         outputMint: tokenMint,
@@ -403,64 +409,146 @@ class RealTradeExecutor {
         wallet,
         useJito
       });
-
+  
       if (!forwardResult.success) {
         throw new Error(`Forward trade failed: ${forwardResult.error}`);
       }
-
+  
       if (forwardResult.txSignature) {
         txSignatures.push(forwardResult.txSignature);
       }
-
-      // BUG FIX: Use ACTUAL output amount from forward trade, not initial SOL amount!
+  
+      const forwardTime = Date.now() - forwardStartTime;
       const actualTokenAmount = forwardResult.actualOutputAmount || amountLamports;
-      console.log(`📊 Forward trade output: ${actualTokenAmount} tokens (not ${amountLamports} SOL lamports!)`);
-
-      // Wait for blockchain confirmation before reverse trade
-      console.log('⏳ Waiting 3s for blockchain confirmation...');
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      console.log('✅ Confirmed. Starting reverse trade...');
-
-
-      // Reverse trade: Token → SOL
-      console.log('⬅️  Reverse: Token → SOL');
-      const reverseResult = await this.executeTrade({
-        inputMint: tokenMint,
-        outputMint: SOL_MINT,
-        amount: actualTokenAmount, // BUG FIX: Use actual tokens received!
-        slippageBps,
-        wallet,
-        useJito
-      });
-
-      if (!reverseResult.success) {
-        throw new Error(`Reverse trade failed: ${reverseResult.error}`);
+      console.log(`✅ Forward: ${forwardTime}ms | ${actualTokenAmount} tokens received`);
+  
+      // ═══════════════════════════════════════════════════════════
+      // STEP 2: ACTIVE CONFIRMATION POLLING (MAXIMUM SPEED)
+      // ═══════════════════════════════════════════════════════════
+      const forwardTxSig = forwardResult.txSignature;
+      const MAX_POLL_TIME = 8000; // 8 seconds max
+      const POLL_INTERVAL = 400; // Check every 400ms
+      const pollStartTime = Date.now();
+  
+      let confirmed = false;
+      let pollCount = 0;
+  
+      console.log('⚡ Active polling for confirmation...');
+  
+      while (!confirmed && (Date.now() - pollStartTime < MAX_POLL_TIME)) {
+        try {
+          pollCount++;
+          
+          const status = await this.connection.getSignatureStatus(forwardTxSig, {
+            searchTransactionHistory: false // Faster lookup
+          });
+          
+          if (status?.value?.confirmationStatus === 'confirmed' || 
+              status?.value?.confirmationStatus === 'finalized') {
+            confirmed = true;
+            const confirmTime = Date.now() - pollStartTime;
+            console.log(`✅ Confirmed in ${confirmTime}ms (${pollCount} polls)`);
+            break;
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+          
+        } catch (error) {
+          // Keep polling even on errors
+          await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+        }
       }
-
+  
+      if (!confirmed) {
+        const waitTime = Date.now() - pollStartTime;
+        console.log(`⏱️ Max wait (${waitTime}ms) - proceeding with reverse`);
+      }
+  
+      // ═══════════════════════════════════════════════════════════
+      // STEP 3: REVERSE TRADE (Token → SOL) WITH FAST RETRY
+      // ═══════════════════════════════════════════════════════════
+      console.log('⬅️  Reverse: Token → SOL');
+      
+      const MAX_RETRIES = 3;
+      const RETRY_DELAYS = [800, 1500, 2500]; // Fast exponential backoff
+      
+      let reverseResult: any = null;
+      let lastError: any;
+  
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const attemptStartTime = Date.now();
+          console.log(`🔄 Reverse attempt ${attempt}/${MAX_RETRIES}...`);
+          
+          reverseResult = await this.executeTrade({
+            inputMint: tokenMint,
+            outputMint: SOL_MINT,
+            amount: actualTokenAmount, // Use actual tokens from forward trade!
+            slippageBps,
+            wallet,
+            useJito
+          });
+  
+          if (reverseResult.success) {
+            const attemptTime = Date.now() - attemptStartTime;
+            console.log(`✅ Reverse succeeded in ${attemptTime}ms (attempt ${attempt})`);
+            break;
+          }
+          
+          throw new Error(reverseResult.error || 'Reverse trade failed');
+          
+        } catch (error: any) {
+          lastError = error;
+          const errorMsg = error.message?.substring(0, 80) || 'Unknown error';
+          console.log(`❌ Attempt ${attempt} failed: ${errorMsg}`);
+          
+          if (attempt === MAX_RETRIES) {
+            throw new Error(`Reverse failed after ${MAX_RETRIES} attempts: ${errorMsg}`);
+          }
+          
+          const delay = RETRY_DELAYS[attempt - 1];
+          console.log(`🔄 Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+  
+      if (!reverseResult || !reverseResult.success) {
+        throw new Error(`Reverse trade failed: ${reverseResult?.error || lastError}`);
+      }
+  
       if (reverseResult.txSignature) {
         txSignatures.push(reverseResult.txSignature);
       }
-
+  
+      // ═══════════════════════════════════════════════════════════
+      // SUCCESS - CALCULATE PROFIT
+      // ═══════════════════════════════════════════════════════════
+      const totalTime = Date.now() - startTime;
       const totalProfit = (forwardResult.actualProfit || 0) + (reverseResult.actualProfit || 0);
-
+  
       console.log('═══════════════════════════════════════════════════════════');
       console.log('✅ ARBITRAGE CYCLE COMPLETE!');
       console.log('═══════════════════════════════════════════════════════════');
-      console.log(`💰 Total Net Profit: $${totalProfit.toFixed(4)}`);
+      console.log(`⏱️  Total Time: ${totalTime}ms`);
+      console.log(`💰 Net Profit: $${totalProfit.toFixed(4)}`);
       console.log(`🔗 Transactions: ${txSignatures.join(', ')}`);
       console.log('═══════════════════════════════════════════════════════════');
-
+  
       return {
         success: true,
         netProfitUSD: totalProfit,
         txSignatures
       };
-
-    } catch (error) {
+  
+    } catch (error: any) {
+      const totalTime = Date.now() - startTime;
+      
       console.log('═══════════════════════════════════════════════════════════');
       console.log('❌ ARBITRAGE CYCLE FAILED');
       console.log('═══════════════════════════════════════════════════════════');
-      console.error('Error:', error);
+      console.log(`⏱️  Failed after: ${totalTime}ms`);
+      console.error(`💥 Error: ${error.message}`);
+      console.log('═══════════════════════════════════════════════════════════');
       
       return {
         success: false,
@@ -469,6 +557,7 @@ class RealTradeExecutor {
       };
     }
   }
+
 }
 
 export const realTradeExecutor = new RealTradeExecutor();
