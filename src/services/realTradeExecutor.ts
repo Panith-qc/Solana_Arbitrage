@@ -90,7 +90,7 @@ export interface TradeStats {
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CLASS - FINAL ROBUST EXECUTOR
 // ═══════════════════════════════════════════════════════════════════════════
-class FinalRobustTradeExecutor {
+export class FinalRobustTradeExecutor {
   private connection: Connection;
   
   // ✅ DYNAMIC: SOL price cache (NEVER hardcoded)
