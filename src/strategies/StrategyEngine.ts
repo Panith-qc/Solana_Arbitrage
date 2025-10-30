@@ -461,7 +461,7 @@ export class StrategyEngine {
         type: 'ARBITRAGE',
         pair: `SOL/${jitOpp.pool.token1.slice(0, 4)}/SOL`,
         inputMint: jitOpp.pool.token0, // SOL
-        outputMint: jitOpp.pool.token1, // Token
+        outputMint: toMintString(jitOpp.pool.token1), // Token
         inputAmount: jitOpp.liquidityAmount,
         expectedOutput: jitOpp.liquidityAmount + (jitOpp.expectedFeeCapture / 193 * 1e9), // Rough estimate
         profitUsd: jitOpp.expectedFeeCapture,
