@@ -29,10 +29,36 @@ const BASE_TX_FEE = 5000; // 5000 lamports
 // HELPER: Convert any mint type to string safely
 // ═══════════════════════════════════════════════════════════════════════════
 function toMintString(mint: any): string {
-  if (typeof mint === 'string') return mint;
-  if (mint && typeof mint === 'object' && 'toString' in mint) return mint.toString();
-  if (mint && typeof mint === 'object' && 'toBase58' in mint) return mint.toBase58();
-  return String(mint);
+  // ✅ If already a string, validate length (Solana addresses are ~44 chars)
+  if (typeof mint === 'string') {
+    if (mint.length >= 40 && mint.length <= 50) {
+      return mint;
+    } else {
+      console.error(`❌ Invalid mint string length: ${mint.length} (expected 40-50)`);
+      throw new Error(`Invalid mint string: ${mint}`);
+    }
+  }
+
+  // ✅ Try PublicKey.toBase58() first (preferred for PublicKey objects)
+  if (mint && typeof mint === 'object' && 'toBase58' in mint) {
+    const result = mint.toBase58();
+    if (typeof result === 'string' && result.length >= 40) {
+      return result;
+    }
+  }
+
+  // ✅ Try toString() as fallback, but validate output
+  if (mint && typeof mint === 'object' && 'toString' in mint) {
+    const result = mint.toString();
+    if (typeof result === 'string' && result.length >= 40 && !result.includes('[object')) {
+      return result;
+    }
+  }
+
+  // ✅ NEVER allow [object Object] - throw error instead
+  const invalid = typeof mint === 'object' ? JSON.stringify(mint).substring(0, 100) : String(mint);
+  console.error(`❌ Cannot convert mint to string. Received: ${invalid}`);
+  throw new Error(`Invalid mint format: ${invalid}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
