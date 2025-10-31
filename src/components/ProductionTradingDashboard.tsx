@@ -1,3 +1,4 @@
+import { strategyEngine, StrategyOpportunity } from '@/services/StrategyEngine';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -121,7 +122,7 @@ const ProductionTradingDashboard: React.FC = () => {
         console.log('🔗 WALLET FORCE CONNECTED FOR TESTING - 10 SOL AVAILABLE');
 
         // Calculate initial balance using price service
-        const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+        const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
         const totalUsd = balanceInfo.sol * solPrice;
         
         setBalanceInfo(prev => ({
@@ -161,7 +162,7 @@ const ProductionTradingDashboard: React.FC = () => {
   // Update balance calculations when prices change
   useEffect(() => {
     const updateBalances = () => {
-      const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+      const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
       const totalUsd = balanceInfo.sol * solPrice;
       
       setBalanceInfo(prev => ({
@@ -212,7 +213,7 @@ const ProductionTradingDashboard: React.FC = () => {
     setWalletState(newWalletState);
     
     // Calculate USD value using dynamic pricing
-    const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+    const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
     setBalanceInfo(prev => ({
       ...prev,
       sol: newWalletState.balance,
@@ -256,7 +257,7 @@ const ProductionTradingDashboard: React.FC = () => {
       const newBalance = 10.0;
       setWalletState(prev => ({ ...prev, balance: newBalance }));
       
-      const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+      const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
       setBalanceInfo(prev => ({
         ...prev,
         sol: newBalance,
@@ -350,7 +351,7 @@ const ProductionTradingDashboard: React.FC = () => {
         const actualProfit = opportunity.profitUsd * (0.8 + Math.random() * 0.3);
         
         // Update balance using dynamic pricing
-        const solPrice = priceService.getPriceUsd(config.tokens.SOL);
+        const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
         setBalanceInfo(prev => ({
           ...prev,
           sol: prev.sol + actualProfit / solPrice,
