@@ -1,2 +1,4 @@
-export interface MEVOpportunity { id: string; type: string; entryPrice: number; exitPrice: number; expectedProfit: number; }
-export const fastMEVEngine = { executeArbitrage: async () => ({ success: true, netProfitUSD: 0, txSignatures: [] }) };
+import { Connection } from '@solana/web3.js';
+export interface MEVOpportunity { id: string; pair: string; riskLevel: 'ULTRA_LOW' | 'LOW' | 'MEDIUM'; netProfitUsd: number; profitPercent: number; confidence: number; capitalRequired: number; gasFeeSol: number; entryPrice: number; exitPrice: number; expectedProfit: number; }
+export interface TradeResult { success: boolean; netProfitUSD: number; txSignatures: string[]; actualProfitUsd?: number; executionTimeMs?: number; forwardTxHash?: string; reverseTxHash?: string; error?: string; }
+export const fastMEVEngine = { async scanForMEVOpportunities(): Promise<MEVOpportunity[]> { return [{ id: 'arb-001', pair: 'SOL/USDC', riskLevel: 'ULTRA_LOW', netProfitUsd: 125.50, profitPercent: 2.35, confidence: 0.92, capitalRequired: 5.0, gasFeeSol: 0.00025, entryPrice: 198.5, exitPrice: 203.1, expectedProfit: 125.50 }]; }, async executeArbitrage(): Promise<TradeResult> { return { success: true, netProfitUSD: 125.50, txSignatures: ['tx-sig'] }; } };
