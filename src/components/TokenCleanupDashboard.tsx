@@ -102,7 +102,8 @@ const TokenCleanupDashboard: React.FC = () => {
       
     } catch (error) {
       console.error('Recovery failed:', error);
-      setRecoveryResult({
+                cleaned: 0,
+                tokensCleaned: number,
         success: false,
         tokensCleaned: 0,
         totalValueRecovered: 0,
