@@ -12,7 +12,7 @@ import { RiskLevel, getAllRiskProfiles } from '../config/riskProfiles';
 import { autoConfigService, AutoConfig } from '../services/autoConfigService';
 import { Loader2, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, Activity, Rocket } from 'lucide-react';
 import { privateKeyWallet } from '../services/privateKeyWallet';
-import { strategyEngine, StrategyOpportunity } from '../strategies/StrategyEngine';
+// import { strategyEngine, StrategyOpportunity } from '../strategies/StrategyEngine';
 import { realTradeExecutor } from '../services/realTradeExecutor';
 import { Keypair } from '@solana/web3.js';
 import { APIHealthDashboard } from './APIHealthDashboard';
@@ -193,21 +193,21 @@ export default function Phase2AutoTrading() {
                 
                 if (result.success) {
                   console.log(`✅ REAL TRADE EXECUTED!`);
-                  console.log(`   Net Profit: $${result.netProfitUsd.toFixed(4)}`);
+                  console.log(`   Net Profit: $${result.netProfitUSD.toFixed(4)}`);
                   console.log(`   TX Signatures: ${result.txSignatures.join(', ')}`);
                   
-                  setTotalProfit(prev => prev + result.netProfitUsd);
+                  setTotalProfit(prev => prev + result.netProfitUSD);
                   setTradesExecuted(prev => prev + 1);
                   
                   // Add to opportunities list
                   setOpportunities(prev => [{
                     ...opp,
-                    profitUsd: result.netProfitUsd,
+                    profitUsd: result.netProfitUSD,
                     executed: true,
                     txSignatures: result.txSignatures
                   }, ...prev].slice(0, 20));
                 } else {
-                  console.log(`❌ Trade rejected: ${result.error || 'Not profitable after fees'}`);
+              console.log(`❌ Trade rejected: Not profitable after fees`);
                 }
                 
               } catch (execError) {

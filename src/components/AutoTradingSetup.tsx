@@ -1,3 +1,4 @@
+import { MEVOpportunity } from '../types/mev';
 // AUTO-TRADING SETUP COMPONENT
 // Simple one-click setup for automated trading
 // User just enters wallet, selects risk, and clicks START!
@@ -13,7 +14,6 @@ import { RiskLevel, getAllRiskProfiles } from '../config/riskProfiles';
 import { autoConfigService, AutoConfig } from '../services/autoConfigService';
 import { Loader2, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, Activity } from 'lucide-react';
 import { privateKeyWallet } from '../services/privateKeyWallet';
-import { fastMEVEngine, MEVOpportunity } from '../services/fastMEVEngine';
 
 export default function AutoTradingSetup() {
   const [privateKey, setPrivateKey] = useState('');

@@ -29,7 +29,6 @@ import WalletIntegration from './WalletIntegration';
 import TradingSettingsPanel from './TradingSettingsPanel';
 import { tradingConfigManager, TradingConfig } from '../config/tradingConfig';
 import { priceService } from '../services/priceService';
-import { strategyEngine, StrategyOpportunity, StrategyResult } from '../strategies/StrategyEngine';
 
 interface MEVOpportunity {
   id: string;
@@ -421,8 +420,6 @@ const ProductionTradingDashboard: React.FC = () => {
           </div>
 
           <WalletIntegration
-            walletState={walletState}
-            onWalletConnect={handleWalletConnect}
             onWalletDisconnect={handleWalletDisconnect}
             onRefreshBalance={handleRefreshBalance}
           />

@@ -762,3 +762,18 @@ export function getJupiterService(
 
 // Export singleton instance
 export const jupiterUltraService = new JupiterService();
+
+export interface JupiterQuote {
+  inputMint: string;
+  outputMint: string;
+  inAmount: string;
+  outAmount: string;
+  priceImpactPct?: string;
+  platformFee: number | null;
+  contextSlot?: number;
+}
+
+export interface JupiterSwapResult {
+  swapTransaction: string;
+  lastValidBlockHeight: number;
+}

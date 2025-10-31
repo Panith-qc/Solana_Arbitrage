@@ -29,7 +29,6 @@ import {
 
 import { privateKeyWallet, PrivateKeyWalletState } from '../services/privateKeyWallet';
 import { fastMEVEngine, MEVOpportunity, TradeResult } from '../services/fastMEVEngine';
-import { tokenCleanupService } from '../services/tokenCleanupService';
 
 interface AutoTradeSettings {
   enabled: boolean;

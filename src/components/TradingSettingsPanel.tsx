@@ -34,7 +34,7 @@ const TradingSettingsPanel: React.FC<TradingSettingsPanelProps> = ({ onClose }) 
   const [config, setConfig] = useState<TradingConfig>(tradingConfigManager.getConfig());
   const [hasChanges, setHasChanges] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [prices, setPrices] = useState(priceService.getAllPrices());
+  const [prices, setPrices] = useState({});
 
   useEffect(() => {
     // Subscribe to config changes
@@ -44,7 +44,7 @@ const TradingSettingsPanel: React.FC<TradingSettingsPanelProps> = ({ onClose }) 
 
     // Update prices periodically
     const priceInterval = setInterval(() => {
-      setPrices(priceService.getAllPrices());
+      setPrices({});
     }, 5000);
 
     return () => {
