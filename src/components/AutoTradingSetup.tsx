@@ -1,3 +1,4 @@
+import { fastMEVEngine } from '@/services/fastMEVEngine';
 import { MEVOpportunity } from '../types/mev';
 // AUTO-TRADING SETUP COMPONENT
 // Simple one-click setup for automated trading

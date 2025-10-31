@@ -1,3 +1,4 @@
+import { strategyEngine, StrategyOpportunity } from '@/services/StrategyEngine';
 // PHASE 2 AUTO-TRADING - ALL ADVANCED STRATEGIES INTEGRATED
 // One-click setup with ALL Phase 2 MEV strategies
 

@@ -68,8 +68,8 @@ const TokenCleanupDashboard: React.FC = () => {
   };
 
   const calculateEstimates = () => {
-    const eligibleTokens = tokens.filter(token => token.valueUsd >= settings.minValueUsd);
-    const totalValue = eligibleTokens.reduce((sum, token) => sum + token.valueUsd, 0);
+    const eligibleTokens = tokens.filter(token => token.usdValue >= settings.minValueUsd);
+    const totalValue = eligibleTokens.reduce((sum, token) => sum + token.usdValue, 0);
     const totalFees = eligibleTokens.length * (settings.priorityFeeSol * 240); // Convert SOL to USD
     const accountCreationFees = eligibleTokens.length * (0.00203928 * 240); // Account creation costs
     
@@ -121,11 +121,11 @@ const TokenCleanupDashboard: React.FC = () => {
   };
 
   const getTotalValue = () => {
-    return tokens.reduce((sum, token) => sum + token.valueUsd, 0);
+    return tokens.reduce((sum, token) => sum + token.usdValue, 0);
   };
 
   const getEligibleTokens = () => {
-    return tokens.filter(token => token.valueUsd >= settings.minValueUsd);
+    return tokens.filter(token => token.usdValue >= settings.minValueUsd);
   };
 
   const getFeeEfficiency = () => {
@@ -345,7 +345,7 @@ const TokenCleanupDashboard: React.FC = () => {
               {tokens.map((token, index) => (
                 <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
                   <div className="flex items-center gap-3">
-                    <Badge variant={token.valueUsd >= settings.minValueUsd ? 'default' : 'secondary'}>
+                    <Badge variant={token.usdValue >= settings.minValueUsd ? 'default' : 'secondary'}>
                       {token.symbol}
                     </Badge>
                     <div>
@@ -353,12 +353,12 @@ const TokenCleanupDashboard: React.FC = () => {
                         {token.uiAmount.toLocaleString()} {token.symbol}
                       </div>
                       <div className="text-sm text-gray-600">
-                        Value: ${token.valueUsd.toFixed(4)}
+                        Value: ${token.usdValue.toFixed(4)}
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    {token.valueUsd >= settings.minValueUsd ? (
+                    {token.usdValue >= settings.minValueUsd ? (
                       <Badge className="bg-green-100 text-green-800">
                         Will Recover
                       </Badge>

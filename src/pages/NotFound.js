@@ -1,0 +1,5 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { Button } from '@/components/ui/button';
+export default function NotFoundPage() {
+    return (_jsx("div", { className: "min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-blue-50 p-6 text-center", children: _jsxs("div", { className: "space-y-6 max-w-md", children: [_jsxs("div", { className: "space-y-3", children: [_jsx("h1", { className: "text-8xl font-bold text-blue-600", children: "404" }), _jsx("h2", { className: "text-2xl font-semibold text-gray-800", children: "Page Not Found" }), _jsx("p", { className: "text-muted-foreground", children: "The page you're looking for doesn't exist or may have been moved." })] }), _jsxs("div", { className: "flex flex-col sm:flex-row gap-3 justify-center", children: [_jsx(Button, { asChild: true, children: _jsx("a", { href: "/", children: "Return Home" }) }), _jsx(Button, { variant: "outline", onClick: () => window.history.back(), children: "Go Back" })] })] }) }));
+}
