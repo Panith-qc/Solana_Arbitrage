@@ -99,20 +99,19 @@ const TokenCleanupDashboard: React.FC = () => {
       setTimeout(() => {
         scanTokens();
       }, 5000);
-      
     } catch (error) {
       console.error('Recovery failed:', error);
-                cleaned: 0,
-                tokensCleaned: number,
+      setRecoveryResult({
         success: false,
         tokensCleaned: 0,
         totalValueRecovered: 0,
         transactions: [],
-        errors: [error instanceof Error ? error.message : 'Unknown error']
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
       });
     } finally {
       setIsRecovering(false);
     }
+
   };
 
   const updateServiceSettings = async () => {
