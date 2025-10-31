@@ -1,9 +1,9 @@
-import { jsx as _jsx } from "react/jsx-runtime";
+import * as React from 'react';
 import { DayPicker } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui/button';
 function Calendar({ className, classNames, showOutsideDays = true, ...props }) {
-    return (_jsx(DayPicker, { showOutsideDays: showOutsideDays, className: cn('p-3', className), classNames: {
+    return (<DayPicker showOutsideDays={showOutsideDays} className={cn('p-3', className)} classNames={{
             months: 'flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0',
             month: 'space-y-4',
             caption: 'flex justify-center pt-1 relative items-center',
@@ -26,7 +26,8 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }) {
             day_range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
             day_hidden: 'invisible',
             ...classNames,
-        }, components: {}, ...props }));
+        }} components={{}} {...props}/>);
 }
 Calendar.displayName = 'Calendar';
 export { Calendar };
+//# sourceMappingURL=calendar.js.map

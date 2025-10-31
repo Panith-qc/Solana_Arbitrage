@@ -152,3 +152,4 @@ class HeliusService {
 }
 export const heliusService = new HeliusService();
 export default heliusService;
+//# sourceMappingURL=heliusService.js.map

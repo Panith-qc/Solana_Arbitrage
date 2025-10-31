@@ -1,5 +1,4 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -94,17 +93,119 @@ export const WalletConnection = ({ showDetails = false, className = '', onWallet
     const StatusIcon = connectionStatus.icon;
     if (!showDetails) {
         // Simple wallet button for header
-        return (_jsxs("div", { className: `flex items-center gap-2 ${className}`, children: [_jsxs(Button, { onClick: walletState.isConnected ? handleDisconnect : () => { }, className: walletState.isConnected ? "!bg-green-600 hover:!bg-green-700" : "!bg-blue-600 hover:!bg-blue-700", children: [_jsx(Wallet, { className: "w-4 h-4 mr-2" }), walletState.isConnected ? getShortAddress() : 'Connect Wallet'] }), walletState.isConnected && (_jsxs(Badge, { variant: "outline", className: "text-green-600 border-green-600", children: [_jsx(CheckCircle, { className: "w-3 h-3 mr-1" }), "Devnet"] }))] }));
+        return (<div className={`flex items-center gap-2 ${className}`}>
+        <Button onClick={walletState.isConnected ? handleDisconnect : () => { }} className={walletState.isConnected ? "!bg-green-600 hover:!bg-green-700" : "!bg-blue-600 hover:!bg-blue-700"}>
+          <Wallet className="w-4 h-4 mr-2"/>
+          {walletState.isConnected ? getShortAddress() : 'Connect Wallet'}
+        </Button>
+        {walletState.isConnected && (<Badge variant="outline" className="text-green-600 border-green-600">
+            <CheckCircle className="w-3 h-3 mr-1"/>
+            Devnet
+          </Badge>)}
+      </div>);
     }
     // Detailed wallet info card
-    return (_jsxs(Card, { className: className, children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "flex items-center gap-2", children: [_jsx(Wallet, { className: "w-5 h-5" }), "Wallet Connection (Helius Devnet)"] }) }), _jsxs(CardContent, { className: "space-y-4", children: [_jsxs("div", { className: "flex items-center justify-between", children: [_jsx("span", { className: "text-sm font-medium", children: "Status:" }), _jsxs(Badge, { variant: "outline", className: `
+    return (<Card className={className}>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Wallet className="w-5 h-5"/>
+          Wallet Connection (Helius Devnet)
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Connection Status */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Status:</span>
+          <Badge variant="outline" className={`
               ${connectionStatus.color === 'green' ? 'text-green-600 border-green-600' : ''}
               ${connectionStatus.color === 'yellow' ? 'text-yellow-600 border-yellow-600' : ''}
               ${connectionStatus.color === 'red' ? 'text-red-600 border-red-600' : ''}
-            `, children: [_jsx(StatusIcon, { className: "w-3 h-3 mr-1" }), connectionStatus.status.charAt(0).toUpperCase() + connectionStatus.status.slice(1)] })] }), _jsxs("div", { className: "flex items-center justify-between", children: [_jsx("span", { className: "text-sm font-medium", children: "Helius Devnet RPC:" }), _jsxs(Badge, { variant: "outline", className: `
+            `}>
+            <StatusIcon className="w-3 h-3 mr-1"/>
+            {connectionStatus.status.charAt(0).toUpperCase() + connectionStatus.status.slice(1)}
+          </Badge>
+        </div>
+
+        {/* Helius Devnet RPC Status */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Helius Devnet RPC:</span>
+          <Badge variant="outline" className={`
               ${rpcStatus === 'healthy' ? 'text-green-600 border-green-600' : ''}
               ${rpcStatus === 'checking' ? 'text-yellow-600 border-yellow-600' : ''}
               ${rpcStatus === 'error' ? 'text-red-600 border-red-600' : ''}
-            `, children: [rpcStatus === 'checking' && _jsx(Loader2, { className: "w-3 h-3 mr-1 animate-spin" }), rpcStatus === 'healthy' && _jsx(CheckCircle, { className: "w-3 h-3 mr-1" }), rpcStatus === 'error' && _jsx(AlertCircle, { className: "w-3 h-3 mr-1" }), rpcStatus.charAt(0).toUpperCase() + rpcStatus.slice(1)] })] }), _jsxs("div", { className: "flex items-center justify-between", children: [_jsx("span", { className: "text-sm font-medium", children: "Network:" }), _jsx(Badge, { variant: "outline", className: "text-blue-600 border-blue-600", children: "Solana Devnet" })] }), walletState.isConnected && walletState.publicKey && (_jsxs("div", { className: "space-y-2", children: [_jsx("span", { className: "text-sm font-medium", children: "Address:" }), _jsx("div", { className: "text-xs font-mono bg-gray-100 p-2 rounded break-all", children: walletState.publicKey })] })), walletState.isConnected && (_jsxs("div", { className: "flex items-center justify-between", children: [_jsx("span", { className: "text-sm font-medium", children: "Balance:" }), _jsx("div", { className: "text-right", children: walletData.isLoading ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : walletData.error ? (_jsx("span", { className: "text-red-500 text-sm", children: walletData.error })) : (_jsxs("span", { className: "font-mono", children: [walletState.balance.toFixed(4), " SOL (Devnet)"] })) })] })), !walletState.isConnected ? (_jsxs("div", { className: "space-y-4", children: [_jsxs(Alert, { children: [_jsx(AlertCircle, { className: "h-4 w-4" }), _jsxs(AlertDescription, { children: [_jsx("strong", { children: "Devnet Mode:" }), " Using Helius Devnet RPC for testing. No real funds required."] })] }), _jsxs("div", { className: "space-y-2", children: [_jsx("label", { className: "text-sm font-medium", children: "Private Key (Base58) - Devnet" }), _jsx(Input, { type: "password", placeholder: "Enter your Solana devnet private key...", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), disabled: isConnecting })] }), _jsx(Button, { onClick: handleConnect, disabled: isConnecting || !privateKey.trim(), className: "w-full", children: isConnecting ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "w-4 h-4 mr-2 animate-spin" }), "Connecting to Devnet..."] })) : (_jsxs(_Fragment, { children: [_jsx(Wallet, { className: "w-4 h-4 mr-2" }), "Connect to Helius Devnet"] })) })] })) : (_jsxs("div", { className: "flex gap-2", children: [_jsxs(Button, { onClick: handleRefresh, disabled: walletData.isLoading, variant: "outline", size: "sm", children: [walletData.isLoading ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(RefreshCw, { className: "w-4 h-4" })), "Refresh"] }), _jsx(Button, { onClick: handleDisconnect, variant: "outline", size: "sm", children: "Disconnect" })] })), error && (_jsxs(Alert, { variant: "destructive", children: [_jsx(AlertCircle, { className: "h-4 w-4" }), _jsx(AlertDescription, { children: error })] }))] })] }));
+            `}>
+            {rpcStatus === 'checking' && <Loader2 className="w-3 h-3 mr-1 animate-spin"/>}
+            {rpcStatus === 'healthy' && <CheckCircle className="w-3 h-3 mr-1"/>}
+            {rpcStatus === 'error' && <AlertCircle className="w-3 h-3 mr-1"/>}
+            {rpcStatus.charAt(0).toUpperCase() + rpcStatus.slice(1)}
+          </Badge>
+        </div>
+
+        {/* Network Badge */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Network:</span>
+          <Badge variant="outline" className="text-blue-600 border-blue-600">
+            Solana Devnet
+          </Badge>
+        </div>
+
+        {/* Wallet Address */}
+        {walletState.isConnected && walletState.publicKey && (<div className="space-y-2">
+            <span className="text-sm font-medium">Address:</span>
+            <div className="text-xs font-mono bg-gray-100 p-2 rounded break-all">
+              {walletState.publicKey}
+            </div>
+          </div>)}
+
+        {/* Balance */}
+        {walletState.isConnected && (<div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Balance:</span>
+            <div className="text-right">
+              {walletData.isLoading ? (<Loader2 className="w-4 h-4 animate-spin"/>) : walletData.error ? (<span className="text-red-500 text-sm">{walletData.error}</span>) : (<span className="font-mono">{walletState.balance.toFixed(4)} SOL (Devnet)</span>)}
+            </div>
+          </div>)}
+
+        {/* Connection Form */}
+        {!walletState.isConnected ? (<div className="space-y-4">
+            <Alert>
+              <AlertCircle className="h-4 w-4"/>
+              <AlertDescription>
+                <strong>Devnet Mode:</strong> Using Helius Devnet RPC for testing. No real funds required.
+              </AlertDescription>
+            </Alert>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Private Key (Base58) - Devnet</label>
+              <Input type="password" placeholder="Enter your Solana devnet private key..." value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} disabled={isConnecting}/>
+            </div>
+            
+            <Button onClick={handleConnect} disabled={isConnecting || !privateKey.trim()} className="w-full">
+              {isConnecting ? (<>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin"/>
+                  Connecting to Devnet...
+                </>) : (<>
+                  <Wallet className="w-4 h-4 mr-2"/>
+                  Connect to Helius Devnet
+                </>)}
+            </Button>
+          </div>) : (<div className="flex gap-2">
+            <Button onClick={handleRefresh} disabled={walletData.isLoading} variant="outline" size="sm">
+              {walletData.isLoading ? (<Loader2 className="w-4 h-4 animate-spin"/>) : (<RefreshCw className="w-4 h-4"/>)}
+              Refresh
+            </Button>
+            
+            <Button onClick={handleDisconnect} variant="outline" size="sm">
+              Disconnect
+            </Button>
+          </div>)}
+
+        {/* Error Display */}
+        {error && (<Alert variant="destructive">
+            <AlertCircle className="h-4 w-4"/>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>)}
+      </CardContent>
+    </Card>);
 };
 export default WalletConnection;
+//# sourceMappingURL=WalletConnection.js.map

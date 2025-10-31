@@ -237,3 +237,4 @@ class PriceService {
 }
 export const priceService = new PriceService();
 export default priceService;
+//# sourceMappingURL=priceService.js.map

@@ -131,3 +131,4 @@ class CorsProxyService {
     }
 }
 export const corsProxyService = new CorsProxyService();
+//# sourceMappingURL=corsProxyService.js.map

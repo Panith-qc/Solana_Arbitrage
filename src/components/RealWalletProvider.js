@@ -1,5 +1,4 @@
-import { jsx as _jsx } from "react/jsx-runtime";
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
@@ -17,5 +16,12 @@ export const RealWalletProvider = ({ children }) => {
         new TorusWalletAdapter(),
         new LedgerWalletAdapter(),
     ], []);
-    return (_jsx(ConnectionProvider, { endpoint: endpoint, children: _jsx(WalletProvider, { wallets: wallets, autoConnect: true, children: _jsx(WalletModalProvider, { children: children }) }) }));
+    return (<ConnectionProvider endpoint={endpoint}>
+      <WalletProvider wallets={wallets} autoConnect>
+        <WalletModalProvider>
+          {children}
+        </WalletModalProvider>
+      </WalletProvider>
+    </ConnectionProvider>);
 };
+//# sourceMappingURL=RealWalletProvider.js.map

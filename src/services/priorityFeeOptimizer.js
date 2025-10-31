@@ -372,3 +372,4 @@ export async function getOptimalFee(urgency = 'medium', strategy) {
     return priorityFeeOptimizer.getRecommendedFee(urgency, strategy);
 }
 console.log('✅ Priority Fee Optimizer loaded - Dynamic fee calculation active');
+//# sourceMappingURL=priorityFeeOptimizer.js.map

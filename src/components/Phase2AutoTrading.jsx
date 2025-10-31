@@ -1,4 +1,3 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { strategyEngine } from '@/services/StrategyEngine';
 // PHASE 2 AUTO-TRADING - ALL ADVANCED STRATEGIES INTEGRATED
 // One-click setup with ALL Phase 2 MEV strategies
@@ -221,10 +220,10 @@ export default function Phase2AutoTrading() {
     // Icon helpers
     const getRiskIcon = (level) => {
         if (level === 'CONSERVATIVE')
-            return _jsx(Shield, { className: "w-5 h-5" });
+            return <Shield className="w-5 h-5"/>;
         if (level === 'BALANCED')
-            return _jsx(TrendingUp, { className: "w-5 h-5" });
-        return _jsx(Zap, { className: "w-5 h-5" });
+            return <TrendingUp className="w-5 h-5"/>;
+        return <Zap className="w-5 h-5"/>;
     };
     const getRiskColor = (level) => {
         if (level === 'CONSERVATIVE')
@@ -233,16 +232,245 @@ export default function Phase2AutoTrading() {
             return 'bg-blue-500';
         return 'bg-red-500';
     };
-    return (_jsxs("div", { className: "container mx-auto p-6 max-w-6xl", children: [_jsxs(Card, { children: [_jsxs(CardHeader, { children: [_jsx(CardTitle, { className: "text-3xl", children: "\uD83D\uDE80 Phase 2 Automated MEV Bot" }), _jsx(CardDescription, { children: "All 7 advanced strategies. Auto-configured based on risk profile. One-click start." })] }), _jsxs(CardContent, { className: "space-y-6", children: [!config && (_jsxs(_Fragment, { children: [_jsxs("div", { className: "space-y-2", children: [_jsx(Label, { htmlFor: "privateKey", children: "Wallet Private Key" }), _jsx(Input, { id: "privateKey", type: "password", placeholder: "Enter your Solana wallet private key...", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), className: "font-mono" }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Your private key never leaves your browser. Stored locally only." })] }), _jsxs("div", { className: "space-y-3", children: [_jsx(Label, { children: "Select Risk Profile" }), _jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4", children: profiles.map((profile) => (_jsx(Card, { className: `cursor-pointer transition-all ${selectedRisk === profile.level
-                                                        ? 'ring-2 ring-primary shadow-lg'
-                                                        : 'hover:bg-accent'}`, onClick: () => setSelectedRisk(profile.level), children: _jsxs(CardContent, { className: "pt-6", children: [_jsxs("div", { className: "flex items-center gap-3 mb-3", children: [_jsx("div", { className: `p-2 rounded-full ${getRiskColor(profile.level)}`, children: getRiskIcon(profile.level) }), _jsx("h3", { className: "font-bold text-lg", children: profile.name })] }), _jsx("p", { className: "text-sm text-muted-foreground mb-4", children: profile.description }), _jsxs("div", { className: "space-y-2 text-sm", children: [_jsxs("div", { className: "flex justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Position:" }), _jsxs("span", { className: "font-medium", children: [profile.maxPositionPercent, "%"] })] }), _jsxs("div", { className: "flex justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Daily Return:" }), _jsx("span", { className: "font-medium text-green-600", children: profile.expectedDailyReturn })] })] })] }) }, profile.level))) })] }), error && (_jsxs(Alert, { variant: "destructive", children: [_jsx(AlertCircle, { className: "h-4 w-4" }), _jsx(AlertDescription, { children: error })] })), _jsx(Button, { className: "w-full", size: "lg", onClick: handleConfigure, disabled: isConfiguring || !privateKey.trim(), children: isConfiguring ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "mr-2 h-4 w-4 animate-spin" }), "Configuring Bot..."] })) : ('⚡ Auto-Configure Bot') })] })), config && (_jsxs(_Fragment, { children: [_jsxs(Alert, { className: config.readyToTrade ? 'border-green-500 bg-green-50' : 'border-yellow-500', children: [config.readyToTrade ? (_jsx(CheckCircle2, { className: "h-4 w-4 text-green-500" })) : (_jsx(AlertCircle, { className: "h-4 w-4 text-yellow-500" })), _jsx(AlertDescription, { children: config.readyToTrade
-                                                    ? '✅ Bot configured! All Phase 2 strategies ready.'
-                                                    : '⚠️ Configuration complete but warnings detected.' })] }), _jsxs(Card, { className: "bg-gradient-to-br from-blue-50 to-purple-50", children: [_jsx(CardHeader, { children: _jsx(CardTitle, { children: "Configuration Summary" }) }), _jsxs(CardContent, { className: "space-y-3", children: [_jsxs("div", { className: "grid grid-cols-2 gap-4 text-sm", children: [_jsxs("div", { children: [_jsx("p", { className: "text-muted-foreground", children: "Risk Profile" }), _jsx("p", { className: "font-bold text-lg", children: config.profile.name })] }), _jsxs("div", { children: [_jsx("p", { className: "text-muted-foreground", children: "Balance" }), _jsxs("p", { className: "font-bold text-lg", children: [config.walletBalance.toFixed(4), " SOL"] })] }), _jsxs("div", { children: [_jsx("p", { className: "text-muted-foreground", children: "Max Position" }), _jsxs("p", { className: "font-bold", children: [config.calculatedSettings.maxPositionSol.toFixed(4), " SOL"] })] }), _jsxs("div", { children: [_jsx("p", { className: "text-muted-foreground", children: "Min Profit" }), _jsxs("p", { className: "font-bold", children: ["$", config.profile.minProfitUsd.toFixed(3)] })] })] }), _jsxs("div", { children: [_jsxs("p", { className: "text-sm text-muted-foreground mb-2", children: ["Enabled Strategies (", config.enabledStrategies.length, "):"] }), _jsx("div", { className: "flex flex-wrap gap-2", children: config.enabledStrategies.map(strategy => (_jsx(Badge, { variant: "secondary", className: "text-xs", children: strategy }, strategy))) })] })] })] }), _jsxs("div", { className: "flex gap-4", children: [isTrading ? (_jsx(Button, { className: "flex-1", size: "lg", variant: "destructive", onClick: handleStopTrading, children: "\u23F9\uFE0F Stop All Strategies" })) : (_jsx(Button, { className: "flex-1", size: "lg", onClick: handleStartTrading, disabled: !config.readyToTrade, children: "\uD83D\uDE80 Start Phase 2 Trading" })), _jsx(Button, { variant: "outline", onClick: () => {
-                                                    setConfig(null);
-                                                    setOpportunities([]);
-                                                    setTotalProfit(0);
-                                                    setTradesExecuted(0);
-                                                }, disabled: isTrading, children: "Reset" })] }), isTrading && (_jsxs(_Fragment, { children: [_jsxs(Alert, { className: "border-green-500 bg-green-50", children: [_jsx(Rocket, { className: "h-4 w-4 text-green-500 animate-pulse" }), _jsxs(AlertDescription, { children: [_jsx("span", { className: "font-bold", children: "Phase 2 strategies active!" }), " Bot is monitoring ", activeStrategies.length, " strategies and auto-executing profitable trades."] })] }), _jsxs(Card, { className: "bg-gradient-to-br from-green-50 to-blue-50 border-2 border-green-300", children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "flex items-center gap-2", children: [_jsx(Activity, { className: "w-5 h-5 text-green-600 animate-pulse" }), "Live Phase 2 Trading"] }) }), _jsxs(CardContent, { className: "space-y-4", children: [_jsxs("div", { className: "grid grid-cols-3 gap-4", children: [_jsx(Card, { children: _jsxs(CardContent, { className: "pt-4 text-center", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Opportunities" }), _jsx("p", { className: "text-4xl font-bold text-blue-600", children: opportunities.length })] }) }), _jsx(Card, { children: _jsxs(CardContent, { className: "pt-4 text-center", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Trades" }), _jsx("p", { className: "text-4xl font-bold text-purple-600", children: tradesExecuted })] }) }), _jsx(Card, { children: _jsxs(CardContent, { className: "pt-4 text-center", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Profit" }), _jsxs("p", { className: "text-4xl font-bold text-green-600", children: ["$", totalProfit.toFixed(2)] })] }) })] }), _jsxs("div", { children: [_jsx("p", { className: "text-sm font-semibold mb-2", children: "\uD83D\uDD25 Active Strategies:" }), _jsx("div", { className: "flex flex-wrap gap-2", children: activeStrategies.map(strategy => (_jsxs(Badge, { className: "bg-green-100 text-green-700", children: [_jsx(Rocket, { className: "w-3 h-3 mr-1 inline animate-pulse" }), strategy] }, strategy))) })] }), opportunities.length > 0 ? (_jsxs("div", { children: [_jsxs("p", { className: "text-sm font-semibold mb-2", children: ["\uD83C\uDFAF Recent Opportunities (", opportunities.length, "):"] }), _jsx("div", { className: "space-y-2 max-h-80 overflow-y-auto", children: opportunities.slice(0, 15).map(opp => (_jsx("div", { className: "bg-white p-3 rounded-lg border shadow-sm", children: _jsxs("div", { className: "flex justify-between items-start", children: [_jsxs("div", { className: "flex-1", children: [_jsxs("div", { className: "flex items-center gap-2 flex-wrap", children: [_jsx("span", { className: "font-semibold text-sm", children: opp.pair }), _jsx(Badge, { className: "bg-purple-100 text-purple-700 text-xs", children: opp.strategyName }), _jsx(Badge, { className: `text-xs ${opp.riskLevel === 'LOW' ? 'bg-green-100 text-green-700' :
-                                                                                                            opp.riskLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
-                                                                                                                'bg-red-100 text-red-700'}`, children: opp.riskLevel })] }), _jsxs("div", { className: "flex gap-3 mt-1 text-xs text-muted-foreground", children: [_jsxs("span", { className: "text-green-600 font-semibold", children: ["$", opp.profitUsd.toFixed(4)] }), _jsxs("span", { children: [(opp.confidence * 100).toFixed(0), "% confident"] }), _jsxs("span", { children: [opp.recommendedCapital.toFixed(3), " SOL"] })] }), opp.executionPlan && opp.executionPlan.length > 0 && (_jsx("div", { className: "mt-1 text-xs text-gray-500 font-mono", children: opp.executionPlan.slice(0, 3).join(' → ') }))] }), _jsx(Badge, { className: "bg-green-500 text-white text-xs", children: "\u2705 Executed" })] }) }, opp.id))) })] })) : (_jsxs("div", { className: "text-center py-8 bg-white rounded-lg border", children: [_jsx(Activity, { className: "w-16 h-16 mx-auto text-blue-400 animate-pulse mb-3" }), _jsx("p", { className: "text-base font-semibold mb-2", children: "Monitoring Market..." }), _jsxs("p", { className: "text-sm text-muted-foreground mb-4", children: ["Bot is actively scanning ", activeStrategies.length, " Phase 2 strategies"] }), _jsx("div", { className: "max-w-xs mx-auto space-y-1", children: activeStrategies.map(s => (_jsxs("div", { className: "text-xs text-gray-600 flex items-center justify-center gap-2", children: [_jsx("div", { className: "w-2 h-2 bg-green-500 rounded-full animate-pulse" }), s] }, s))) })] }))] })] })] }))] }))] })] }), isTrading && _jsx(APIHealthDashboard, {})] }));
+    return (<div className="container mx-auto p-6 max-w-6xl">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-3xl">🚀 Phase 2 Automated MEV Bot</CardTitle>
+          <CardDescription>
+            All 7 advanced strategies. Auto-configured based on risk profile. One-click start.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent className="space-y-6">
+          {/* Step 1 & 2: Configuration */}
+          {!config && (<>
+              <div className="space-y-2">
+                <Label htmlFor="privateKey">Wallet Private Key</Label>
+                <Input id="privateKey" type="password" placeholder="Enter your Solana wallet private key..." value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} className="font-mono"/>
+                <p className="text-sm text-muted-foreground">
+                  Your private key never leaves your browser. Stored locally only.
+                </p>
+              </div>
+
+              {/* Risk Profile Selection */}
+              <div className="space-y-3">
+                <Label>Select Risk Profile</Label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {profiles.map((profile) => (<Card key={profile.level} className={`cursor-pointer transition-all ${selectedRisk === profile.level
+                    ? 'ring-2 ring-primary shadow-lg'
+                    : 'hover:bg-accent'}`} onClick={() => setSelectedRisk(profile.level)}>
+                      <CardContent className="pt-6">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className={`p-2 rounded-full ${getRiskColor(profile.level)}`}>
+                            {getRiskIcon(profile.level)}
+                          </div>
+                          <h3 className="font-bold text-lg">{profile.name}</h3>
+                        </div>
+                        
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {profile.description}
+                        </p>
+
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Position:</span>
+                            <span className="font-medium">{profile.maxPositionPercent}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Daily Return:</span>
+                            <span className="font-medium text-green-600">{profile.expectedDailyReturn}</span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>))}
+                </div>
+              </div>
+
+              {error && (<Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4"/>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>)}
+
+              <Button className="w-full" size="lg" onClick={handleConfigure} disabled={isConfiguring || !privateKey.trim()}>
+                {isConfiguring ? (<>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin"/>
+                    Configuring Bot...
+                  </>) : ('⚡ Auto-Configure Bot')}
+              </Button>
+            </>)}
+
+          {/* Step 3: Trading Dashboard */}
+          {config && (<>
+              {/* Config Summary */}
+              <Alert className={config.readyToTrade ? 'border-green-500 bg-green-50' : 'border-yellow-500'}>
+                {config.readyToTrade ? (<CheckCircle2 className="h-4 w-4 text-green-500"/>) : (<AlertCircle className="h-4 w-4 text-yellow-500"/>)}
+                <AlertDescription>
+                  {config.readyToTrade
+                ? '✅ Bot configured! All Phase 2 strategies ready.'
+                : '⚠️ Configuration complete but warnings detected.'}
+                </AlertDescription>
+              </Alert>
+
+              <Card className="bg-gradient-to-br from-blue-50 to-purple-50">
+                <CardHeader>
+                  <CardTitle>Configuration Summary</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Risk Profile</p>
+                      <p className="font-bold text-lg">{config.profile.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Balance</p>
+                      <p className="font-bold text-lg">{config.walletBalance.toFixed(4)} SOL</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Max Position</p>
+                      <p className="font-bold">{config.calculatedSettings.maxPositionSol.toFixed(4)} SOL</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Min Profit</p>
+                      <p className="font-bold">${config.profile.minProfitUsd.toFixed(3)}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">Enabled Strategies ({config.enabledStrategies.length}):</p>
+                    <div className="flex flex-wrap gap-2">
+                      {config.enabledStrategies.map(strategy => (<Badge key={strategy} variant="secondary" className="text-xs">
+                          {strategy}
+                        </Badge>))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Control Buttons */}
+              <div className="flex gap-4">
+                {isTrading ? (<Button className="flex-1" size="lg" variant="destructive" onClick={handleStopTrading}>
+                    ⏹️ Stop All Strategies
+                  </Button>) : (<Button className="flex-1" size="lg" onClick={handleStartTrading} disabled={!config.readyToTrade}>
+                    🚀 Start Phase 2 Trading
+                  </Button>)}
+
+                <Button variant="outline" onClick={() => {
+                setConfig(null);
+                setOpportunities([]);
+                setTotalProfit(0);
+                setTradesExecuted(0);
+            }} disabled={isTrading}>
+                  Reset
+                </Button>
+              </div>
+
+              {/* Live Trading Dashboard */}
+              {isTrading && (<>
+                  <Alert className="border-green-500 bg-green-50">
+                    <Rocket className="h-4 w-4 text-green-500 animate-pulse"/>
+                    <AlertDescription>
+                      <span className="font-bold">Phase 2 strategies active!</span> Bot is monitoring {activeStrategies.length} strategies and auto-executing profitable trades.
+                    </AlertDescription>
+                  </Alert>
+
+                  <Card className="bg-gradient-to-br from-green-50 to-blue-50 border-2 border-green-300">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-green-600 animate-pulse"/>
+                        Live Phase 2 Trading
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Stats */}
+                      <div className="grid grid-cols-3 gap-4">
+                        <Card>
+                          <CardContent className="pt-4 text-center">
+                            <p className="text-sm text-muted-foreground">Opportunities</p>
+                            <p className="text-4xl font-bold text-blue-600">{opportunities.length}</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-4 text-center">
+                            <p className="text-sm text-muted-foreground">Trades</p>
+                            <p className="text-4xl font-bold text-purple-600">{tradesExecuted}</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-4 text-center">
+                            <p className="text-sm text-muted-foreground">Profit</p>
+                            <p className="text-4xl font-bold text-green-600">${totalProfit.toFixed(2)}</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      {/* Active Strategies */}
+                      <div>
+                        <p className="text-sm font-semibold mb-2">🔥 Active Strategies:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {activeStrategies.map(strategy => (<Badge key={strategy} className="bg-green-100 text-green-700">
+                              <Rocket className="w-3 h-3 mr-1 inline animate-pulse"/>
+                              {strategy}
+                            </Badge>))}
+                        </div>
+                      </div>
+
+                      {/* Live Opportunities */}
+                      {opportunities.length > 0 ? (<div>
+                          <p className="text-sm font-semibold mb-2">🎯 Recent Opportunities ({opportunities.length}):</p>
+                          <div className="space-y-2 max-h-80 overflow-y-auto">
+                            {opportunities.slice(0, 15).map(opp => (<div key={opp.id} className="bg-white p-3 rounded-lg border shadow-sm">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-semibold text-sm">{opp.pair}</span>
+                                      <Badge className="bg-purple-100 text-purple-700 text-xs">
+                                        {opp.strategyName}
+                                      </Badge>
+                                      <Badge className={`text-xs ${opp.riskLevel === 'LOW' ? 'bg-green-100 text-green-700' :
+                            opp.riskLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-red-100 text-red-700'}`}>
+                                        {opp.riskLevel}
+                                      </Badge>
+                                    </div>
+                                    <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
+                                      <span className="text-green-600 font-semibold">
+                                        ${opp.profitUsd.toFixed(4)}
+                                      </span>
+                                      <span>{(opp.confidence * 100).toFixed(0)}% confident</span>
+                                      <span>{opp.recommendedCapital.toFixed(3)} SOL</span>
+                                    </div>
+                                    {opp.executionPlan && opp.executionPlan.length > 0 && (<div className="mt-1 text-xs text-gray-500 font-mono">
+                                        {opp.executionPlan.slice(0, 3).join(' → ')}
+                                      </div>)}
+                                  </div>
+                                  <Badge className="bg-green-500 text-white text-xs">
+                                    ✅ Executed
+                                  </Badge>
+                                </div>
+                              </div>))}
+                          </div>
+                        </div>) : (<div className="text-center py-8 bg-white rounded-lg border">
+                          <Activity className="w-16 h-16 mx-auto text-blue-400 animate-pulse mb-3"/>
+                          <p className="text-base font-semibold mb-2">Monitoring Market...</p>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Bot is actively scanning {activeStrategies.length} Phase 2 strategies
+                          </p>
+                          <div className="max-w-xs mx-auto space-y-1">
+                            {activeStrategies.map(s => (<div key={s} className="text-xs text-gray-600 flex items-center justify-center gap-2">
+                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"/>
+                                {s}
+                              </div>))}
+                          </div>
+                        </div>)}
+                    </CardContent>
+                  </Card>
+                </>)}
+            </>)}
+        </CardContent>
+      </Card>
+      
+      {/* API Health Dashboard - Always visible when trading */}
+      {isTrading && <APIHealthDashboard />}
+    </div>);
 }
+//# sourceMappingURL=Phase2AutoTrading.js.map

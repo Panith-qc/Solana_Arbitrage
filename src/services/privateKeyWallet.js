@@ -145,3 +145,4 @@ export class PrivateKeyWallet {
     }
 }
 export const privateKeyWallet = new PrivateKeyWallet();
+//# sourceMappingURL=privateKeyWallet.js.map

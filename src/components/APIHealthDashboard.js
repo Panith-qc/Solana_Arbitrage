@@ -1,4 +1,3 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useState, useEffect } from 'react';
 import { multiAPIService } from '../services/multiAPIQuoteService';
 export const APIHealthDashboard = () => {
@@ -30,13 +29,79 @@ export const APIHealthDashboard = () => {
         }
     };
     if (!isVisible) {
-        return (_jsx("button", { onClick: () => setIsVisible(true), className: "fixed bottom-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg hover:bg-gray-700 transition-colors z-50", children: "\uD83D\uDCE1 Show API Health" }));
+        return (<button onClick={() => setIsVisible(true)} className="fixed bottom-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg hover:bg-gray-700 transition-colors z-50">
+        📡 Show API Health
+      </button>);
     }
-    return (_jsxs("div", { className: "fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg shadow-2xl p-4 max-w-2xl z-50 border border-gray-700", children: [_jsxs("div", { className: "flex justify-between items-center mb-3", children: [_jsxs("h3", { className: "text-lg font-bold flex items-center gap-2", children: [_jsx("span", { className: "text-2xl", children: "\uD83D\uDCE1" }), "API Health Monitor"] }), _jsx("button", { onClick: () => setIsVisible(false), className: "text-gray-400 hover:text-white transition-colors", children: "\u2715" })] }), _jsx("div", { className: "space-y-2 max-h-96 overflow-y-auto", children: health.length === 0 ? (_jsx("div", { className: "text-gray-400 text-center py-4", children: "No API data yet..." })) : (health.map((api, index) => (_jsxs("div", { className: `p-3 rounded-lg border ${api.status === 'HEALTHY'
-                        ? 'bg-green-900/20 border-green-700/50'
-                        : api.status === 'DEGRADED'
-                            ? 'bg-yellow-900/20 border-yellow-700/50'
-                            : api.status === 'PAUSED'
-                                ? 'bg-orange-900/20 border-orange-700/50'
-                                : 'bg-red-900/20 border-red-700/50'}`, children: [_jsxs("div", { className: "flex justify-between items-start mb-2", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx("span", { className: "text-xl", children: getStatusIcon(api.status) }), _jsx("span", { className: "font-semibold", children: api.name })] }), _jsx("span", { className: `text-sm font-bold ${getStatusColor(api.status)}`, children: api.status })] }), _jsxs("div", { className: "grid grid-cols-2 gap-2 text-sm", children: [_jsxs("div", { children: [_jsx("span", { className: "text-gray-400", children: "Success Rate:" }), _jsx("span", { className: "ml-2 font-mono text-green-400", children: api.successRate })] }), _jsxs("div", { children: [_jsx("span", { className: "text-gray-400", children: "Avg Latency:" }), _jsx("span", { className: "ml-2 font-mono text-blue-400", children: api.avgLatency })] }), _jsxs("div", { children: [_jsx("span", { className: "text-gray-400", children: "Calls:" }), _jsxs("span", { className: "ml-2 font-mono text-purple-400", children: [api.successfulCalls, "/", api.totalCalls] })] }), _jsxs("div", { children: [_jsx("span", { className: "text-gray-400", children: "Rate Limit:" }), _jsx("span", { className: "ml-2 font-mono text-orange-400", children: api.callsThisMinute })] })] }), api.consecutiveFailures > 0 && (_jsxs("div", { className: "mt-2 text-xs text-red-400", children: ["\u26A0\uFE0F ", api.consecutiveFailures, " consecutive failures"] })), api.pauseRemaining && (_jsxs("div", { className: "mt-2 text-xs text-orange-400", children: ["\u23F8\uFE0F Paused for ", api.pauseRemaining] })), api.lastError && api.status !== 'HEALTHY' && (_jsxs("div", { className: "mt-2 text-xs text-gray-400 truncate", title: api.lastError, children: ["Last error: ", api.lastError] }))] }, index)))) }), _jsx("div", { className: "mt-3 pt-3 border-t border-gray-700 text-xs text-gray-400", children: "Updates every 1 second \u2022 Best API auto-selected" })] }));
+    return (<div className="fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg shadow-2xl p-4 max-w-2xl z-50 border border-gray-700">
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="text-lg font-bold flex items-center gap-2">
+          <span className="text-2xl">📡</span>
+          API Health Monitor
+        </h3>
+        <button onClick={() => setIsVisible(false)} className="text-gray-400 hover:text-white transition-colors">
+          ✕
+        </button>
+      </div>
+
+      <div className="space-y-2 max-h-96 overflow-y-auto">
+        {health.length === 0 ? (<div className="text-gray-400 text-center py-4">
+            No API data yet...
+          </div>) : (health.map((api, index) => (<div key={index} className={`p-3 rounded-lg border ${api.status === 'HEALTHY'
+                ? 'bg-green-900/20 border-green-700/50'
+                : api.status === 'DEGRADED'
+                    ? 'bg-yellow-900/20 border-yellow-700/50'
+                    : api.status === 'PAUSED'
+                        ? 'bg-orange-900/20 border-orange-700/50'
+                        : 'bg-red-900/20 border-red-700/50'}`}>
+              <div className="flex justify-between items-start mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{getStatusIcon(api.status)}</span>
+                  <span className="font-semibold">{api.name}</span>
+                </div>
+                <span className={`text-sm font-bold ${getStatusColor(api.status)}`}>
+                  {api.status}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-gray-400">Success Rate:</span>
+                  <span className="ml-2 font-mono text-green-400">{api.successRate}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Avg Latency:</span>
+                  <span className="ml-2 font-mono text-blue-400">{api.avgLatency}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Calls:</span>
+                  <span className="ml-2 font-mono text-purple-400">
+                    {api.successfulCalls}/{api.totalCalls}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Rate Limit:</span>
+                  <span className="ml-2 font-mono text-orange-400">{api.callsThisMinute}</span>
+                </div>
+              </div>
+
+              {api.consecutiveFailures > 0 && (<div className="mt-2 text-xs text-red-400">
+                  ⚠️ {api.consecutiveFailures} consecutive failures
+                </div>)}
+
+              {api.pauseRemaining && (<div className="mt-2 text-xs text-orange-400">
+                  ⏸️ Paused for {api.pauseRemaining}
+                </div>)}
+
+              {api.lastError && api.status !== 'HEALTHY' && (<div className="mt-2 text-xs text-gray-400 truncate" title={api.lastError}>
+                  Last error: {api.lastError}
+                </div>)}
+            </div>)))}
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-400">
+        Updates every 1 second • Best API auto-selected
+      </div>
+    </div>);
 };
+//# sourceMappingURL=APIHealthDashboard.js.map

@@ -1,5 +1,4 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -172,6 +171,152 @@ const WalletIntegration = () => {
         const interval = setInterval(updateWalletState, 5000);
         return () => clearInterval(interval);
     }, []);
-    return (_jsxs("div", { className: "space-y-6", children: [_jsxs(Card, { children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "flex items-center gap-2", children: [_jsx(Wallet, { className: "h-5 w-5" }), "Wallet Connection"] }) }), _jsxs(CardContent, { className: "space-y-4", children: [!walletState.isConnected ? (_jsxs("div", { className: "space-y-4", children: [_jsxs("div", { className: "space-y-2", children: [_jsx("label", { className: "text-sm font-medium", children: "Private Key (Base58)" }), _jsx(Input, { type: "password", placeholder: "Enter your Solana private key...", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), disabled: isConnecting })] }), _jsx(Button, { onClick: connectWallet, disabled: isConnecting || !privateKey.trim(), className: "w-full", children: isConnecting ? (_jsxs(_Fragment, { children: [_jsx(RefreshCw, { className: "mr-2 h-4 w-4 animate-spin" }), "Connecting..."] })) : (_jsxs(_Fragment, { children: [_jsx(Wallet, { className: "mr-2 h-4 w-4" }), "Connect Wallet"] })) })] })) : (_jsxs("div", { className: "space-y-4", children: [_jsxs("div", { className: "flex items-center justify-between", children: [_jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Connected Wallet" }), _jsx("p", { className: "font-mono text-sm", children: formatPublicKey(walletState.publicKey) })] }), _jsx(Badge, { variant: "outline", className: "bg-green-50 text-green-700 border-green-200", children: "Connected" })] }), _jsxs("div", { className: "flex gap-2", children: [_jsx(Button, { onClick: refreshBalance, disabled: isRefreshing, variant: "outline", size: "sm", children: isRefreshing ? (_jsxs(_Fragment, { children: [_jsx(RefreshCw, { className: "mr-2 h-4 w-4 animate-spin" }), "Refreshing..."] })) : (_jsxs(_Fragment, { children: [_jsx(RefreshCw, { className: "mr-2 h-4 w-4" }), "Refresh"] })) }), _jsx(Button, { onClick: disconnectWallet, variant: "outline", size: "sm", children: "Disconnect" })] })] })), connectionError && (_jsx(Alert, { variant: "destructive", children: _jsx(AlertDescription, { children: connectionError }) }))] })] }), walletState.isConnected && (_jsxs(Card, { children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "flex items-center gap-2", children: [_jsx(DollarSign, { className: "h-5 w-5" }), "Wallet Balance"] }) }), _jsx(CardContent, { children: _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4", children: [_jsxs("div", { className: "text-center p-4 bg-blue-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "SOL Balance" }), _jsx("p", { className: "text-2xl font-bold text-blue-600", children: formatBalance(balanceInfo.sol) }), _jsx("p", { className: "text-xs text-muted-foreground", children: "SOL" })] }), _jsxs("div", { className: "text-center p-4 bg-green-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "USDC Balance" }), _jsx("p", { className: "text-2xl font-bold text-green-600", children: formatUsd(balanceInfo.usdc) }), _jsx("p", { className: "text-xs text-muted-foreground", children: "USDC" })] }), _jsxs("div", { className: "text-center p-4 bg-purple-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "USDT Balance" }), _jsx("p", { className: "text-2xl font-bold text-purple-600", children: formatUsd(balanceInfo.usdt) }), _jsx("p", { className: "text-xs text-muted-foreground", children: "USDT" })] }), _jsxs("div", { className: "text-center p-4 bg-orange-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Total USD Value" }), _jsxs("p", { className: "text-2xl font-bold text-orange-600", children: ["$", formatUsd(balanceInfo.totalUsd)] }), _jsx("p", { className: "text-xs text-muted-foreground", children: "USD" })] })] }) })] })), walletState.isConnected && (_jsxs(Card, { children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "flex items-center gap-2", children: [_jsx(TrendingUp, { className: "h-5 w-5" }), "Trading Performance"] }) }), _jsxs(CardContent, { children: [_jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4", children: [_jsxs("div", { className: "text-center p-4 bg-slate-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Total Trades" }), _jsx("p", { className: "text-2xl font-bold", children: performanceMetrics.totalTrades || 0 })] }), _jsxs("div", { className: "text-center p-4 bg-green-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Successful Trades" }), _jsx("p", { className: "text-2xl font-bold text-green-600", children: performanceMetrics.successfulTrades || 0 })] }), _jsxs("div", { className: "text-center p-4 bg-blue-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Win Rate" }), _jsxs("p", { className: "text-2xl font-bold text-blue-600", children: [formatPercentage(performanceMetrics.winRate), "%"] })] }), _jsxs("div", { className: "text-center p-4 bg-purple-50 rounded-lg", children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Total Profit" }), _jsxs("p", { className: "text-2xl font-bold text-purple-600", children: ["$", formatUsd(performanceMetrics.totalProfit)] })] })] }), performanceMetrics.lastTradeTime && (_jsx("div", { className: "mt-4 pt-4 border-t", children: _jsxs("div", { className: "flex items-center gap-2 text-sm text-muted-foreground", children: [_jsx(Clock, { className: "h-4 w-4" }), "Last Trade: ", new Date(performanceMetrics.lastTradeTime).toLocaleString()] }) }))] })] }))] }));
+    return (<div className="space-y-6">
+      {/* Connection Status */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="h-5 w-5"/>
+            Wallet Connection
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!walletState.isConnected ? (<div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Private Key (Base58)</label>
+                <Input type="password" placeholder="Enter your Solana private key..." value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} disabled={isConnecting}/>
+              </div>
+              
+              <Button onClick={connectWallet} disabled={isConnecting || !privateKey.trim()} className="w-full">
+                {isConnecting ? (<>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin"/>
+                    Connecting...
+                  </>) : (<>
+                    <Wallet className="mr-2 h-4 w-4"/>
+                    Connect Wallet
+                  </>)}
+              </Button>
+            </div>) : (<div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Connected Wallet</p>
+                  <p className="font-mono text-sm">{formatPublicKey(walletState.publicKey)}</p>
+                </div>
+                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                  Connected
+                </Badge>
+              </div>
+              
+              <div className="flex gap-2">
+                <Button onClick={refreshBalance} disabled={isRefreshing} variant="outline" size="sm">
+                  {isRefreshing ? (<>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin"/>
+                      Refreshing...
+                    </>) : (<>
+                      <RefreshCw className="mr-2 h-4 w-4"/>
+                      Refresh
+                    </>)}
+                </Button>
+                
+                <Button onClick={disconnectWallet} variant="outline" size="sm">
+                  Disconnect
+                </Button>
+              </div>
+            </div>)}
+
+          {connectionError && (<Alert variant="destructive">
+              <AlertDescription>{connectionError}</AlertDescription>
+            </Alert>)}
+        </CardContent>
+      </Card>
+
+      {/* Balance Information */}
+      {walletState.isConnected && (<Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5"/>
+              Wallet Balance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="text-center p-4 bg-blue-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">SOL Balance</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {formatBalance(balanceInfo.sol)}
+                </p>
+                <p className="text-xs text-muted-foreground">SOL</p>
+              </div>
+              
+              <div className="text-center p-4 bg-green-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">USDC Balance</p>
+                <p className="text-2xl font-bold text-green-600">
+                  {formatUsd(balanceInfo.usdc)}
+                </p>
+                <p className="text-xs text-muted-foreground">USDC</p>
+              </div>
+              
+              <div className="text-center p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">USDT Balance</p>
+                <p className="text-2xl font-bold text-purple-600">
+                  {formatUsd(balanceInfo.usdt)}
+                </p>
+                <p className="text-xs text-muted-foreground">USDT</p>
+              </div>
+              
+              <div className="text-center p-4 bg-orange-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">Total USD Value</p>
+                <p className="text-2xl font-bold text-orange-600">
+                  ${formatUsd(balanceInfo.totalUsd)}
+                </p>
+                <p className="text-xs text-muted-foreground">USD</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>)}
+
+      {/* Performance Metrics */}
+      {walletState.isConnected && (<Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5"/>
+              Trading Performance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="text-center p-4 bg-slate-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">Total Trades</p>
+                <p className="text-2xl font-bold">{performanceMetrics.totalTrades || 0}</p>
+              </div>
+              
+              <div className="text-center p-4 bg-green-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">Successful Trades</p>
+                <p className="text-2xl font-bold text-green-600">{performanceMetrics.successfulTrades || 0}</p>
+              </div>
+              
+              <div className="text-center p-4 bg-blue-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">Win Rate</p>
+                <p className="text-2xl font-bold text-blue-600">{formatPercentage(performanceMetrics.winRate)}%</p>
+              </div>
+              
+              <div className="text-center p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-muted-foreground">Total Profit</p>
+                <p className="text-2xl font-bold text-purple-600">
+                  ${formatUsd(performanceMetrics.totalProfit)}
+                </p>
+              </div>
+            </div>
+            
+            {performanceMetrics.lastTradeTime && (<div className="mt-4 pt-4 border-t">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Clock className="h-4 w-4"/>
+                  Last Trade: {new Date(performanceMetrics.lastTradeTime).toLocaleString()}
+                </div>
+              </div>)}
+          </CardContent>
+        </Card>)}
+    </div>);
 };
 export default WalletIntegration;
+//# sourceMappingURL=WalletIntegration.js.map

@@ -347,3 +347,4 @@ export async function createMEVBundle(transactions, tipAmount) {
     return jitoBundleService.submitBundle(transactions.map(tx => ({ transaction: tx })), tipAmount);
 }
 console.log('✅ Jito Bundle Service loaded - Ready for atomic MEV execution');
+//# sourceMappingURL=jitoBundleService.js.map

@@ -1,5 +1,13 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Trash2, Settings, AlertTriangle, CheckCircle, Activity, Calculator, Zap } from 'lucide-react';
 import { tokenCleanupService } from '../services/tokenCleanupService';
 const TokenCleanupDashboard = () => {
     const [tokens, setTokens] = useState([]);
@@ -65,58 +73,292 @@ const TokenCleanupDashboard = () => {
         }
         catch (error) {
             console.error('Recovery failed:', error);
-            cleaned: 0,
-                tokensCleaned;
-            number,
-                success;
-            false,
-                tokensCleaned;
-            0,
-                totalValueRecovered;
-            0,
-                transactions;
-            [],
-                errors;
-            [error instanceof Error ? error.message : 'Unknown error'];
+            setRecoveryResult({
+                success: false,
+                tokensCleaned: 0,
+                totalValueRecovered: 0,
+                transactions: [],
+                errors: [error instanceof Error ? error.message : 'Unknown error'],
+            });
         }
-        ;
+        finally {
+            setIsRecovering(false);
+        }
     };
-    try { }
-    finally {
-        setIsRecovering(false);
-    }
+    const updateServiceSettings = async () => {
+        // This would ideally update the service configuration
+        // For now, we'll pass settings through the cleanup call
+        console.log('🔧 Updated recovery settings:', settings);
+    };
+    const getTotalValue = () => {
+        return tokens.reduce((sum, token) => sum + token.usdValue, 0);
+    };
+    const getEligibleTokens = () => {
+        return tokens.filter(token => token.usdValue >= settings.minValueUsd);
+    };
+    const getFeeEfficiency = () => {
+        if (estimatedRecovery === 0)
+            return 0;
+        return ((estimatedRecovery - estimatedFees) / estimatedRecovery) * 100;
+    };
+    return (<div className="space-y-6">
+      {/* Header */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Trash2 className="w-5 h-5"/>
+            Token Recovery Center
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="text-sm text-gray-600">
+                Scan and convert stuck tokens back to SOL with optimized fees
+              </div>
+              <div className="flex items-center gap-4 text-sm">
+                <span>Found: {tokens.length} tokens</span>
+                <span>Total Value: ${getTotalValue().toFixed(2)}</span>
+                <span>Eligible: {getEligibleTokens().length} tokens</span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={scanTokens} disabled={isScanning} variant="outline" size="sm">
+                {isScanning ? (<>
+                    <Activity className="w-4 h-4 mr-2 animate-spin"/>
+                    Scanning...
+                  </>) : ('Refresh Scan')}
+              </Button>
+              <Button onClick={() => setShowSettings(!showSettings)} variant="outline" size="sm">
+                <Settings className="w-4 h-4 mr-2"/>
+                Settings
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Recovery Settings */}
+      {showSettings && (<Card className="border-blue-200">
+          <CardHeader>
+            <CardTitle className="text-blue-700 flex items-center gap-2">
+              <Settings className="w-5 h-5"/>
+              Recovery Parameters
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="priorityFee">Priority Fee (SOL)</Label>
+                <Input id="priorityFee" type="number" step="0.001" min="0.001" max="0.01" value={settings.priorityFeeSol} onChange={(e) => setSettings(prev => ({
+                ...prev,
+                priorityFeeSol: parseFloat(e.target.value) || 0.002
+            }))} className="mt-1"/>
+                <div className="text-xs text-gray-500 mt-1">
+                  Lower = cheaper, Higher = faster execution
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="slippage">Max Slippage (%)</Label>
+                <Input id="slippage" type="number" step="0.5" min="1" max="10" value={settings.slippagePercent} onChange={(e) => setSettings(prev => ({
+                ...prev,
+                slippagePercent: parseFloat(e.target.value) || 3.0
+            }))} className="mt-1"/>
+                <div className="text-xs text-gray-500 mt-1">
+                  Higher slippage = better success rate
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="minValue">Min Token Value (USD)</Label>
+                <Input id="minValue" type="number" step="0.10" min="0.01" max="10" value={settings.minValueUsd} onChange={(e) => setSettings(prev => ({
+                ...prev,
+                minValueUsd: parseFloat(e.target.value) || 0.50
+            }))} className="mt-1"/>
+                <div className="text-xs text-gray-500 mt-1">
+                  Only recover tokens above this value
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="delay">Delay Between Tx (ms)</Label>
+                <Input id="delay" type="number" step="500" min="1000" max="10000" value={settings.delayBetweenTxMs} onChange={(e) => setSettings(prev => ({
+                ...prev,
+                delayBetweenTxMs: parseInt(e.target.value) || 3000
+            }))} className="mt-1"/>
+                <div className="text-xs text-gray-500 mt-1">
+                  Longer delay = better success rate
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch id="preflight" checked={settings.enablePreflight} onCheckedChange={(checked) => setSettings(prev => ({
+                ...prev,
+                enablePreflight: checked
+            }))}/>
+              <Label htmlFor="preflight">Enable Preflight Checks</Label>
+              <div className="text-xs text-gray-500">
+                (Recommended: catches errors before spending fees)
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Cost-Benefit Analysis */}
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h4 className="font-medium mb-3 flex items-center gap-2">
+                <Calculator className="w-4 h-4"/>
+                Cost-Benefit Analysis
+              </h4>
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <div className="text-gray-600">Estimated Recovery</div>
+                  <div className="font-medium text-green-600">
+                    ${estimatedRecovery.toFixed(2)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-gray-600">Estimated Fees</div>
+                  <div className="font-medium text-red-600">
+                    ${estimatedFees.toFixed(2)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-gray-600">Net Profit</div>
+                  <div className={`font-medium ${getFeeEfficiency() > 50 ? 'text-green-600' : 'text-red-600'}`}>
+                    ${(estimatedRecovery - estimatedFees).toFixed(2)} ({getFeeEfficiency().toFixed(1)}%)
+                  </div>
+                </div>
+              </div>
+              
+              {getFeeEfficiency() < 50 && (<Alert className="mt-3 border-red-200 bg-red-50">
+                  <AlertTriangle className="h-4 w-4"/>
+                  <AlertDescription className="text-red-700">
+                    <strong>High Fee Warning:</strong> Recovery fees are {(100 - getFeeEfficiency()).toFixed(1)}% of value. 
+                    Consider increasing minimum value or reducing priority fees.
+                  </AlertDescription>
+                </Alert>)}
+            </div>
+          </CardContent>
+        </Card>)}
+
+      {/* Token List */}
+      {tokens.length > 0 && (<Card>
+          <CardHeader>
+            <CardTitle>Stuck Tokens Found ({tokens.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {tokens.map((token, index) => (<div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Badge variant={token.usdValue >= settings.minValueUsd ? 'default' : 'secondary'}>
+                      {token.symbol}
+                    </Badge>
+                    <div>
+                      <div className="font-medium">
+                        {token.uiAmount.toLocaleString()} {token.symbol}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Value: ${token.usdValue.toFixed(4)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    {token.usdValue >= settings.minValueUsd ? (<Badge className="bg-green-100 text-green-800">
+                        Will Recover
+                      </Badge>) : (<Badge variant="secondary">
+                        Below Threshold
+                      </Badge>)}
+                  </div>
+                </div>))}
+            </div>
+          </CardContent>
+        </Card>)}
+
+      {/* Recovery Action */}
+      {getEligibleTokens().length > 0 && (<Card className="border-green-200">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-green-700 mb-1">
+                  Ready to Recover {getEligibleTokens().length} Tokens
+                </h3>
+                <div className="text-sm text-gray-600">
+                  Net recovery: ${(estimatedRecovery - estimatedFees).toFixed(2)} 
+                  (Fee efficiency: {getFeeEfficiency().toFixed(1)}%)
+                </div>
+              </div>
+              <Button onClick={handleRecovery} disabled={isRecovering || getFeeEfficiency() < 0} className="bg-green-600 hover:bg-green-700">
+                {isRecovering ? (<>
+                    <Activity className="w-4 h-4 mr-2 animate-spin"/>
+                    Recovering...
+                  </>) : (<>
+                    <Zap className="w-4 h-4 mr-2"/>
+                    Start Recovery
+                  </>)}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>)}
+
+      {/* Recovery Results */}
+      {recoveryResult && (<Card className={recoveryResult.success ? 'border-green-200' : 'border-red-200'}>
+          <CardHeader>
+            <CardTitle className={`flex items-center gap-2 ${recoveryResult.success ? 'text-green-700' : 'text-red-700'}`}>
+              {recoveryResult.success ? (<CheckCircle className="w-5 h-5"/>) : (<AlertTriangle className="w-5 h-5"/>)}
+              Recovery {recoveryResult.success ? 'Complete' : 'Failed'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <div className="text-sm text-gray-600">Tokens Recovered</div>
+                  <div className="font-medium">{recoveryResult.tokensCleaned}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-gray-600">Value Recovered</div>
+                  <div className="font-medium text-green-600">
+                    ${recoveryResult.totalValueRecovered.toFixed(4)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-gray-600">Transactions</div>
+                  <div className="font-medium">{recoveryResult.transactions.length}</div>
+                </div>
+              </div>
+
+              {recoveryResult.transactions.length > 0 && (<div>
+                  <div className="text-sm font-medium mb-2">Transaction Hashes:</div>
+                  <div className="space-y-1">
+                    {recoveryResult.transactions.map((tx, index) => (<a key={index} href={`https://solscan.io/tx/${tx}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline block">
+                        {tx}
+                      </a>))}
+                  </div>
+                </div>)}
+
+              {recoveryResult.errors.length > 0 && (<div>
+                  <div className="text-sm font-medium mb-2 text-red-600">Errors:</div>
+                  <div className="space-y-1">
+                    {recoveryResult.errors.map((error, index) => (<div key={index} className="text-xs text-red-600">
+                        {error}
+                      </div>))}
+                  </div>
+                </div>)}
+            </div>
+          </CardContent>
+        </Card>)}
+
+      {tokens.length === 0 && !isScanning && (<Card>
+          <CardContent className="text-center py-8">
+            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4"/>
+            <h3 className="font-medium mb-2">No Stuck Tokens Found</h3>
+            <p className="text-gray-600">Your wallet is clean! All tokens are properly managed.</p>
+          </CardContent>
+        </Card>)}
+    </div>);
 };
-const updateServiceSettings = async () => {
-    // This would ideally update the service configuration
-    // For now, we'll pass settings through the cleanup call
-    console.log('🔧 Updated recovery settings:', settings);
-};
-const getTotalValue = () => {
-    return tokens.reduce((sum, token) => sum + token.usdValue, 0);
-};
-const getEligibleTokens = () => {
-    return tokens.filter(token => token.usdValue >= settings.minValueUsd);
-};
-const getFeeEfficiency = () => {
-    if (estimatedRecovery === 0)
-        return 0;
-    return ((estimatedRecovery - estimatedFees) / estimatedRecovery) * 100;
-};
-return (_jsxs("div", { className: "space-y-6", children: [_jsxs(Card, { children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "flex items-center gap-2", children: [_jsx(Trash2, { className: "w-5 h-5" }), "Token Recovery Center"] }) }), _jsx(CardContent, { children: _jsxs("div", { className: "flex items-center justify-between", children: [_jsxs("div", { className: "space-y-1", children: [_jsx("div", { className: "text-sm text-gray-600", children: "Scan and convert stuck tokens back to SOL with optimized fees" }), _jsxs("div", { className: "flex items-center gap-4 text-sm", children: [_jsxs("span", { children: ["Found: ", tokens.length, " tokens"] }), _jsxs("span", { children: ["Total Value: $", getTotalValue().toFixed(2)] }), _jsxs("span", { children: ["Eligible: ", getEligibleTokens().length, " tokens"] })] })] }), _jsxs("div", { className: "flex gap-2", children: [_jsx(Button, { onClick: scanTokens, disabled: isScanning, variant: "outline", size: "sm", children: isScanning ? (_jsxs(_Fragment, { children: [_jsx(Activity, { className: "w-4 h-4 mr-2 animate-spin" }), "Scanning..."] })) : ('Refresh Scan') }), _jsxs(Button, { onClick: () => setShowSettings(!showSettings), variant: "outline", size: "sm", children: [_jsx(Settings, { className: "w-4 h-4 mr-2" }), "Settings"] })] })] }) })] }), showSettings && (_jsxs(Card, { className: "border-blue-200", children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: "text-blue-700 flex items-center gap-2", children: [_jsx(Settings, { className: "w-5 h-5" }), "Recovery Parameters"] }) }), _jsxs(CardContent, { className: "space-y-4", children: [_jsxs("div", { className: "grid grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsx(Label, { htmlFor: "priorityFee", children: "Priority Fee (SOL)" }), _jsx(Input, { id: "priorityFee", type: "number", step: "0.001", min: "0.001", max: "0.01", value: settings.priorityFeeSol, onChange: (e) => setSettings(prev => ({
-                                                ...prev,
-                                                priorityFeeSol: parseFloat(e.target.value) || 0.002
-                                            })), className: "mt-1" }), _jsx("div", { className: "text-xs text-gray-500 mt-1", children: "Lower = cheaper, Higher = faster execution" })] }), _jsxs("div", { children: [_jsx(Label, { htmlFor: "slippage", children: "Max Slippage (%)" }), _jsx(Input, { id: "slippage", type: "number", step: "0.5", min: "1", max: "10", value: settings.slippagePercent, onChange: (e) => setSettings(prev => ({
-                                                ...prev,
-                                                slippagePercent: parseFloat(e.target.value) || 3.0
-                                            })), className: "mt-1" }), _jsx("div", { className: "text-xs text-gray-500 mt-1", children: "Higher slippage = better success rate" })] }), _jsxs("div", { children: [_jsx(Label, { htmlFor: "minValue", children: "Min Token Value (USD)" }), _jsx(Input, { id: "minValue", type: "number", step: "0.10", min: "0.01", max: "10", value: settings.minValueUsd, onChange: (e) => setSettings(prev => ({
-                                                ...prev,
-                                                minValueUsd: parseFloat(e.target.value) || 0.50
-                                            })), className: "mt-1" }), _jsx("div", { className: "text-xs text-gray-500 mt-1", children: "Only recover tokens above this value" })] }), _jsxs("div", { children: [_jsx(Label, { htmlFor: "delay", children: "Delay Between Tx (ms)" }), _jsx(Input, { id: "delay", type: "number", step: "500", min: "1000", max: "10000", value: settings.delayBetweenTxMs, onChange: (e) => setSettings(prev => ({
-                                                ...prev,
-                                                delayBetweenTxMs: parseInt(e.target.value) || 3000
-                                            })), className: "mt-1" }), _jsx("div", { className: "text-xs text-gray-500 mt-1", children: "Longer delay = better success rate" })] })] }), _jsxs("div", { className: "flex items-center space-x-2", children: [_jsx(Switch, { id: "preflight", checked: settings.enablePreflight, onCheckedChange: (checked) => setSettings(prev => ({
-                                        ...prev,
-                                        enablePreflight: checked
-                                    })) }), _jsx(Label, { htmlFor: "preflight", children: "Enable Preflight Checks" }), _jsx("div", { className: "text-xs text-gray-500", children: "(Recommended: catches errors before spending fees)" })] }), _jsx(Separator, {}), _jsxs("div", { className: "bg-gray-50 p-4 rounded-lg", children: [_jsxs("h4", { className: "font-medium mb-3 flex items-center gap-2", children: [_jsx(Calculator, { className: "w-4 h-4" }), "Cost-Benefit Analysis"] }), _jsxs("div", { className: "grid grid-cols-3 gap-4 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "text-gray-600", children: "Estimated Recovery" }), _jsxs("div", { className: "font-medium text-green-600", children: ["$", estimatedRecovery.toFixed(2)] })] }), _jsxs("div", { children: [_jsx("div", { className: "text-gray-600", children: "Estimated Fees" }), _jsxs("div", { className: "font-medium text-red-600", children: ["$", estimatedFees.toFixed(2)] })] }), _jsxs("div", { children: [_jsx("div", { className: "text-gray-600", children: "Net Profit" }), _jsxs("div", { className: `font-medium ${getFeeEfficiency() > 50 ? 'text-green-600' : 'text-red-600'}`, children: ["$", (estimatedRecovery - estimatedFees).toFixed(2), " (", getFeeEfficiency().toFixed(1), "%)"] })] })] }), getFeeEfficiency() < 50 && (_jsxs(Alert, { className: "mt-3 border-red-200 bg-red-50", children: [_jsx(AlertTriangle, { className: "h-4 w-4" }), _jsxs(AlertDescription, { className: "text-red-700", children: [_jsx("strong", { children: "High Fee Warning:" }), " Recovery fees are ", (100 - getFeeEfficiency()).toFixed(1), "% of value. Consider increasing minimum value or reducing priority fees."] })] }))] })] })] })), tokens.length > 0 && (_jsxs(Card, { children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { children: ["Stuck Tokens Found (", tokens.length, ")"] }) }), _jsx(CardContent, { children: _jsx("div", { className: "space-y-3", children: tokens.map((token, index) => (_jsxs("div", { className: "flex items-center justify-between p-3 border rounded-lg", children: [_jsxs("div", { className: "flex items-center gap-3", children: [_jsx(Badge, { variant: token.usdValue >= settings.minValueUsd ? 'default' : 'secondary', children: token.symbol }), _jsxs("div", { children: [_jsxs("div", { className: "font-medium", children: [token.uiAmount.toLocaleString(), " ", token.symbol] }), _jsxs("div", { className: "text-sm text-gray-600", children: ["Value: $", token.usdValue.toFixed(4)] })] })] }), _jsx("div", { className: "text-right", children: token.usdValue >= settings.minValueUsd ? (_jsx(Badge, { className: "bg-green-100 text-green-800", children: "Will Recover" })) : (_jsx(Badge, { variant: "secondary", children: "Below Threshold" })) })] }, index))) }) })] })), getEligibleTokens().length > 0 && (_jsx(Card, { className: "border-green-200", children: _jsx(CardContent, { className: "p-6", children: _jsxs("div", { className: "flex items-center justify-between", children: [_jsxs("div", { children: [_jsxs("h3", { className: "font-medium text-green-700 mb-1", children: ["Ready to Recover ", getEligibleTokens().length, " Tokens"] }), _jsxs("div", { className: "text-sm text-gray-600", children: ["Net recovery: $", (estimatedRecovery - estimatedFees).toFixed(2), "(Fee efficiency: ", getFeeEfficiency().toFixed(1), "%)"] })] }), _jsx(Button, { onClick: handleRecovery, disabled: isRecovering || getFeeEfficiency() < 0, className: "bg-green-600 hover:bg-green-700", children: isRecovering ? (_jsxs(_Fragment, { children: [_jsx(Activity, { className: "w-4 h-4 mr-2 animate-spin" }), "Recovering..."] })) : (_jsxs(_Fragment, { children: [_jsx(Zap, { className: "w-4 h-4 mr-2" }), "Start Recovery"] })) })] }) }) })), recoveryResult && (_jsxs(Card, { className: recoveryResult.success ? 'border-green-200' : 'border-red-200', children: [_jsx(CardHeader, { children: _jsxs(CardTitle, { className: `flex items-center gap-2 ${recoveryResult.success ? 'text-green-700' : 'text-red-700'}`, children: [recoveryResult.success ? (_jsx(CheckCircle, { className: "w-5 h-5" })) : (_jsx(AlertTriangle, { className: "w-5 h-5" })), "Recovery ", recoveryResult.success ? 'Complete' : 'Failed'] }) }), _jsx(CardContent, { children: _jsxs("div", { className: "space-y-3", children: [_jsxs("div", { className: "grid grid-cols-3 gap-4", children: [_jsxs("div", { children: [_jsx("div", { className: "text-sm text-gray-600", children: "Tokens Recovered" }), _jsx("div", { className: "font-medium", children: recoveryResult.tokensCleaned })] }), _jsxs("div", { children: [_jsx("div", { className: "text-sm text-gray-600", children: "Value Recovered" }), _jsxs("div", { className: "font-medium text-green-600", children: ["$", recoveryResult.totalValueRecovered.toFixed(4)] })] }), _jsxs("div", { children: [_jsx("div", { className: "text-sm text-gray-600", children: "Transactions" }), _jsx("div", { className: "font-medium", children: recoveryResult.transactions.length })] })] }), recoveryResult.transactions.length > 0 && (_jsxs("div", { children: [_jsx("div", { className: "text-sm font-medium mb-2", children: "Transaction Hashes:" }), _jsx("div", { className: "space-y-1", children: recoveryResult.transactions.map((tx, index) => (_jsx("a", { href: `https://solscan.io/tx/${tx}`, target: "_blank", rel: "noopener noreferrer", className: "text-xs text-blue-600 hover:underline block", children: tx }, index))) })] })), recoveryResult.errors.length > 0 && (_jsxs("div", { children: [_jsx("div", { className: "text-sm font-medium mb-2 text-red-600", children: "Errors:" }), _jsx("div", { className: "space-y-1", children: recoveryResult.errors.map((error, index) => (_jsx("div", { className: "text-xs text-red-600", children: error }, index))) })] }))] }) })] })), tokens.length === 0 && !isScanning && (_jsx(Card, { children: _jsxs(CardContent, { className: "text-center py-8", children: [_jsx(CheckCircle, { className: "w-12 h-12 text-green-500 mx-auto mb-4" }), _jsx("h3", { className: "font-medium mb-2", children: "No Stuck Tokens Found" }), _jsx("p", { className: "text-gray-600", children: "Your wallet is clean! All tokens are properly managed." })] }) }))] }));
-;
 export default TokenCleanupDashboard;
+//# sourceMappingURL=TokenCleanupDashboard.js.map

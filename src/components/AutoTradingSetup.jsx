@@ -1,4 +1,3 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { fastMEVEngine } from '@/services/fastMEVEngine';
 // AUTO-TRADING SETUP COMPONENT
 // Simple one-click setup for automated trading
@@ -166,10 +165,10 @@ export default function AutoTradingSetup() {
     // Get risk icon
     const getRiskIcon = (level) => {
         if (level === 'CONSERVATIVE')
-            return _jsx(Shield, { className: "w-5 h-5" });
+            return <Shield className="w-5 h-5"/>;
         if (level === 'BALANCED')
-            return _jsx(TrendingUp, { className: "w-5 h-5" });
-        return _jsx(Zap, { className: "w-5 h-5" });
+            return <TrendingUp className="w-5 h-5"/>;
+        return <Zap className="w-5 h-5"/>;
     };
     // Get risk color
     const getRiskColor = (level) => {
@@ -179,9 +178,207 @@ export default function AutoTradingSetup() {
             return 'bg-blue-500';
         return 'bg-red-500';
     };
-    return (_jsxs("div", { className: "container mx-auto p-6 max-w-4xl", children: [_jsxs(Card, { children: [_jsxs(CardHeader, { children: [_jsx(CardTitle, { className: "text-3xl", children: "\uD83E\uDD16 Automated MEV Trading Bot" }), _jsx(CardDescription, { children: "One-click setup. No manual configuration. Just select risk level and start trading." })] }), _jsxs(CardContent, { className: "space-y-6", children: [!config && (_jsxs(_Fragment, { children: [_jsxs("div", { className: "space-y-2", children: [_jsx(Label, { htmlFor: "privateKey", children: "Wallet Private Key" }), _jsx(Input, { id: "privateKey", type: "password", placeholder: "Enter your Solana wallet private key...", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), className: "font-mono" }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Your private key never leaves your browser. Stored locally only." })] }), _jsxs("div", { className: "space-y-3", children: [_jsx(Label, { children: "Select Risk Profile" }), _jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4", children: profiles.map((profile) => (_jsx(Card, { className: `cursor-pointer transition-all ${selectedRisk === profile.level
-                                                        ? 'ring-2 ring-primary'
-                                                        : 'hover:bg-accent'}`, onClick: () => setSelectedRisk(profile.level), children: _jsxs(CardContent, { className: "pt-6", children: [_jsxs("div", { className: "flex items-center gap-3 mb-3", children: [_jsx("div", { className: `p-2 rounded-full ${getRiskColor(profile.level)}`, children: getRiskIcon(profile.level) }), _jsx("h3", { className: "font-bold text-lg", children: profile.name })] }), _jsx("p", { className: "text-sm text-muted-foreground mb-4", children: profile.description }), _jsxs("div", { className: "space-y-2 text-sm", children: [_jsxs("div", { className: "flex justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Position Size:" }), _jsxs("span", { className: "font-medium", children: [profile.maxPositionPercent, "%"] })] }), _jsxs("div", { className: "flex justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Daily Trades:" }), _jsx("span", { className: "font-medium", children: profile.expectedDailyTrades })] }), _jsxs("div", { className: "flex justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Success Rate:" }), _jsx("span", { className: "font-medium", children: profile.expectedSuccessRate })] }), _jsxs("div", { className: "flex justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Daily Return:" }), _jsx("span", { className: "font-medium text-green-600", children: profile.expectedDailyReturn })] })] })] }) }, profile.level))) })] }), error && (_jsxs(Alert, { variant: "destructive", children: [_jsx(AlertCircle, { className: "h-4 w-4" }), _jsx(AlertDescription, { children: error })] })), _jsx(Button, { className: "w-full", size: "lg", onClick: handleConfigure, disabled: isConfiguring || !privateKey.trim(), children: isConfiguring ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "mr-2 h-4 w-4 animate-spin" }), "Configuring Bot..."] })) : ('⚡ Auto-Configure Bot') })] })), config && (_jsxs(_Fragment, { children: [_jsxs(Alert, { className: config.readyToTrade ? 'border-green-500' : 'border-yellow-500', children: [config.readyToTrade ? (_jsx(CheckCircle2, { className: "h-4 w-4 text-green-500" })) : (_jsx(AlertCircle, { className: "h-4 w-4 text-yellow-500" })), _jsx(AlertDescription, { children: config.readyToTrade
-                                                    ? '✅ Bot configured successfully! Ready to start automated trading.'
-                                                    : '⚠️ Configuration complete but warnings detected. Review below.' })] }), _jsxs(Card, { className: "bg-accent", children: [_jsx(CardHeader, { children: _jsx(CardTitle, { className: "text-lg", children: "Configuration Summary" }) }), _jsxs(CardContent, { className: "space-y-4", children: [_jsxs("div", { className: "grid grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Risk Profile" }), _jsx("p", { className: "font-bold", children: config.profile.name })] }), _jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Wallet Balance" }), _jsxs("p", { className: "font-bold", children: [config.walletBalance.toFixed(4), " SOL"] })] }), _jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Max Position" }), _jsxs("p", { className: "font-bold", children: [config.calculatedSettings.maxPositionSol.toFixed(4), " SOL"] })] }), _jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground", children: "Daily Limit" }), _jsxs("p", { className: "font-bold", children: [config.calculatedSettings.dailyLimitSol.toFixed(4), " SOL"] })] })] }), _jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground mb-2", children: "Enabled Strategies" }), _jsx("div", { className: "flex flex-wrap gap-2", children: config.enabledStrategies.map((strategy) => (_jsx(Badge, { variant: "secondary", children: strategy }, strategy))) })] }), config.warnings.length > 0 && (_jsxs("div", { children: [_jsx("p", { className: "text-sm text-muted-foreground mb-2", children: "\u26A0\uFE0F Warnings" }), _jsx("ul", { className: "space-y-1", children: config.warnings.map((warning, i) => (_jsx("li", { className: "text-sm text-yellow-600", children: warning }, i))) })] }))] })] }), _jsxs("div", { className: "flex gap-4", children: [!isTrading ? (_jsx(Button, { className: "flex-1", size: "lg", onClick: handleStartTrading, disabled: !config.readyToTrade, children: "\uD83D\uDE80 Start Automated Trading" })) : (_jsx(Button, { className: "flex-1", size: "lg", variant: "destructive", onClick: handleStopTrading, children: "\u23F9\uFE0F Stop Trading" })), _jsx(Button, { variant: "outline", onClick: () => setConfig(null), disabled: isTrading, children: "Reset" })] }), isTrading && (_jsxs(Alert, { className: "border-green-500 bg-green-50", children: [_jsx(CheckCircle2, { className: "h-4 w-4 text-green-500" }), _jsxs(AlertDescription, { children: [_jsx("span", { className: "font-bold", children: "Bot is trading!" }), " Monitoring for opportunities and executing trades automatically. Expected: ", config.profile.expectedDailyTrades, "."] })] }))] }))] })] }), !config && (_jsxs("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4 mt-6", children: [_jsx(Card, { children: _jsxs(CardContent, { className: "pt-6", children: [_jsxs("div", { className: "flex items-center gap-3 mb-2", children: [_jsx(Shield, { className: "w-6 h-6 text-green-500" }), _jsx("h3", { className: "font-bold", children: "Safe & Secure" })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Private keys never leave your browser. All trades executed securely on-chain." })] }) }), _jsx(Card, { children: _jsxs(CardContent, { className: "pt-6", children: [_jsxs("div", { className: "flex items-center gap-3 mb-2", children: [_jsx(Zap, { className: "w-6 h-6 text-yellow-500" }), _jsx("h3", { className: "font-bold", children: "Fully Automated" })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "No manual configuration needed. Bot auto-sizes positions based on your balance." })] }) }), _jsx(Card, { children: _jsxs(CardContent, { className: "pt-6", children: [_jsxs("div", { className: "flex items-center gap-3 mb-2", children: [_jsx(TrendingUp, { className: "w-6 h-6 text-blue-500" }), _jsx("h3", { className: "font-bold", children: "Proven Strategies" })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "7 Phase 2 MEV strategies working 24/7 to capture profitable opportunities." })] }) })] }))] }));
+    return (<div className="container mx-auto p-6 max-w-4xl">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-3xl">🤖 Automated MEV Trading Bot</CardTitle>
+          <CardDescription>
+            One-click setup. No manual configuration. Just select risk level and start trading.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent className="space-y-6">
+          {/* Step 1: Enter Private Key */}
+          {!config && (<>
+              <div className="space-y-2">
+                <Label htmlFor="privateKey">Wallet Private Key</Label>
+                <Input id="privateKey" type="password" placeholder="Enter your Solana wallet private key..." value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} className="font-mono"/>
+                <p className="text-sm text-muted-foreground">
+                  Your private key never leaves your browser. Stored locally only.
+                </p>
+              </div>
+
+              {/* Step 2: Select Risk Profile */}
+              <div className="space-y-3">
+                <Label>Select Risk Profile</Label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {profiles.map((profile) => (<Card key={profile.level} className={`cursor-pointer transition-all ${selectedRisk === profile.level
+                    ? 'ring-2 ring-primary'
+                    : 'hover:bg-accent'}`} onClick={() => setSelectedRisk(profile.level)}>
+                      <CardContent className="pt-6">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className={`p-2 rounded-full ${getRiskColor(profile.level)}`}>
+                            {getRiskIcon(profile.level)}
+                          </div>
+                          <h3 className="font-bold text-lg">{profile.name}</h3>
+                        </div>
+                        
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {profile.description}
+                        </p>
+
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Position Size:</span>
+                            <span className="font-medium">{profile.maxPositionPercent}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Daily Trades:</span>
+                            <span className="font-medium">{profile.expectedDailyTrades}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Success Rate:</span>
+                            <span className="font-medium">{profile.expectedSuccessRate}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Daily Return:</span>
+                            <span className="font-medium text-green-600">
+                              {profile.expectedDailyReturn}
+                            </span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>))}
+                </div>
+              </div>
+
+              {error && (<Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4"/>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>)}
+
+              {/* Configure Button */}
+              <Button className="w-full" size="lg" onClick={handleConfigure} disabled={isConfiguring || !privateKey.trim()}>
+                {isConfiguring ? (<>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin"/>
+                    Configuring Bot...
+                  </>) : ('⚡ Auto-Configure Bot')}
+              </Button>
+            </>)}
+
+          {/* Step 3: Show Configuration & Start Trading */}
+          {config && (<>
+              <Alert className={config.readyToTrade ? 'border-green-500' : 'border-yellow-500'}>
+                {config.readyToTrade ? (<CheckCircle2 className="h-4 w-4 text-green-500"/>) : (<AlertCircle className="h-4 w-4 text-yellow-500"/>)}
+                <AlertDescription>
+                  {config.readyToTrade
+                ? '✅ Bot configured successfully! Ready to start automated trading.'
+                : '⚠️ Configuration complete but warnings detected. Review below.'}
+                </AlertDescription>
+              </Alert>
+
+              {/* Configuration Summary */}
+              <Card className="bg-accent">
+                <CardHeader>
+                  <CardTitle className="text-lg">Configuration Summary</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Risk Profile</p>
+                      <p className="font-bold">{config.profile.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Wallet Balance</p>
+                      <p className="font-bold">{config.walletBalance.toFixed(4)} SOL</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Max Position</p>
+                      <p className="font-bold">
+                        {config.calculatedSettings.maxPositionSol.toFixed(4)} SOL
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Daily Limit</p>
+                      <p className="font-bold">
+                        {config.calculatedSettings.dailyLimitSol.toFixed(4)} SOL
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">Enabled Strategies</p>
+                    <div className="flex flex-wrap gap-2">
+                      {config.enabledStrategies.map((strategy) => (<Badge key={strategy} variant="secondary">
+                          {strategy}
+                        </Badge>))}
+                    </div>
+                  </div>
+
+                  {config.warnings.length > 0 && (<div>
+                      <p className="text-sm text-muted-foreground mb-2">⚠️ Warnings</p>
+                      <ul className="space-y-1">
+                        {config.warnings.map((warning, i) => (<li key={i} className="text-sm text-yellow-600">
+                            {warning}
+                          </li>))}
+                      </ul>
+                    </div>)}
+                </CardContent>
+              </Card>
+
+              {/* Trading Controls */}
+              <div className="flex gap-4">
+                {!isTrading ? (<Button className="flex-1" size="lg" onClick={handleStartTrading} disabled={!config.readyToTrade}>
+                    🚀 Start Automated Trading
+                  </Button>) : (<Button className="flex-1" size="lg" variant="destructive" onClick={handleStopTrading}>
+                    ⏹️ Stop Trading
+                  </Button>)}
+                
+                <Button variant="outline" onClick={() => setConfig(null)} disabled={isTrading}>
+                  Reset
+                </Button>
+              </div>
+
+              {/* Trading Status */}
+              {isTrading && (<Alert className="border-green-500 bg-green-50">
+                  <CheckCircle2 className="h-4 w-4 text-green-500"/>
+                  <AlertDescription>
+                    <span className="font-bold">Bot is trading!</span> Monitoring for opportunities
+                    and executing trades automatically. Expected: {config.profile.expectedDailyTrades}.
+                  </AlertDescription>
+                </Alert>)}
+            </>)}
+        </CardContent>
+      </Card>
+
+      {/* Info Cards */}
+      {!config && (<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3 mb-2">
+                <Shield className="w-6 h-6 text-green-500"/>
+                <h3 className="font-bold">Safe & Secure</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Private keys never leave your browser. All trades executed securely on-chain.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3 mb-2">
+                <Zap className="w-6 h-6 text-yellow-500"/>
+                <h3 className="font-bold">Fully Automated</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                No manual configuration needed. Bot auto-sizes positions based on your balance.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3 mb-2">
+                <TrendingUp className="w-6 h-6 text-blue-500"/>
+                <h3 className="font-bold">Proven Strategies</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                7 Phase 2 MEV strategies working 24/7 to capture profitable opportunities.
+              </p>
+            </CardContent>
+          </Card>
+        </div>)}
+    </div>);
 }
+//# sourceMappingURL=AutoTradingSetup.js.map

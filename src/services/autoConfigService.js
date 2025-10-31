@@ -237,3 +237,4 @@ export const autoConfigService = new AutoConfigService(import.meta.env.VITE_HELI
 export async function configureBot(walletAddress, riskLevel = 'BALANCED') {
     return autoConfigService.autoConfigureBot(walletAddress, riskLevel);
 }
+//# sourceMappingURL=autoConfigService.js.map

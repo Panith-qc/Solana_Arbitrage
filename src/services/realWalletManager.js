@@ -129,3 +129,4 @@ class RealWalletManager {
     }
 }
 export const realWalletManager = new RealWalletManager();
+//# sourceMappingURL=realWalletManager.js.map

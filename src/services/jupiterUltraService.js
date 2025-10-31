@@ -424,3 +424,4 @@ export function getJupiterService(opts) {
 }
 // Export singleton instance
 export const jupiterUltraService = new JupiterService();
+//# sourceMappingURL=jupiterUltraService.js.map
