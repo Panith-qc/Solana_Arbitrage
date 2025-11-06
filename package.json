@@ -1,24 +1,25 @@
 {
-  "name": "solana-arbitrage-dashboard",
-  "version": "2.0.0",
-  "description": "Production-ready Solana arbitrage executor with React UI",
+  "name": "solana-mev-bot",
+  "version": "1.0.0",
+  "description": "Jito Bundle MEV Bot with Solana Arbitrage",
   "type": "module",
-  "packageManager": "pnpm@9.0.0",
+  "main": "dist/index.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "build:executor": "tsc src/services/executor.ts",
+    "build": "tsc && vite build",
+    "build:jito": "tsc src/services/JitoBundleService.ts --outDir dist/services --declaration",
+    "type-check": "tsc --noEmit",
     "preview": "vite preview",
     "lint": "eslint --quiet ./src",
     "lint:fix": "eslint --fix ./src",
     "format": "prettier --write src/**/*.{ts,tsx,css}",
-    "type-check": "tsc --noEmit",
-    "start": "node server.js",
-    "deploy": "npm run build && npm run start"
+    "start": "node dist/index.js",
+    "deploy": "npm run build:jito && npm run build && npm run start"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
     "@hookform/resolvers": "^3.9.0",
+    "@jito-foundation/searcher-client": "^0.3.0",
     "@radix-ui/react-accordion": "^1.2.1",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.0",
@@ -68,6 +69,7 @@
     "express": "^4.21.0",
     "framer-motion": "^11.0.8",
     "input-otp": "^1.2.4",
+    "jito-js-rpc": "^0.1.1",
     "lodash-es": "^4.17.21",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.4.6",
@@ -113,13 +115,6 @@
     "vite": "^5.4.1"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "pnpm": ">=9.0.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "typescript": "^5.6.2",
-      "@types/node": "^22.5.5"
-    }
+    "node": ">=18.0.0"
   }
 }
