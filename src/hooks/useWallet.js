@@ -141,4 +141,3 @@ export const useWallet = () => {
     };
 };
 export default useWallet;
-//# sourceMappingURL=useWallet.js.map

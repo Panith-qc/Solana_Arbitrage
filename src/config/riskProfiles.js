@@ -128,4 +128,3 @@ ${profile.name} Profile:
 - Stop Loss: ${profile.stopLossPercent}%
   `.trim();
 }
-//# sourceMappingURL=riskProfiles.js.map

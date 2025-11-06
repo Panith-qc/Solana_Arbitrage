@@ -81,4 +81,3 @@ export class RealSolanaWallet {
     }
 }
 export const realSolanaWallet = new RealSolanaWallet();
-//# sourceMappingURL=realSolanaWallet.js.map

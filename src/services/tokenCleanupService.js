@@ -13,4 +13,3 @@ class TokenCleanupServiceImpl {
     async cleanupAllTokens(minValueUsd = 0.01) { const tokens = await this.scanWalletTokens(); const dustTokens = tokens.filter(t => t.usdValue < minValueUsd); const recovered = dustTokens.reduce((sum, t) => sum + t.usdValue, 0); return { success: true, cleaned: dustTokens.length, tokensCleaned: dustTokens.length, totalValueRecovered: recovered, transactions: [], errors: [] }; }
 }
 export const tokenCleanupService = new TokenCleanupServiceImpl();
-//# sourceMappingURL=tokenCleanupService.js.map

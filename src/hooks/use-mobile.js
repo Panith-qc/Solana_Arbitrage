@@ -13,4 +13,3 @@ export function useIsMobile() {
     }, []);
     return !!isMobile;
 }
-//# sourceMappingURL=use-mobile.js.map

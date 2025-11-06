@@ -106,4 +106,3 @@ export class CompetitionAnalyzer {
     }
 }
 export const competitionAnalyzer = new CompetitionAnalyzer();
-//# sourceMappingURL=competitionAnalyzer.js.map
