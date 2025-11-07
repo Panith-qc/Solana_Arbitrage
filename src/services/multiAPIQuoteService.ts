@@ -277,12 +277,16 @@ class MultiAPIQuoteService {
     amount: number,
     slippageBps: number = 50
   ): Promise<JupiterQuoteResponse> {
+    const walletAddress = "34tC7Wd6URg5sbjvMJrStyH69L8Tcj3jzgNxH3EJ3fib";
+    
     const url = `https://lite-api.jup.ag/ultra/v1/order?` +
       `inputMint=${inputMint}&` +
       `outputMint=${outputMint}&` +
       `amount=${parseInt(String(amount))}&` +
       `slippageBps=${slippageBps}&` +
+      `taker=${walletAddress}&` +
       `onlyDirectRoutes=false`;
+
 
     const response = await fetch(url, {
       method: 'GET',
