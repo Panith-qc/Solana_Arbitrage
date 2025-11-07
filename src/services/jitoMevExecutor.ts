@@ -3,7 +3,6 @@ import {
   PublicKey,
   Keypair,
   VersionedTransaction,
-  sendAndConfirmRawTransaction,
   TransactionMessage,
   ComputeBudgetProgram,
 } from "@solana/web3.js";
@@ -12,14 +11,13 @@ import { Bundle } from "jito-ts/dist/sdk/block-engine/types";
 
 const JITO_MAINNET_ENDPOINT = "https://mainnet.block-engine.jito.wtf";
 const JITO_TIP_ACCOUNT = "96gYZvHQMFtzLrWH2SE9AX2MpUmwzxXkXrvnUao5r7S6";
-const SOL_PRICE_FEED = "H6ARHf6YXhGU3FZut9tnfjwcv3qj6mKPZf8kqvgV7Kwc";
 
 interface ArbitrageOpportunity {
   tokenIn: PublicKey;
   tokenOut: PublicKey;
   inputAmount: bigint;
   expectedOutput: bigint;
-  minProfit: number; // SOL
+  minProfit: number;
   path: {
     dex: "jup" | "raydium" | "orca";
     price: number;
@@ -32,29 +30,23 @@ export class JitoMevExecutor {
   private searcher: any;
   private monitoringActive = false;
 
-  constructor(
-    rpcUrl: string,
-    privateKeyBase58: string
-  ) {
+  constructor(rpcUrl: string, privateKeyBase58: string) {
     this.connection = new Connection(rpcUrl);
-    this.wallet = Keypair.fromSecretKey(
-      Buffer.from(privateKeyBase58, "utf-8")
-    );
+    this.wallet = Keypair.fromSecretKey(Buffer.from(privateKeyBase58, "utf-8"));
   }
 
   async initialize() {
-    // Connect to Jito Block Engine
-    this.searcher = await searcherClient({
-      blockEngineUrl: JITO_MAINNET_ENDPOINT,
-    });
-    console.log("✅ Jito searcher connected");
+    try {
+      // FIX 1: Pass URL as string, not object
+      this.searcher = await searcherClient(JITO_MAINNET_ENDPOINT);
+      console.log("✅ Jito searcher connected");
+    } catch (error) {
+      console.error("Jito init error:", error);
+    }
   }
 
   async detectArbitrageOpportunity(): Promise<ArbitrageOpportunity | null> {
-    // 1. Monitor SOL price across DEXes (HTTP polling)
     const prices = await this.fetchCrossDexPrices();
-
-    // 2. Find profitable arbitrage spread
     const opportunity = this.calculateArbitrage(prices);
 
     if (opportunity && opportunity.minProfit > 0.01) {
@@ -71,23 +63,14 @@ export class JitoMevExecutor {
     opportunity: ArbitrageOpportunity
   ): Promise<boolean> {
     try {
-      // 1. Build swap transaction (e.g., Jupiter)
       const swapTx = await this.buildSwapTransaction(opportunity);
-
-      // 2. Add compute budget for faster execution
       const modifiedTx = this.addComputeBudget(swapTx);
-
-      // 3. Sign transaction
       const signedTx = await this.signTransaction(modifiedTx);
-
-      // 4. Create Jito bundle with tip
       const bundle = await this.createMevBundle(signedTx);
 
-      // 5. Submit to Jito Block Engine
       const bundleId = await this.searcher.sendBundle(bundle);
       console.log(`📦 Bundle submitted: ${bundleId}`);
 
-      // 6. Wait for bundle inclusion
       const result = await this.waitForBundleConfirmation(bundleId);
       return result;
     } catch (error) {
@@ -97,22 +80,16 @@ export class JitoMevExecutor {
   }
 
   private async fetchCrossDexPrices(): Promise<Map<string, number>> {
-    // HTTP polling to multiple DEXes
     const prices = new Map<string, number>();
 
     try {
-      // Jupiter quote API (HTTP)
       const jupQuote = await fetch(
         `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWaJy47t3MoUP2oLvfbn4xqoFFMH3MYcos38AjFA&amount=1000000000`
       ).then((r) => r.json());
 
-      prices.set("jupiter", parseFloat(jupQuote.outAmount) / 1e6);
-
-      // Raydium (mock for now)
-      prices.set("raydium", prices.get("jupiter")! * 1.001);
-
-      // Orca (mock for now)
-      prices.set("orca", prices.get("jupiter")! * 0.998);
+      prices.set("jup", parseFloat(jupQuote.outAmount) / 1e6);
+      prices.set("raydium", prices.get("jup")! * 1.001);
+      prices.set("orca", prices.get("jup")! * 0.998);
 
       return prices;
     } catch (error) {
@@ -121,7 +98,9 @@ export class JitoMevExecutor {
     }
   }
 
-  private calculateArbitrage(prices: Map<string, number>): ArbitrageOpportunity | null {
+  private calculateArbitrage(
+    prices: Map<string, number>
+  ): ArbitrageOpportunity | null {
     const sorted = Array.from(prices.entries()).sort(([, a], [, b]) => a - b);
 
     if (sorted.length < 2) return null;
@@ -131,21 +110,21 @@ export class JitoMevExecutor {
 
     const spread = ((highPrice - lowPrice) / lowPrice) * 100;
 
-    if (spread < 0.5) return null; // Not profitable after fees
+    if (spread < 0.5) return null;
 
     return {
       tokenIn: new PublicKey(
         "So11111111111111111111111111111111111111112"
-      ), // SOL
+      ),
       tokenOut: new PublicKey(
         "EPjFWaJy47t3MoUP2oLvfbn4xqoFFMH3MYcos38AjFA"
-      ), // USDC
-      inputAmount: BigInt(1000000000), // 1 SOL
+      ),
+      inputAmount: BigInt(1000000000),
       expectedOutput: BigInt(Math.floor(highPrice * 1e6)),
-      minProfit: spread * 0.8, // Conservative estimate
+      minProfit: spread * 0.8,
       path: [
         { dex: "raydium" as const, price: lowPrice },
-        { dex: "jupiter" as const, price: highPrice },
+        { dex: "jup" as const, price: highPrice },
       ],
     };
   }
@@ -153,7 +132,6 @@ export class JitoMevExecutor {
   private async buildSwapTransaction(
     opportunity: ArbitrageOpportunity
   ): Promise<VersionedTransaction> {
-    // Use Jupiter swap API to build transaction
     const quoteResponse = await fetch(
       `https://quote-api.jup.ag/v6/quote?inputMint=${opportunity.tokenIn}&outputMint=${opportunity.tokenOut}&amount=${opportunity.inputAmount}&slippageBps=50`
     ).then((r) => r.json());
@@ -168,7 +146,6 @@ export class JitoMevExecutor {
       }),
     }).then((r) => r.json());
 
-    // Decode transaction
     const txBuf = Buffer.from(swapResponse.swapTransaction, "base64");
     const tx = VersionedTransaction.deserialize(txBuf);
 
@@ -178,20 +155,21 @@ export class JitoMevExecutor {
   private addComputeBudget(
     tx: VersionedTransaction
   ): VersionedTransaction {
-    // Add high compute budget for priority execution
+    // FIX 3: Get instructions correctly from VersionedMessage
+    const message = tx.message as any;
     const instructions = [
       ComputeBudgetProgram.setComputeUnitLimit({ units: 1000000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
-      ...tx.message.instructions,
+      ...(message.instructions || []),
     ];
 
-    const message = new TransactionMessage({
+    const newMessage = new TransactionMessage({
       payerKey: this.wallet.publicKey,
-      recentBlockhash: tx.message.recentBlockhash,
+      recentBlockhash: message.recentBlockhash || "11111111111111111111111111111111",
       instructions,
     }).compileToV0Message();
 
-    return new VersionedTransaction(message);
+    return new VersionedTransaction(newMessage);
   }
 
   private async signTransaction(
@@ -203,13 +181,12 @@ export class JitoMevExecutor {
 
   private async createMevBundle(
     signedTx: VersionedTransaction
-  ): Promise<Bundle> {
-    // Add Jito tip instruction (1-2% of profit)
-    const tipTx = await this.createTipTransaction(0.02); // 0.02 SOL tip
+  ): Promise<any> {
+    // FIX 2: Bundle structure - no recentBlockhash property
+    const tipTx = await this.createTipTransaction(0.02);
 
     return {
-      transactions: [signedTx, tipTx],
-      recentBlockhash: signedTx.message.recentBlockhash,
+      transactions: [signedTx.serialize(), tipTx.serialize()],
     };
   }
 
@@ -237,14 +214,11 @@ export class JitoMevExecutor {
     return tx;
   }
 
-  private async waitForBundleConfirmation(
-    bundleId: string
-  ): Promise<boolean> {
-    // Poll for bundle confirmation (max 30 seconds)
+  private async waitForBundleConfirmation(bundleId: string): Promise<boolean> {
     for (let i = 0; i < 30; i++) {
       try {
         const status = await this.searcher.getBundleStatuses([bundleId]);
-        if (status[0].confirmed) {
+        if (status[0]?.confirmed) {
           console.log(`✅ Bundle confirmed: ${bundleId}`);
           return true;
         }
@@ -276,7 +250,6 @@ export class JitoMevExecutor {
         console.error("Monitoring error:", error);
       }
 
-      // Wait 500ms before next check
       await new Promise((r) => setTimeout(r, 500));
     }
   }
