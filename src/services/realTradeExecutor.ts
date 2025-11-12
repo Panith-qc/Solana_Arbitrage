@@ -14,6 +14,7 @@ import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { multiAPIService } from './multiAPIQuoteService';
 import { jupiterUltraService } from './jupiterUltraService';
 import { priorityFeeOptimizer } from './priorityFeeOptimizer';
+import { jitoBundleService } from './jitoBundleService';
 
 const jupiterUltra = jupiterUltraService;
 
