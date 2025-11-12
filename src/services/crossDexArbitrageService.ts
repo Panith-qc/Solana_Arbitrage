@@ -1,5 +1,6 @@
 import { enhancedCorsProxy } from './enhancedCorsProxy';
 import { microArbitrageService } from './microArbitrageService';
+import { realCrossDexArbitrage } from './realCrossDexArbitrage';
 
 export interface ArbitrageOpportunity {
   id: string;
@@ -29,25 +30,42 @@ class CrossDexArbitrageService {
       return;
     }
 
-    console.log('🔄 Starting arbitrage scanning...');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('🔄 crossDexArbitrageService: NOW USING REAL SCANNER');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('⚠️ This service is deprecated - redirecting to realCrossDexArbitrage');
+    console.log('✅ Real Jupiter API calls will be used for price comparison');
+    console.log('═══════════════════════════════════════════════════════════');
+    
     this.isScanning = true;
 
-    const scanForArbitrageOpportunities = async () => {
-      try {
-        const opportunities = await this.scanForArbitrageOpportunities();
-        if (this.callback && opportunities.length > 0) {
-          this.callback(opportunities);
-        }
-      } catch (error) {
-        console.error('❌ Arbitrage scan failed:', error);
-      }
-    };
+    // Use REAL cross-DEX arbitrage scanner instead of mock
+    await realCrossDexArbitrage.startScanning(
+      5.0, // 5 SOL default capital
+      0.3, // 0.3% minimum profit
+      (opportunities) => {
+        // Convert to old format for backward compatibility
+        const legacyOpps: ArbitrageOpportunity[] = opportunities.map(opp => ({
+          id: opp.id,
+          pair: opp.pair,
+          profit: opp.profitPercent / 100,
+          volume: 1000,
+          type: 'ARBITRAGE',
+          exchange1: opp.buyDex,
+          exchange2: opp.sellDex,
+          inputMint: 'So11111111111111111111111111111111111111112',
+          outputMint: opp.tokenMint,
+          capitalRequired: opp.inputAmount / 1_000_000_000
+        }));
 
-    // Initial scan
-    await scanForArbitrageOpportunities();
-    
-    // Set up interval scanning
-    this.scanInterval = setInterval(scanForArbitrageOpportunities, 10000); // 10 seconds
+        if (this.callback && legacyOpps.length > 0) {
+          console.log(`✅ Found ${legacyOpps.length} REAL cross-DEX opportunities`);
+          this.callback(legacyOpps);
+        }
+      }
+    );
+
+    console.log('✅ REAL cross-DEX arbitrage scanner started');
   }
 
   stopArbitrageScanning(): void {
@@ -58,6 +76,9 @@ class CrossDexArbitrageService {
       clearInterval(this.scanInterval);
       this.scanInterval = null;
     }
+
+    // Stop the REAL scanner too
+    realCrossDexArbitrage.stopScanning();
   }
 
   // Add the missing stopScanning method
@@ -66,24 +87,14 @@ class CrossDexArbitrageService {
   }
 
   private async scanForArbitrageOpportunities(): Promise<ArbitrageOpportunity[]> {
-    const opportunities: ArbitrageOpportunity[] = [];
+    // NOW USES REAL SCANNER - No more mock data!
+    // This method is deprecated - use realCrossDexArbitrage instead
     
-    // Mock opportunities for now
-    const mockOpportunity: ArbitrageOpportunity = {
-      id: `arb_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-      pair: 'SOL/USDC',
-      profit: 0.025,
-      volume: 1000,
-      type: 'ARBITRAGE',
-      exchange1: 'Jupiter',
-      exchange2: 'Raydium',
-      inputMint: 'So11111111111111111111111111111111111111112',
-      outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-      capitalRequired: 100
-    };
-
-    opportunities.push(mockOpportunity);
-    return opportunities;
+    console.log('⚠️ crossDexArbitrageService.scanForArbitrageOpportunities is deprecated');
+    console.log('   Use realCrossDexArbitrage.startScanning() for REAL opportunities');
+    
+    // Return empty array - this service is replaced by realCrossDexArbitrage
+    return [];
   }
 
   async executeArbitrage(opportunityId: string): Promise<boolean> {
@@ -111,3 +122,5 @@ class CrossDexArbitrageService {
 }
 
 export const crossDexArbitrageService = new CrossDexArbitrageService();
+
+console.log('✅ Cross-DEX Arbitrage Service loaded - Now uses realCrossDexArbitrage (no more mock data)');
