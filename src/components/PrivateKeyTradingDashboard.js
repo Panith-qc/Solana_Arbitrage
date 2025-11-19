@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Activity, CheckCircle, XCircle, AlertTriangle, Target, Shield, Clock, Settings, Key, Eye, EyeOff, TrendingUp, Trash2 } from 'lucide-react';
 import { privateKeyWallet } from '../services/privateKeyWallet';
+import { tokenCleanupService } from '../services/tokenCleanupService';
 import { fastMEVEngine } from '../services/fastMEVEngine';
 const PrivateKeyTradingDashboard = () => {
     // State management
@@ -177,9 +178,8 @@ const PrivateKeyTradingDashboard = () => {
         setIsScanning(true);
         const scanForOpportunities = async () => {
             try {
-                // PASS ALL PARAMETERS FROM UI (NO HARDCODING)
-                const newOpportunities = await fastMEVEngine.scanForMEVOpportunities(autoTradeSettings.maxCapitalSol, autoTradeSettings.gasEstimateSol, autoTradeSettings.tradeSizeSol, autoTradeSettings.maxSlippagePercent, autoTradeSettings.priorityFeeLamports / 1e9 // Convert to SOL
-                );
+                // Scan for opportunities using fastMEVEngine
+                const newOpportunities = await fastMEVEngine.scanForMEVOpportunities();
                 if (newOpportunities.length > 0) {
                     setOpportunities(prev => {
                         const combined = [...newOpportunities, ...prev];

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 
 import { privateKeyWallet, PrivateKeyWalletState } from '../services/privateKeyWallet';
+import { tokenCleanupService } from '../services/tokenCleanupService';
 import { fastMEVEngine, MEVOpportunity, TradeResult } from '../services/fastMEVEngine';
 
 interface AutoTradeSettings {
@@ -241,14 +242,8 @@ const PrivateKeyTradingDashboard: React.FC = () => {
     
     const scanForOpportunities = async () => {
       try {
-        // PASS ALL PARAMETERS FROM UI (NO HARDCODING)
-        const newOpportunities = await fastMEVEngine.scanForMEVOpportunities(
-          autoTradeSettings.maxCapitalSol,
-          autoTradeSettings.gasEstimateSol,
-          autoTradeSettings.tradeSizeSol,
-          autoTradeSettings.maxSlippagePercent,
-          autoTradeSettings.priorityFeeLamports / 1e9 // Convert to SOL
-        );
+        // Scan for opportunities using fastMEVEngine
+        const newOpportunities = await fastMEVEngine.scanForMEVOpportunities();
         
         if (newOpportunities.length > 0) {
           setOpportunities(prev => {

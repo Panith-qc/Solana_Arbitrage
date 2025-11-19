@@ -102,12 +102,7 @@ export default function AutoTradingSetup() {
                 try {
                     console.log('🔍 Scanning for MEV opportunities...');
                     // Scan for opportunities using fastMEVEngine
-                    const detectedOpportunities = await fastMEVEngine.scanForMEVOpportunities(config.calculatedSettings.maxPositionSol, // maxCapitalSol
-                    0.003, // gasEstimateSol
-                    config.calculatedSettings.maxPositionSol * 0.5, // baseAmountSol
-                    config.profile.slippageBps / 100, // maxSlippagePercent
-                    config.profile.priorityFeeLamports / 1e9 // priorityFeeSol
-                    );
+                    const detectedOpportunities = await fastMEVEngine.scanForMEVOpportunities();
                     setOpportunities(detectedOpportunities);
                     if (detectedOpportunities.length > 0) {
                         console.log(`✅ Found ${detectedOpportunities.length} opportunities`);
@@ -116,7 +111,7 @@ export default function AutoTradingSetup() {
                             if (opp.netProfitUsd >= config.profile.minProfitUsd) {
                                 console.log(`⚡ Auto-executing: ${opp.pair} for $${opp.netProfitUsd.toFixed(4)} profit`);
                                 try {
-                                    const result = await fastMEVEngine.executeArbitrage(opp, keypair);
+                                    const result = await fastMEVEngine.executeArbitrage(opp, config.profile.priorityFeeLamports / 1e9);
                                     if (result.success) {
                                         console.log(`✅ Trade successful! Profit: $${result.actualProfitUsd?.toFixed(4)}`);
                                         setTotalProfit(prev => prev + (result.actualProfitUsd || 0));

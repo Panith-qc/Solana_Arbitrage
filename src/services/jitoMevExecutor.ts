@@ -6,8 +6,15 @@ import {
   TransactionMessage,
   ComputeBudgetProgram,
 } from "@solana/web3.js";
-import { searcherClient } from "jito-ts/dist/sdk/block-engine/searcher";
-import { Bundle } from "jito-ts/dist/sdk/block-engine/types";
+
+// NOTE: jito-ts package is optional and not installed by default
+// Uncomment these imports if you have installed jito-ts:
+// import { searcherClient } from "jito-ts/dist/sdk/block-engine/searcher";
+// import { Bundle } from "jito-ts/dist/sdk/block-engine/types";
+
+// Fallback type definitions for when jito-ts is not installed
+type SearcherClient = any;
+type Bundle = any;
 
 const JITO_MAINNET_ENDPOINT = "https://mainnet.block-engine.jito.wtf";
 const JITO_TIP_ACCOUNT = "96gYZvHQMFtzLrWH2SE9AX2MpUmwzxXkXrvnUao5r7S6";
@@ -37,9 +44,12 @@ export class JitoMevExecutor {
 
   async initialize() {
     try {
-      // FIX 1: Pass URL as string, not object
-      this.searcher = await searcherClient(JITO_MAINNET_ENDPOINT);
-      console.log("✅ Jito searcher connected");
+      // NOTE: This requires jito-ts package to be installed
+      // If jito-ts is not available, this feature will be disabled
+      console.warn("⚠️ Jito MEV Executor requires jito-ts package (not installed)");
+      // Uncomment when jito-ts is installed:
+      // this.searcher = await searcherClient(JITO_MAINNET_ENDPOINT);
+      // console.log("✅ Jito searcher connected");
     } catch (error) {
       console.error("Jito init error:", error);
     }

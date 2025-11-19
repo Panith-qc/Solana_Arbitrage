@@ -1,4 +1,5 @@
 import { strategyEngine, StrategyOpportunity } from '@/services/StrategyEngine';
+import { StrategyResult } from '@/types/index';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -121,8 +122,8 @@ const ProductionTradingDashboard: React.FC = () => {
         console.log('🚀 INITIALIZING PRODUCTION TRADING DASHBOARD WITH STRATEGY ENGINE...');
         console.log('🔗 WALLET FORCE CONNECTED FOR TESTING - 10 SOL AVAILABLE');
 
-        // Calculate initial balance using price service
-        const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
+        // Calculate initial balance using price service (await async call)
+        const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
         const totalUsd = balanceInfo.sol * solPrice;
         
         setBalanceInfo(prev => ({
@@ -130,9 +131,9 @@ const ProductionTradingDashboard: React.FC = () => {
           totalUsd
         }));
 
-        // Initialize strategy engine
+        // Initialize strategy engine (getActiveStrategies returns array, not Set)
         const strategies = strategyEngine.getActiveStrategies();
-        setActiveStrategies(strategies.size);
+        setActiveStrategies(strategies.length);
 
         setIsInitialized(true);
         console.log('✅ PRODUCTION DASHBOARD INITIALIZED WITH ALL STRATEGIES LOADED');
@@ -161,8 +162,8 @@ const ProductionTradingDashboard: React.FC = () => {
 
   // Update balance calculations when prices change
   useEffect(() => {
-    const updateBalances = () => {
-      const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
+    const updateBalances = async () => {
+      const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
       const totalUsd = balanceInfo.sol * solPrice;
       
       setBalanceInfo(prev => ({
@@ -182,13 +183,13 @@ const ProductionTradingDashboard: React.FC = () => {
   useEffect(() => {
     const updateMetrics = () => {
       const history = strategyEngine.getExecutionHistory();
-      const successfulTrades = history.filter(h => h.success);
-      const totalProfitCalc = successfulTrades.reduce((sum, trade) => sum + (trade.profitUsd || 0), 0);
+      const successfulTrades = history.filter(h => h.status === 'completed');
+      const totalProfitCalc = successfulTrades.reduce((sum, trade) => sum + (trade.profitRealized || 0), 0);
       const successRateCalc = history.length > 0 ? (successfulTrades.length / history.length) * 100 : 0;
       
       setTotalProfit(totalProfitCalc);
       setSuccessRate(successRateCalc);
-      setTradeHistory(history);
+      setTradeHistory(history as any);
     };
 
     const interval = setInterval(updateMetrics, 5000);
@@ -196,7 +197,7 @@ const ProductionTradingDashboard: React.FC = () => {
   }, []);
 
   // Wallet connection handlers
-  const handleWalletConnect = (walletType: string, privateKey?: string) => {
+  const handleWalletConnect = async (walletType: string, privateKey?: string) => {
     console.log(`🔗 Connecting ${walletType} wallet...`);
     
     const mockPublicKey = privateKey ? 
@@ -213,7 +214,7 @@ const ProductionTradingDashboard: React.FC = () => {
     setWalletState(newWalletState);
     
     // Calculate USD value using dynamic pricing
-    const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
+    const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
     setBalanceInfo(prev => ({
       ...prev,
       sol: newWalletState.balance,
@@ -257,7 +258,7 @@ const ProductionTradingDashboard: React.FC = () => {
       const newBalance = 10.0;
       setWalletState(prev => ({ ...prev, balance: newBalance }));
       
-      const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
+      const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
       setBalanceInfo(prev => ({
         ...prev,
         sol: newBalance,
@@ -281,7 +282,7 @@ const ProductionTradingDashboard: React.FC = () => {
     try {
       await strategyEngine.startAllStrategies(
         walletState.balance,
-        (strategyOpportunities) => {
+        async (strategyOpportunities) => {
           console.log(`📊 RECEIVED ${strategyOpportunities.length} STRATEGY OPPORTUNITIES`);
           setOpportunities(strategyOpportunities);
           
@@ -351,7 +352,7 @@ const ProductionTradingDashboard: React.FC = () => {
         const actualProfit = opportunity.profitUsd * (0.8 + Math.random() * 0.3);
         
         // Update balance using dynamic pricing
-        const solPrice: number = priceService.getPriceUsd(config.tokens.SOL);
+        const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
         setBalanceInfo(prev => ({
           ...prev,
           sol: prev.sol + actualProfit / solPrice,
@@ -420,10 +421,7 @@ const ProductionTradingDashboard: React.FC = () => {
             </p>
           </div>
 
-          <WalletIntegration
-            onWalletDisconnect={handleWalletDisconnect}
-            onRefreshBalance={handleRefreshBalance}
-          />
+          <WalletIntegration />
 
           <div className="text-center">
             <Button
@@ -673,8 +671,8 @@ const ProductionTradingDashboard: React.FC = () => {
                                 {opportunity.strategyName}
                               </Badge>
                               <Badge className={`text-xs ${
-                                opportunity.riskLevel === 'LOW' || opportunity.riskLevel === 'ULTRA_LOW' ? 'bg-green-500/20 text-green-400 border-green-500/50' :
-                                opportunity.riskLevel === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' :
+                                opportunity.riskLevel === 'LOW' ? 'bg-green-500/20 text-green-400 border-green-500/50' :
+                                opportunity.riskLevel === 'MEDIUM' || opportunity.riskLevel === 'HIGH' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' :
                                 'bg-red-500/20 text-red-400 border-red-500/50'
                               }`}>
                                 {opportunity.riskLevel}
@@ -685,10 +683,10 @@ const ProductionTradingDashboard: React.FC = () => {
                                 Profit: ${(opportunity.profitUsd != null && !isNaN(opportunity.profitUsd) && typeof opportunity.profitUsd === 'number' ? opportunity.profitUsd.toFixed(6) : '0.000000')}
                               </span>
                               <span className="text-blue-400">
-                                {(opportunity.profitPercent != null && !isNaN(opportunity.profitPercent) && typeof opportunity.profitPercent === 'number' ? opportunity.profitPercent.toFixed(2) : '0.00')}%
+                                {opportunity.targetProfit != null && opportunity.recommendedCapital ? ((opportunity.targetProfit / opportunity.recommendedCapital) * 100).toFixed(2) : '0.00'}%
                               </span>
                               <span className="text-gray-400">
-                                Confidence: {((opportunity.confidence * 100) != null && !isNaN(opportunity.confidence * 100) && typeof (opportunity.confidence * 100) === 'number' ? (opportunity.confidence * 100).toFixed(0) : '0')}%
+                                Confidence: {opportunity.confidence ? ((opportunity.confidence * 100).toFixed(0)) : '0'}%
                               </span>
                               <span className="text-purple-400">
                                 Capital: {(opportunity.recommendedCapital != null && !isNaN(opportunity.recommendedCapital) && typeof opportunity.recommendedCapital === 'number' ? opportunity.recommendedCapital.toFixed(3) : '0.000')} SOL
@@ -741,32 +739,29 @@ const ProductionTradingDashboard: React.FC = () => {
                   <div key={index} className="bg-black/30 rounded-lg p-3 border border-gray-700">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
-                        {trade.success ? (
+                        {(trade as any).status === 'completed' ? (
                           <CheckCircle className="w-4 h-4 text-green-500" />
                         ) : (
                           <XCircle className="w-4 h-4 text-red-500" />
                         )}
                         <div>
                           <div className="flex items-center space-x-2">
-                            <span className="text-lg">{getStrategyIcon(trade.strategyName)}</span>
-                            <span className="text-white font-medium">{trade.strategyName}</span>
+                            <span className="text-lg">{getStrategyIcon('Strategy')}</span>
+                            <span className="text-white font-medium">{(trade as any).opportunityId || 'Strategy'}</span>
                             <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/50 text-xs">
-                              {trade.strategyName}
+                              {(trade as any).status || 'unknown'}
                             </Badge>
                           </div>
                           <div className="flex items-center space-x-4 mt-1 text-sm">
-                            {trade.profitUsd && (
+                            {(trade as any).profitRealized && (
                               <span className="text-green-400">
-                                Profit: ${(trade.profitUsd != null && !isNaN(trade.profitUsd) && typeof trade.profitUsd === 'number' ? trade.profitUsd.toFixed(6) : '0.000000')}
+                                Profit: ${((trade as any).profitRealized != null && !isNaN((trade as any).profitRealized) && typeof (trade as any).profitRealized === 'number' ? (trade as any).profitRealized.toFixed(6) : '0.000000')}
                               </span>
                             )}
                             <span className="text-gray-400">
-                              {trade.executionTimeMs}ms
+                              {new Date((trade as any).timestamp).toLocaleTimeString()}
                             </span>
                           </div>
-                          {trade.error && (
-                            <span className="text-red-400 text-sm">{trade.error}</span>
-                          )}
                         </div>
                       </div>
                       <div className="text-right">
