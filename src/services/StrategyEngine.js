@@ -51,6 +51,7 @@ class StrategyEngineImpl {
         const { multiAPIService } = await import('./multiAPIQuoteService');
         const { priceService } = await import('./priceService');
         const { getHighVolumeTokens } = await import('../config/topTokens');
+        const { tokenFilterService } = await import('./tokenFilterService');
         const opportunities = [];
         const SOL_MINT = 'So11111111111111111111111111111111111111112';
         // ═══════════════════════════════════════════════════════════════
@@ -58,7 +59,12 @@ class StrategyEngineImpl {
         // ═══════════════════════════════════════════════════════════════
         // Get top 20 liquid tokens (>$10M daily volume)
         const highVolumeTokens = getHighVolumeTokens();
-        const tokens = highVolumeTokens.slice(0, 20).map(t => ({
+        // ═══════════════════════════════════════════════════════════════
+        // IMPROVEMENT #4: SMART TOKEN FILTERING
+        // ═══════════════════════════════════════════════════════════════
+        // Pre-filter tokens by quality to save API calls
+        const filterResult = await tokenFilterService.filterTokens(highVolumeTokens.slice(0, 20));
+        const tokens = filterResult.passedTokens.map(t => ({
             mint: t.mint,
             symbol: t.symbol
         }));
