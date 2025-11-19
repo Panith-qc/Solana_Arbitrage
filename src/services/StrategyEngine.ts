@@ -58,12 +58,14 @@ class StrategyEngineImpl {
     console.log(`📊 Expanded to 20 HIGH-VOLUME tokens (was 4)`);
     console.log(`⚡ Using PARALLEL scanning (4x faster)`);
     console.log(`⏰ Using TIME-BASED intervals (smart API usage)`);
+    console.log(`🔄 Using MULTI-HOP arbitrage (2-hop + 3-hop cycles)`);
 
     // Import services for REAL market data
     const { multiAPIService } = await import('./multiAPIQuoteService');
     const { priceService } = await import('./priceService');
     const { getHighVolumeTokens } = await import('../config/topTokens');
     const { tokenFilterService } = await import('./tokenFilterService');
+    const { multiHopArbitrage } = await import('./multiHopArbitrage');
     
     const opportunities: StrategyOpportunity[] = [];
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -145,6 +147,39 @@ class StrategyEngineImpl {
     results.forEach(result => {
       if (result) opportunities.push(result);
     });
+
+    // ═══════════════════════════════════════════════════════════════
+    // IMPROVEMENT #5: MULTI-HOP ARBITRAGE
+    // ═══════════════════════════════════════════════════════════════
+    // Scan for 3-hop cycles (SOL → A → B → SOL) for bigger profits
+    try {
+      const multiHopOpps = await multiHopArbitrage.smartScan(
+        filterResult.passedTokens,
+        scanAmount / 1e9,
+        5 // Max 5 multi-hop opportunities
+      );
+
+      // Convert multi-hop opportunities to StrategyOpportunity format
+      multiHopOpps.forEach(multiHop => {
+        opportunities.push({
+          id: multiHop.id,
+          type: 'arbitrage',
+          pair: multiHop.path.join('/'),
+          targetProfit: multiHop.profitUSD,
+          riskScore: multiHop.hops === 3 ? 0.4 : 0.3,
+          riskLevel: multiHop.hops === 3 ? 'MEDIUM' : 'LOW',
+          timeToExecute: multiHop.estimatedTimeMs,
+          profitUsd: multiHop.profitUSD,
+          confidence: multiHop.confidence,
+          recommendedCapital: scanAmount / 1e9,
+          strategyName: `${multiHop.hops}-Hop Arbitrage (Real)`,
+          outputMint: multiHop.mints[1], // First intermediate token
+          executionPlan: multiHop.path
+        });
+      });
+    } catch (error) {
+      console.log('⚠️  Multi-hop scan failed, continuing with 2-hop only');
+    }
 
     this.activeStrategies = new Map(opportunities.map(o => [o.id, o]));
     
