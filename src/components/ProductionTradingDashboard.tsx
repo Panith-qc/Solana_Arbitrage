@@ -1,5 +1,4 @@
-import { strategyEngine, StrategyOpportunity } from '@/services/StrategyEngine';
-import { StrategyResult } from '@/types/index';
+import { strategyEngine, StrategyOpportunity, StrategyResult as EngineStrategyResult } from '@/services/StrategyEngine';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -68,7 +67,7 @@ const ProductionTradingDashboard: React.FC = () => {
   const [opportunities, setOpportunities] = useState<StrategyOpportunity[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [executingTradeId, setExecutingTradeId] = useState<string | null>(null);
-  const [tradeHistory, setTradeHistory] = useState<StrategyResult[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<EngineStrategyResult[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [showWalletIntegration, setShowWalletIntegration] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -123,7 +122,7 @@ const ProductionTradingDashboard: React.FC = () => {
         console.log('🔗 WALLET FORCE CONNECTED FOR TESTING - 10 SOL AVAILABLE');
 
         // Calculate initial balance using price service (await async call)
-        const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
+        const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
         const totalUsd = balanceInfo.sol * solPrice;
         
         setBalanceInfo(prev => ({
@@ -163,7 +162,7 @@ const ProductionTradingDashboard: React.FC = () => {
   // Update balance calculations when prices change
   useEffect(() => {
     const updateBalances = async () => {
-      const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
+      const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
       const totalUsd = balanceInfo.sol * solPrice;
       
       setBalanceInfo(prev => ({
@@ -190,7 +189,7 @@ const ProductionTradingDashboard: React.FC = () => {
       setTotalProfit(totalProfitCalc);
       setSuccessRate(successRateCalc);
       // Type cast needed due to StrategyResult interface mismatch
-      setTradeHistory(history as unknown as StrategyResult[]);
+      setTradeHistory(history as unknown as EngineStrategyResult[]);
     };
 
     const interval = setInterval(updateMetrics, 5000);
@@ -259,7 +258,7 @@ const ProductionTradingDashboard: React.FC = () => {
       const newBalance = 10.0;
       setWalletState(prev => ({ ...prev, balance: newBalance }));
       
-      const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
+      const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
       setBalanceInfo(prev => ({
         ...prev,
         sol: newBalance,
@@ -283,7 +282,7 @@ const ProductionTradingDashboard: React.FC = () => {
     try {
       await strategyEngine.startAllStrategies(
         walletState.balance,
-        async (strategyOpportunities) => {
+        async (strategyOpportunities: StrategyOpportunity[]) => {
           console.log(`📊 RECEIVED ${strategyOpportunities.length} STRATEGY OPPORTUNITIES`);
           setOpportunities(strategyOpportunities);
           
@@ -353,7 +352,7 @@ const ProductionTradingDashboard: React.FC = () => {
         const actualProfit = opportunity.profitUsd * (0.8 + Math.random() * 0.3);
         
         // Update balance using dynamic pricing
-        const solPrice: number = await priceService.getPriceUsd(config.tokens.SOL);
+        const solPrice = await priceService.getPriceUsd(config.tokens.SOL);
         setBalanceInfo(prev => ({
           ...prev,
           sol: prev.sol + actualProfit / solPrice,
@@ -771,15 +770,16 @@ const ProductionTradingDashboard: React.FC = () => {
                         <Badge 
                           variant="outline" 
                           className={
-                            trade.success ? 'border-green-500 text-green-400' :
-                            'border-red-500 text-red-400'
+                            trade.status === 'completed' ? 'border-green-500 text-green-400' :
+                            trade.status === 'failed' ? 'border-red-500 text-red-400' :
+                            'border-yellow-500 text-yellow-400'
                           }
                         >
-                          {trade.success ? 'SUCCESS' : 'FAILED'}
+                          {trade.status.toUpperCase()}
                         </Badge>
-                        {trade.txHash && (
+                        {trade.opportunityId && (
                           <div className="text-xs text-gray-400 mt-1">
-                            {trade.txHash.slice(0, 12)}...
+                            {trade.opportunityId.slice(0, 12)}...
                           </div>
                         )}
                       </div>

@@ -4,12 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { tokenCleanupService } from '@/services/tokenCleanupService';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Activity, CheckCircle, XCircle, AlertTriangle, Target, Shield, Clock, Settings, Key, Eye, EyeOff, TrendingUp, Trash2 } from 'lucide-react';
 import { privateKeyWallet } from '../services/privateKeyWallet';
-import { tokenCleanupService } from '../services/tokenCleanupService';
 import { fastMEVEngine } from '../services/fastMEVEngine';
 const PrivateKeyTradingDashboard = () => {
     // State management
