@@ -282,6 +282,8 @@ export const RATE_LIMIT_CONFIGS = {
   },
 };
 
-// Export singleton instances WITH ACTUAL PAID TIERS
-export const jupiterRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.JUPITER_ULTRA);
+// Export singleton instances - FREE TIER (60 req/min)
+// ⚠️ IMPORTANT: Using JUPITER_LITE for free tier (60 req/min)
+// Change to JUPITER_ULTRA if you have paid tier (1200 req/min)
+export const jupiterRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.JUPITER_LITE);
 export const heliusRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.HELIUS_PAID);
