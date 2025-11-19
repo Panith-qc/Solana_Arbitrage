@@ -1,0 +1,57 @@
+# Environment variables - NEVER commit these!
+.env
+.env.local
+.env.production
+.env.development
+.env.test
+
+# Dependencies
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Private keys and wallets - NEVER commit!
+*.json
+!package.json
+!tsconfig*.json
+!components.json
+!template_config.json
+!production-config.json
+wallet*.json
+keypair*.json
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Debug
+.vscode/launch.json

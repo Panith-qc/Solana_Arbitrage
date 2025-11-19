@@ -1,4 +1,55 @@
 import { Connection } from '@solana/web3.js';
-export interface MEVOpportunity { id: string; pair: string; type: string; riskLevel: 'ULTRA_LOW' | 'LOW' | 'MEDIUM'; netProfitUsd: number; profitUsd: number; profitPercent: number; confidence: number; capitalRequired: number; gasFeeSol: number; entryPrice: number; exitPrice: number; expectedProfit: number; }
-export interface TradeResult { success: boolean; netProfitUSD: number; txSignatures: string[]; txHash?: string; actualProfitUsd?: number; executionTimeMs?: number; forwardTxHash?: string; reverseTxHash?: string; error?: string; }
-export const fastMEVEngine = { async scanForMEVOpportunities(): Promise<MEVOpportunity[]> { return [{ id: 'arb-001', pair: 'SOL/USDC', type: 'arb', riskLevel: 'ULTRA_LOW', netProfitUsd: 125.50, profitUsd: 125.50, profitPercent: 2.35, confidence: 0.92, capitalRequired: 5.0, gasFeeSol: 0.00025, entryPrice: 198.5, exitPrice: 203.1, expectedProfit: 125.50 }]; }, async executeArbitrage(opportunity?: MEVOpportunity, priorityFeeSol?: number): Promise<TradeResult> { return { success: true, netProfitUSD: opportunity?.expectedProfit || 0, txSignatures: ['tx-sig'], txHash: 'tx-hash-placeholder', actualProfitUsd: opportunity?.expectedProfit, executionTimeMs: 100 }; } };
+
+// ⚠️ DISABLED: This was a mock service returning fake data
+// For REAL trading, use realTradeExecutor.ts instead
+
+export interface MEVOpportunity { 
+  id: string; 
+  pair: string; 
+  type: string; 
+  riskLevel: 'ULTRA_LOW' | 'LOW' | 'MEDIUM'; 
+  netProfitUsd: number; 
+  profitUsd: number; 
+  profitPercent: number; 
+  confidence: number; 
+  capitalRequired: number; 
+  gasFeeSol: number; 
+  entryPrice: number; 
+  exitPrice: number; 
+  expectedProfit: number; 
+}
+
+export interface TradeResult { 
+  success: boolean; 
+  netProfitUSD: number; 
+  txSignatures: string[]; 
+  txHash?: string; 
+  actualProfitUsd?: number; 
+  executionTimeMs?: number; 
+  forwardTxHash?: string; 
+  reverseTxHash?: string; 
+  error?: string; 
+}
+
+// ⚠️ MOCK SERVICE - DISABLED FOR REAL TRADING
+// This service returned fake/hardcoded opportunities
+// Use realTradeExecutor for actual Solana trades
+export const fastMEVEngine = { 
+  async scanForMEVOpportunities(): Promise<MEVOpportunity[]> { 
+    console.warn('⚠️ fastMEVEngine is DISABLED - this was a mock service');
+    console.warn('⚠️ For REAL trading, opportunity detection should use live market data');
+    // Return empty array instead of fake data
+    return []; 
+  }, 
+  
+  async executeArbitrage(opportunity?: MEVOpportunity, priorityFeeSol?: number): Promise<TradeResult> { 
+    console.error('❌ fastMEVEngine.executeArbitrage is DISABLED - this was a mock');
+    console.error('❌ Use realTradeExecutor.executeArbitrageCycle() for REAL trades');
+    return { 
+      success: false, 
+      netProfitUSD: 0, 
+      txSignatures: [], 
+      error: 'Mock service disabled - use realTradeExecutor for real trading'
+    }; 
+  } 
+};
