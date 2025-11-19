@@ -155,7 +155,7 @@ const PrivateKeyTradingDashboard = () => {
                 }, 3000);
             }
             else {
-                setCleanupStatus(`⚠️ Partial cleanup: ${result.tokensCleaned} converted, ${result.errors.length} errors`);
+                setCleanupStatus(`⚠️ Partial cleanup: ${result.tokensCleaned} converted, ${result.errors?.length || 0} errors`);
             }
         }
         catch (error) {

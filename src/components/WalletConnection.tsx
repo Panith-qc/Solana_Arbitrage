@@ -80,7 +80,8 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
         setError('Failed to connect wallet to Helius Devnet');
       }
     } catch (err) {
-      setError(err.message || 'Connection to Helius Devnet failed');
+      const errorMessage = err instanceof Error ? err.message : 'Connection to Helius Devnet failed';
+      setError(errorMessage);
     } finally {
       setIsConnecting(false);
     }

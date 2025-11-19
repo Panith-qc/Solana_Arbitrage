@@ -435,20 +435,20 @@ const TokenCleanupDashboard: React.FC = () => {
                 <div>
                   <div className="text-sm text-gray-600">Value Recovered</div>
                   <div className="font-medium text-green-600">
-                    ${recoveryResult.totalValueRecovered.toFixed(4)}
+                    ${(recoveryResult.totalValueRecovered ?? 0).toFixed(4)}
                   </div>
                 </div>
                 <div>
                   <div className="text-sm text-gray-600">Transactions</div>
-                  <div className="font-medium">{recoveryResult.transactions.length}</div>
+                  <div className="font-medium">{recoveryResult.transactions?.length ?? 0}</div>
                 </div>
               </div>
 
-              {recoveryResult.transactions.length > 0 && (
+              {(recoveryResult.transactions?.length ?? 0) > 0 && (
                 <div>
                   <div className="text-sm font-medium mb-2">Transaction Hashes:</div>
                   <div className="space-y-1">
-                    {recoveryResult.transactions.map((tx, index) => (
+                    {(recoveryResult.transactions ?? []).map((tx, index) => (
                       <a
                         key={index}
                         href={`https://solscan.io/tx/${tx}`}
@@ -463,11 +463,11 @@ const TokenCleanupDashboard: React.FC = () => {
                 </div>
               )}
 
-              {recoveryResult.errors.length > 0 && (
+              {(recoveryResult.errors?.length ?? 0) > 0 && (
                 <div>
                   <div className="text-sm font-medium mb-2 text-red-600">Errors:</div>
                   <div className="space-y-1">
-                    {recoveryResult.errors.map((error, index) => (
+                    {(recoveryResult.errors ?? []).map((error, index) => (
                       <div key={index} className="text-xs text-red-600">
                         {error}
                       </div>

@@ -262,7 +262,8 @@ class ProductionWalletManager {
           transaction = Transaction.from(transactionBuffer);
           console.log('📦 Deserialized as REAL Legacy Transaction');
         } catch (legacyError) {
-          throw new Error(`Failed to deserialize REAL transaction: ${legacyError.message}`);
+          const errorMsg = legacyError instanceof Error ? legacyError.message : 'Unknown error';
+          throw new Error(`Failed to deserialize REAL transaction: ${errorMsg}`);
         }
       }
 
@@ -375,7 +376,8 @@ class ProductionWalletManager {
       console.error('❌ Failed to send REAL transaction to blockchain:', error);
       
       // Try backup RPC if primary fails and this is the first attempt
-      if (this.currentRpcIndex === 0 && !error.message?.includes('backup')) {
+      const errorMsg = error instanceof Error ? error.message : '';
+      if (this.currentRpcIndex === 0 && !errorMsg.includes('backup')) {
         console.log('🔄 Trying backup RPC for transaction...');
         this.switchToBackupRpc();
         throw new Error(`Primary RPC failed, switched to backup. Retry transaction. Original error: ${error instanceof Error ? error.message : 'Unknown network error'}`);

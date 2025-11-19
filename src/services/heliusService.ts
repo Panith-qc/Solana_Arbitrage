@@ -147,9 +147,10 @@ class HeliusService {
       };
     } catch (error) {
       console.error('❌ Helius Devnet connection test failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         success: false,
-        error: error.message,
+        error: errorMessage,
         network: 'devnet'
       };
     }

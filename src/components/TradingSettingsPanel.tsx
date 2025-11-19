@@ -297,7 +297,7 @@ const TradingSettingsPanel: React.FC<TradingSettingsPanelProps> = ({ onClose }) 
                     <Label className="text-white">Current Prices</Label>
                     <div className="grid grid-cols-3 gap-3">
                       {Object.entries(config.tokens).map(([symbol, mint]) => {
-                        const priceData = prices[mint];
+                        const priceData = (prices as Record<string, any>)[mint];
                         const isStale = priceData ? 
                           (Date.now() - priceData.timestamp) > config.prices.maxPriceAgeMs : 
                           true;

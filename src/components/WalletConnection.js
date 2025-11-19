@@ -57,7 +57,8 @@ export const WalletConnection = ({ showDetails = false, className = '', onWallet
             }
         }
         catch (err) {
-            setError(err.message || 'Connection to Helius Devnet failed');
+            const errorMessage = err instanceof Error ? err.message : 'Connection to Helius Devnet failed';
+            setError(errorMessage);
         }
         finally {
             setIsConnecting(false);

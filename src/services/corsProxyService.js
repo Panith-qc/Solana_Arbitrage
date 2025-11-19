@@ -112,7 +112,9 @@ class CorsProxyService {
             }
             catch (proxyError) {
                 console.error('❌ Both direct and proxy requests failed');
-                throw new Error(`Network request failed: Direct (${directError.message}), Proxy (${proxyError.message})`);
+                const directMsg = directError instanceof Error ? directError.message : 'Unknown error';
+                const proxyMsg = proxyError instanceof Error ? proxyError.message : 'Unknown error';
+                throw new Error(`Network request failed: Direct (${directMsg}), Proxy (${proxyMsg})`);
             }
         }
     }

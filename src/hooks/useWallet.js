@@ -47,10 +47,11 @@ export const useWallet = () => {
         }
         catch (error) {
             console.error('❌ Wallet connection failed:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Failed to connect wallet';
             setWalletData(prev => ({
                 ...prev,
                 isLoading: false,
-                error: error.message || 'Failed to connect wallet'
+                error: errorMessage
             }));
             return false;
         }
@@ -94,10 +95,11 @@ export const useWallet = () => {
         }
         catch (error) {
             console.error('❌ Failed to refresh wallet data:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Failed to refresh wallet data';
             setWalletData(prev => ({
                 ...prev,
                 isLoading: false,
-                error: error.message || 'Failed to refresh wallet data'
+                error: errorMessage
             }));
         }
     }, [walletState.isConnected, walletState.publicKey]);

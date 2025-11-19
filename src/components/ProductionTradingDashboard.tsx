@@ -189,7 +189,8 @@ const ProductionTradingDashboard: React.FC = () => {
       
       setTotalProfit(totalProfitCalc);
       setSuccessRate(successRateCalc);
-      setTradeHistory(history as any);
+      // Type cast needed due to StrategyResult interface mismatch
+      setTradeHistory(history as unknown as StrategyResult[]);
     };
 
     const interval = setInterval(updateMetrics, 5000);
@@ -739,7 +740,7 @@ const ProductionTradingDashboard: React.FC = () => {
                   <div key={index} className="bg-black/30 rounded-lg p-3 border border-gray-700">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
-                        {(trade as any).status === 'completed' ? (
+                        {(trade as unknown as { status: string }).status === 'completed' ? (
                           <CheckCircle className="w-4 h-4 text-green-500" />
                         ) : (
                           <XCircle className="w-4 h-4 text-red-500" />
@@ -747,19 +748,21 @@ const ProductionTradingDashboard: React.FC = () => {
                         <div>
                           <div className="flex items-center space-x-2">
                             <span className="text-lg">{getStrategyIcon('Strategy')}</span>
-                            <span className="text-white font-medium">{(trade as any).opportunityId || 'Strategy'}</span>
+                            <span className="text-white font-medium">
+                              {(trade as unknown as { opportunityId?: string }).opportunityId || 'Strategy'}
+                            </span>
                             <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/50 text-xs">
-                              {(trade as any).status || 'unknown'}
+                              {(trade as unknown as { status: string }).status || 'unknown'}
                             </Badge>
                           </div>
                           <div className="flex items-center space-x-4 mt-1 text-sm">
-                            {(trade as any).profitRealized && (
+                            {(trade as unknown as { profitRealized?: number }).profitRealized && (
                               <span className="text-green-400">
-                                Profit: ${((trade as any).profitRealized != null && !isNaN((trade as any).profitRealized) && typeof (trade as any).profitRealized === 'number' ? (trade as any).profitRealized.toFixed(6) : '0.000000')}
+                                Profit: ${((trade as unknown as { profitRealized: number }).profitRealized.toFixed(6))}
                               </span>
                             )}
                             <span className="text-gray-400">
-                              {new Date((trade as any).timestamp).toLocaleTimeString()}
+                              {new Date((trade as unknown as { timestamp: number }).timestamp).toLocaleTimeString()}
                             </span>
                           </div>
                         </div>

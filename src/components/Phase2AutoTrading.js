@@ -152,7 +152,11 @@ export default function Phase2AutoTrading() {
                             // Execute REAL trade with profitability check
                             const SOL_MINT = 'So11111111111111111111111111111111111111112';
                             const amountSOL = opp.recommendedCapital || config.calculatedSettings.maxPositionSol * 0.5;
-                            const result = await realTradeExecutor.executeArbitrageCycle(opp.outputMint, // ← tokenMint (convert to string)
+                            // Type guard: ensure outputMint exists
+                            if (!opp.outputMint) {
+                                throw new Error('Invalid opportunity: missing outputMint');
+                            }
+                            const result = await realTradeExecutor.executeArbitrageCycle(opp.outputMint, // ← tokenMint (now guaranteed string)
                             amountSOL, // ← amountSOL (correct spelling)
                             config.profile.slippageBps, // ← slippageBps
                             keypair, // ← wallet
