@@ -59,9 +59,9 @@ interface APIProvider {
 class MultiAPIQuoteService {
   private providers: APIProvider[] = [
     {
-      name: 'Jupiter V6',
+      name: 'Jupiter Ultra V1',
       type: 'rest',
-      endpoint: 'https://quote-api.jup.ag/v6/quote',
+      endpoint: 'https://lite-api.jup.ag/ultra/v1/order',
       rateLimit: 60, // 60 calls/min = 1 call/sec
       priority: 1, // Primary (fastest, best routes)
       totalCalls: 0,
@@ -279,11 +279,12 @@ class MultiAPIQuoteService {
   ): Promise<JupiterQuoteResponse> {
     const walletAddress = "34tC7Wd6URg5sbjvMJrStyH69L8Tcj3jzgNxH3EJ3fib";
     
-    const url = `https://quote-api.jup.ag/v6/quote?` +
+    const url = `https://lite-api.jup.ag/ultra/v1/order?` +
       `inputMint=${inputMint}&` +
       `outputMint=${outputMint}&` +
       `amount=${parseInt(String(amount))}&` +
       `slippageBps=${slippageBps}&` +
+      `taker=${walletAddress}&` +
       `onlyDirectRoutes=false`;
 
 

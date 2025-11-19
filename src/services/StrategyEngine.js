@@ -178,11 +178,18 @@ class StrategyEngineImpl {
         }
         // Schedule next scan with time-based interval
         if (this.isRunning) {
+            console.log(`⏰ Next scan scheduled in ${(nextInterval / 1000).toFixed(1)}s...`);
             setTimeout(() => {
                 if (this.isRunning) {
+                    console.log('\n🔄 ═══════════════════════════════════════════════════════');
+                    console.log('🔄 STARTING NEXT SCAN CYCLE');
+                    console.log('🔄 ═══════════════════════════════════════════════════════\n');
                     this.startAllStrategies(maxCapital, callback);
                 }
             }, nextInterval);
+        }
+        else {
+            console.log('⏹️  Scanning stopped - not scheduling next scan');
         }
         this.lastScanTime = Date.now();
     }
