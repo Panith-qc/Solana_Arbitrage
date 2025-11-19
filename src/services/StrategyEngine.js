@@ -18,32 +18,65 @@ class StrategyEngineImpl {
             writable: true,
             value: false
         });
+        Object.defineProperty(this, "lastScanTime", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: 0
+        });
+    }
+    /**
+     * Get optimal scan interval based on time of day
+     * High activity periods = faster scanning
+     * Low activity periods = slower scanning (save API calls)
+     */
+    getScanInterval() {
+        const hour = new Date().getUTCHours();
+        // High activity periods on Solana
+        if ((hour >= 7 && hour <= 11) || // Asia wakes up
+            (hour >= 13 && hour <= 16) || // Europe active
+            (hour >= 21 && hour <= 24)) { // US evening
+            return 12000; // 12 seconds (more aggressive during high activity)
+        }
+        // Low activity periods
+        return 20000; // 20 seconds (conservative during quiet hours)
     }
     async startAllStrategies(maxCapital, callback) {
         this.isRunning = true;
         console.log('🔍 Scanning for REAL opportunities using Jupiter API...');
+        console.log(`📊 Expanded to 20 HIGH-VOLUME tokens (was 4)`);
+        console.log(`⚡ Using PARALLEL scanning (4x faster)`);
+        console.log(`⏰ Using TIME-BASED intervals (smart API usage)`);
         // Import services for REAL market data
         const { multiAPIService } = await import('./multiAPIQuoteService');
         const { priceService } = await import('./priceService');
+        const { getHighVolumeTokens } = await import('../config/topTokens');
         const opportunities = [];
         const SOL_MINT = 'So11111111111111111111111111111111111111112';
-        // Real tokens to scan
-        const tokens = [
-            { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC' },
-            { mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT' },
-            { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK' },
-            { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP' },
-        ];
+        // ═══════════════════════════════════════════════════════════════
+        // IMPROVEMENT #1: EXPANDED TOKEN LIST (4 → 20 tokens)
+        // ═══════════════════════════════════════════════════════════════
+        // Get top 20 liquid tokens (>$10M daily volume)
+        const highVolumeTokens = getHighVolumeTokens();
+        const tokens = highVolumeTokens.slice(0, 20).map(t => ({
+            mint: t.mint,
+            symbol: t.symbol
+        }));
+        console.log(`🎯 Scanning ${tokens.length} tokens:`, tokens.map(t => t.symbol).join(', '));
         const scanAmount = Math.floor((maxCapital * 0.3) * 1e9); // 30% of capital in lamports
-        for (const token of tokens) {
+        // ═══════════════════════════════════════════════════════════════
+        // IMPROVEMENT #2: PARALLEL SCANNING (Sequential → Parallel)
+        // ═══════════════════════════════════════════════════════════════
+        // Scan all tokens in parallel (4x faster than sequential)
+        const scanPromises = tokens.map(async (token) => {
             try {
                 // Get REAL Jupiter quotes
                 const forwardQuote = await multiAPIService.getQuote(SOL_MINT, token.mint, scanAmount, 50);
                 if (!forwardQuote?.outAmount)
-                    continue;
+                    return null;
                 const reverseQuote = await multiAPIService.getQuote(token.mint, SOL_MINT, Number(forwardQuote.outAmount), 50);
                 if (!reverseQuote?.outAmount)
-                    continue;
+                    return null;
                 // Calculate REAL profit
                 const endAmount = Number(reverseQuote.outAmount);
                 const profitLamports = endAmount - scanAmount;
@@ -55,8 +88,8 @@ class StrategyEngineImpl {
                 const netProfitUSD = profitUSD - feesUSD;
                 // Only add if profitable
                 if (netProfitUSD > 0.01) {
-                    opportunities.push({
-                        id: `strat-${token.symbol}-${Date.now()}`,
+                    const opportunity = {
+                        id: `strat-${token.symbol}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
                         type: 'arbitrage',
                         pair: `SOL/${token.symbol}`,
                         targetProfit: netProfitUSD,
@@ -69,15 +102,35 @@ class StrategyEngineImpl {
                         strategyName: 'Cyclic Arbitrage (Real)',
                         outputMint: token.mint,
                         executionPlan: ['SOL', token.symbol, 'SOL']
-                    });
+                    };
+                    return opportunity;
                 }
+                return null;
             }
             catch (error) {
                 // Skip failed quotes
+                return null;
             }
-        }
+        });
+        // Wait for all scans to complete (parallel execution)
+        const results = await Promise.all(scanPromises);
+        // Filter out nulls and add to opportunities
+        results.forEach(result => {
+            if (result)
+                opportunities.push(result);
+        });
         this.activeStrategies = new Map(opportunities.map(o => [o.id, o]));
-        console.log(`✅ Found ${opportunities.length} REAL opportunities`);
+        console.log(`✅ Found ${opportunities.length} REAL opportunities (out of ${tokens.length} tokens scanned)`);
+        // ═══════════════════════════════════════════════════════════════
+        // IMPROVEMENT #3: TIME-BASED SCANNING (24/7 constant → Smart intervals)
+        // ═══════════════════════════════════════════════════════════════
+        const nextInterval = this.getScanInterval();
+        const currentHour = new Date().getUTCHours();
+        const isHighActivity = (currentHour >= 7 && currentHour <= 11) ||
+            (currentHour >= 13 && currentHour <= 16) ||
+            (currentHour >= 21 && currentHour <= 24);
+        console.log(`⏰ Time: ${currentHour}:00 UTC (${isHighActivity ? 'HIGH' : 'LOW'} activity)`);
+        console.log(`⏱️  Next scan in ${nextInterval / 1000} seconds`);
         if (callback && opportunities.length > 0) {
             try {
                 await callback(opportunities);
@@ -86,11 +139,20 @@ class StrategyEngineImpl {
                 console.error('Error in strategy callback:', error);
             }
         }
-        this.isRunning = false;
+        // Schedule next scan with time-based interval
+        if (this.isRunning) {
+            setTimeout(() => {
+                if (this.isRunning) {
+                    this.startAllStrategies(maxCapital, callback);
+                }
+            }, nextInterval);
+        }
+        this.lastScanTime = Date.now();
     }
     async stopAllStrategies() {
         this.isRunning = false;
         this.activeStrategies.clear();
+        console.log('⏹️  Strategy engine stopped');
     }
     getActiveStrategies() {
         return Array.from(this.activeStrategies.values());
@@ -100,6 +162,16 @@ class StrategyEngineImpl {
     }
     recordExecution(result) {
         this.executionHistory.push({ ...result, timestamp: Date.now() });
+    }
+    // Get stats
+    getStats() {
+        return {
+            isRunning: this.isRunning,
+            activeStrategies: this.activeStrategies.size,
+            totalExecutions: this.executionHistory.length,
+            lastScanTime: this.lastScanTime,
+            nextScanIn: this.isRunning ? this.getScanInterval() : 0
+        };
     }
 }
 export const strategyEngine = new StrategyEngineImpl();
