@@ -4,9 +4,10 @@ export interface StrategyOpportunity {
   pair: string;
   targetProfit: number;
   riskScore: number;
-  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'ULTRA_LOW';
   timeToExecute: number;
   profitUsd: number;
+  profitPercent?: number;
   confidence: number;
   recommendedCapital: number;
   strategyName: string;
