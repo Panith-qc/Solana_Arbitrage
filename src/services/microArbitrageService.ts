@@ -18,15 +18,16 @@ export interface ArbitrageOpportunity {
 class MicroArbitrageService {
   public async executeArbitrage(opportunity: ArbitrageOpportunity): Promise<ArbitrageResult> {
     const startTime = Date.now();
+    console.log(`🚀 Micro Arbitrage: ${opportunity.pair} - $${opportunity.profit.toFixed(6)}`);
     
-    // ⚠️ MOCK SERVICE - DISABLED FOR REAL TRADING
-    console.error('❌ microArbitrageService is DISABLED - this was a MOCK service using Math.random()');
-    console.error('❌ Use realTradeExecutor.executeArbitrageCycle() for REAL Solana trades');
-    console.error('❌ This service did NOT execute real trades - it was simulation only');
+    // NOTE: This service is deprecated
+    // Use realTradeExecutor.executeArbitrageCycle() for REAL trades
+    console.warn('⚠️ microArbitrageService is deprecated');
+    console.warn('⚠️ Use realTradeExecutor.executeArbitrageCycle() for REAL trades');
 
     return {
       success: false,
-      error: 'Mock service disabled - use realTradeExecutor for real trading',
+      error: 'Service deprecated - use realTradeExecutor.executeArbitrageCycle() instead',
       executionTimeMs: Date.now() - startTime
     };
   }
