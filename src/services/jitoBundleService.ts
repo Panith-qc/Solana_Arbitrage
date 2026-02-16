@@ -302,70 +302,173 @@ export class JitoBundleService {
   }
 
   /**
-   * Submit bundle to Jito Block Engine
-   * Note: This is a simplified implementation
-   * Full implementation would use Jito's SDK for proper bundle submission
+   * Submit bundle to Jito Block Engine via their REST API
+   * Uses POST /api/v1/bundles with base58-encoded transactions
    */
   private async submitToBlockEngine(
     transactions: (Transaction | VersionedTransaction)[],
     bundleId: string
   ): Promise<{ success: boolean; signatures: string[]; landedSlot?: number }> {
-    console.log(`📤 Submitting bundle ${bundleId} to Jito Block Engine`);
-    
+    console.log(`Submitting bundle ${bundleId} to Jito Block Engine: ${this.config.blockEngineUrl}`);
+
     try {
-      // Serialize transactions
-      const serializedTxs = transactions.map(tx => {
-        if (tx instanceof VersionedTransaction) {
-          return tx.serialize();
-        } else {
-          return tx.serialize();
-        }
+      // Serialize and base58-encode all transactions for Jito API
+      const encodedTxs = transactions.map(tx => {
+        const serialized = tx.serialize();
+        // Jito expects base58-encoded transactions
+        const bytes = new Uint8Array(serialized);
+        return this.uint8ArrayToBase58(bytes);
       });
 
-      // For now, send transactions normally
-      // TODO: Replace with actual Jito Block Engine API call when SDK is available
-      // The proper endpoint is: POST https://mainnet.block-engine.jito.wtf/api/v1/bundles
-      
+      // Submit bundle via Jito Block Engine REST API
+      const bundleUrl = `${this.config.blockEngineUrl}/api/v1/bundles`;
+
+      const response = await fetch(bundleUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'sendBundle',
+          params: [encodedTxs]
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        // If Jito API fails, fall back to direct submission
+        console.warn(`Jito API returned ${response.status}: ${errorText.substring(0, 200)}, falling back to direct submission`);
+        return this.fallbackDirectSubmission(transactions);
+      }
+
+      const result = await response.json();
+
+      if (result.error) {
+        console.warn(`Jito bundle error: ${result.error.message}, falling back to direct submission`);
+        return this.fallbackDirectSubmission(transactions);
+      }
+
+      const jitoBundleId = result.result;
+      console.log(`Bundle accepted by Jito: ${jitoBundleId}`);
+
+      // Poll for bundle status (max 30 seconds)
       const signatures: string[] = [];
-      
-      for (const serializedTx of serializedTxs) {
+      let landedSlot: number | undefined;
+
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+
         try {
-          const signature = await this.connection.sendRawTransaction(serializedTx, {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-            maxRetries: 3
+          const statusResponse = await fetch(`${this.config.blockEngineUrl}/api/v1/bundles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'getBundleStatuses',
+              params: [[jitoBundleId]]
+            }),
           });
-          
-          signatures.push(signature);
-          console.log(`📝 Transaction submitted: ${signature}`);
-        } catch (error) {
-          console.error(`❌ Transaction failed:`, error);
-          throw error;
+
+          if (statusResponse.ok) {
+            const statusResult = await statusResponse.json();
+            const bundleStatus = statusResult?.result?.value?.[0];
+
+            if (bundleStatus?.confirmation_status === 'confirmed' || bundleStatus?.confirmation_status === 'finalized') {
+              landedSlot = bundleStatus.slot;
+              if (bundleStatus.transactions) {
+                signatures.push(...bundleStatus.transactions);
+              }
+              console.log(`Bundle landed in slot ${landedSlot}`);
+              return { success: true, signatures, landedSlot };
+            }
+
+            if (bundleStatus?.err) {
+              console.error(`Bundle failed: ${JSON.stringify(bundleStatus.err)}`);
+              return { success: false, signatures: [] };
+            }
+          }
+        } catch (pollError) {
+          // Continue polling
         }
       }
 
-      // Wait for confirmation of all transactions
-      await Promise.all(
-        signatures.map(sig => 
-          this.connection.confirmTransaction(sig, 'confirmed')
-        )
-      );
-
-      console.log(`✅ All ${signatures.length} transactions confirmed`);
-
-      return {
-        success: true,
-        signatures,
-        landedSlot: undefined // Would be provided by Jito API
-      };
+      // Timeout - bundle might still land
+      console.warn(`Bundle status poll timed out for ${jitoBundleId}`);
+      return { success: false, signatures: [] };
 
     } catch (error) {
-      console.error('❌ Bundle submission failed:', error);
-      return {
-        success: false,
-        signatures: []
-      };
+      console.error('Bundle submission failed:', error);
+      // Fall back to direct transaction submission
+      return this.fallbackDirectSubmission(transactions);
     }
+  }
+
+  /**
+   * Fallback: submit transactions directly when Jito API is unavailable
+   */
+  private async fallbackDirectSubmission(
+    transactions: (Transaction | VersionedTransaction)[]
+  ): Promise<{ success: boolean; signatures: string[]; landedSlot?: number }> {
+    console.log('Using fallback direct transaction submission');
+    const signatures: string[] = [];
+
+    for (const tx of transactions) {
+      try {
+        const serialized = tx.serialize();
+        const signature = await this.connection.sendRawTransaction(serialized, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: 3
+        });
+        signatures.push(signature);
+      } catch (error) {
+        console.error('Transaction failed in fallback:', error);
+        throw error;
+      }
+    }
+
+    await Promise.all(
+      signatures.map(sig => this.connection.confirmTransaction(sig, 'confirmed'))
+    );
+
+    return { success: true, signatures, landedSlot: undefined };
+  }
+
+  /**
+   * Convert Uint8Array to base58 string
+   */
+  private uint8ArrayToBase58(bytes: Uint8Array): string {
+    const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let result = '';
+    let digits = [0];
+
+    for (const byte of bytes) {
+      let carry = byte;
+      for (let j = 0; j < digits.length; j++) {
+        carry += digits[j] << 8;
+        digits[j] = carry % 58;
+        carry = (carry / 58) | 0;
+      }
+      while (carry > 0) {
+        digits.push(carry % 58);
+        carry = (carry / 58) | 0;
+      }
+    }
+
+    // Leading zeros
+    for (const byte of bytes) {
+      if (byte !== 0) break;
+      result += ALPHABET[0];
+    }
+
+    for (let i = digits.length - 1; i >= 0; i--) {
+      result += ALPHABET[digits[i]];
+    }
+
+    return result;
   }
 
   /**
@@ -384,13 +487,48 @@ export class JitoBundleService {
     landedSlot?: number;
     transactions?: string[];
   }> {
-    // TODO: Implement actual Jito API call
-    // For now, return pending status
-    console.log(`🔍 Checking bundle status: ${bundleId}`);
-    
-    return {
-      status: 'pending'
-    };
+    console.log(`Checking bundle status: ${bundleId}`);
+
+    try {
+      const response = await fetch(`${this.config.blockEngineUrl}/api/v1/bundles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getBundleStatuses',
+          params: [[bundleId]]
+        }),
+      });
+
+      if (!response.ok) {
+        return { status: 'pending' };
+      }
+
+      const result = await response.json();
+      const bundleStatus = result?.result?.value?.[0];
+
+      if (!bundleStatus) {
+        return { status: 'pending' };
+      }
+
+      if (bundleStatus.confirmation_status === 'confirmed' || bundleStatus.confirmation_status === 'finalized') {
+        return {
+          status: 'landed',
+          landedSlot: bundleStatus.slot,
+          transactions: bundleStatus.transactions,
+        };
+      }
+
+      if (bundleStatus.err) {
+        return { status: 'failed' };
+      }
+
+      return { status: 'pending' };
+    } catch (error) {
+      console.error('Failed to check bundle status:', error);
+      return { status: 'pending' };
+    }
   }
 
   /**

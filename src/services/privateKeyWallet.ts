@@ -14,7 +14,7 @@ export class PrivateKeyWallet {
 
   constructor() {
     // Use Helius RPC endpoint with your API key from environment
-    const heliusRpcUrl = import.meta.env.VITE_HELIUS_RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
+    const heliusRpcUrl = import.meta.env.VITE_HELIUS_RPC_URL || `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY || ''}`;
     
     this.connection = new Connection(heliusRpcUrl, {
       commitment: 'confirmed',

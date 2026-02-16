@@ -1,8 +1,12 @@
 // HELIUS API SERVICE - COMPREHENSIVE SOLANA DATA
 import { Connection, PublicKey, ParsedAccountData } from '@solana/web3.js';
 
-const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || '926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
-const HELIUS_RPC_URL = process.env.NEXT_PUBLIC_HELIUS_RPC_URL || `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+const HELIUS_API_KEY = import.meta.env.VITE_HELIUS_API_KEY || process.env.HELIUS_API_KEY || '';
+const HELIUS_RPC_URL = import.meta.env.VITE_HELIUS_RPC_URL || process.env.HELIUS_RPC_URL || (HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : '');
+
+if (!HELIUS_API_KEY) {
+  console.error('MISSING: Set VITE_HELIUS_API_KEY environment variable');
+}
 const HELIUS_API_URL = `https://api.helius.xyz/v0`;
 
 class HeliusService {

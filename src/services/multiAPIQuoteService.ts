@@ -277,7 +277,7 @@ class MultiAPIQuoteService {
     amount: number,
     slippageBps: number = 50
   ): Promise<JupiterQuoteResponse> {
-    const walletAddress = "34tC7Wd6URg5sbjvMJrStyH69L8Tcj3jzgNxH3EJ3fib";
+    const walletAddress = import.meta.env.VITE_WALLET_PUBLIC_KEY || "11111111111111111111111111111111";
     
     const url = `https://lite-api.jup.ag/ultra/v1/order?` +
       `inputMint=${inputMint}&` +
@@ -528,7 +528,18 @@ class MultiAPIQuoteService {
       'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6,  // USDT
       'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 5,  // BONK
       'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 6,  // WIF
-      'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6   // JUP
+      'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6,   // JUP
+      'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 9,  // mSOL
+      'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1': 9,  // bSOL
+      'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 9,  // jitoSOL
+      '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 6,  // RAY
+      'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE': 6,  // ORCA
+      'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5': 5,  // MEW
+      'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82': 6,  // BOME
+      '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj': 9,  // stSOL
+      'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3': 6,  // PYTH
+      'MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey': 9,  // MNDE
+      'kinXdEcpDQeHPEuQnqmUgtYykqKGVFq6CeVX5iAHJq6': 5,  // KIN
     };
     return decimals[mint] || 9;
   }

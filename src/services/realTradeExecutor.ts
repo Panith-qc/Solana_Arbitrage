@@ -135,9 +135,12 @@ export class FinalRobustTradeExecutor {
   };
 
   constructor() {
-    const heliusApiKey = import.meta.env.VITE_HELIUS_API_KEY || '926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
+    const heliusApiKey = import.meta.env.VITE_HELIUS_API_KEY || '';
+    if (!heliusApiKey) {
+      console.error('MISSING: Set VITE_HELIUS_API_KEY environment variable');
+    }
     this.connection = new Connection(
-      `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`,
+      heliusApiKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}` : 'https://api.mainnet-beta.solana.com',
       'confirmed'
     );
     
