@@ -2,8 +2,8 @@
 // Uses app_19a63e71b8_jupiter_fallback_proxy which actually works
 
 class EnhancedCorsProxyService {
-  private supabaseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co';
-  private supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4d3luenN4eXh6b2hsaGtxbXB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMjEyNDQsImV4cCI6MjA3MjU5NzI0NH0.69aj1AhvM0k7N788A7MRenHLBayd8aYjTs6UOYYvILY';
+  private supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+  private supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
   async healthCheck(): Promise<{ supabase: boolean; direct: boolean; external: boolean }> {
     const results = {

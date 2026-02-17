@@ -93,8 +93,11 @@ export class FinalRobustTradeExecutor {
                 successRate: 0
             }
         });
-        const heliusApiKey = import.meta.env.VITE_HELIUS_API_KEY || '926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
-        this.connection = new Connection(`https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`, 'confirmed');
+        const heliusRpcUrl = import.meta.env.VITE_HELIUS_RPC_URL || '';
+        if (!heliusRpcUrl) {
+            console.error('❌ CRITICAL: VITE_HELIUS_RPC_URL not configured. Set it in .env.production');
+        }
+        this.connection = new Connection(heliusRpcUrl || 'https://api.mainnet-beta.solana.com', 'confirmed');
         // Initialize SOL price on startup
         this.getSOLPriceUSD().catch(err => {
             console.error('⚠️ Failed to initialize SOL price:', err.message);
@@ -305,8 +308,8 @@ export class FinalRobustTradeExecutor {
                 const loss = amountSOL - solBack;
                 const lossPercent = (loss / amountSOL) * 100;
                 console.log(`   ✓ Estimated round-trip loss: ${lossPercent.toFixed(2)}%`);
-                // ✅ VALIDATION: Loss should be less than 5% for execution
-                if (lossPercent > 5) {
+                // ✅ VALIDATION: Loss should be less than 3% for execution (tightened from 5%)
+                if (lossPercent > 3) {
                     return {
                         shouldProceed: false,
                         reason: `Round-trip loss too high: ${lossPercent.toFixed(2)}%`,

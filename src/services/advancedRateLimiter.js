@@ -234,8 +234,20 @@ export const RATE_LIMIT_CONFIGS = {
         tier: 'paid',
     },
 };
-// Export singleton instances - FREE TIER (60 req/min)
-// ⚠️ IMPORTANT: Using JUPITER_LITE for free tier (60 req/min)
-// Change to JUPITER_ULTRA if you have paid tier (1200 req/min)
-export const jupiterRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.JUPITER_LITE);
+// Determine tier from environment variable
+function getJupiterTier() {
+    try {
+        const tier = import.meta.env?.VITE_JUPITER_RATE_LIMIT_TIER
+            || import.meta.env?.JUPITER_RATE_LIMIT_TIER
+            || 'free';
+        return tier === 'paid' ? 'paid' : 'free';
+    }
+    catch {
+        return 'free';
+    }
+}
+const jupiterTier = getJupiterTier();
+const jupiterConfig = jupiterTier === 'paid' ? RATE_LIMIT_CONFIGS.JUPITER_ULTRA : RATE_LIMIT_CONFIGS.JUPITER_LITE;
+// Export singleton instances - tier selected from env (set JUPITER_RATE_LIMIT_TIER=paid for Ultra)
+export const jupiterRateLimiter = new AdvancedRateLimiter(jupiterConfig);
 export const heliusRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.HELIUS_PAID);
