@@ -44,6 +44,12 @@ yarn-error.log*
 wallet*.json
 keypair*.json
 
+# Database
+data/
+*.db
+*.db-wal
+*.db-shm
+
 # Test coverage
 coverage/
 .nyc_output/
