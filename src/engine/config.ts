@@ -77,6 +77,7 @@ export interface RiskProfile {
     backrun: boolean;
     liquidation: boolean;
     jitLiquidity: boolean;
+    sniping: boolean;
   };
 }
 
@@ -103,6 +104,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       backrun: false,
       liquidation: false,
       jitLiquidity: false,
+      sniping: true,
     },
   },
   BALANCED: {
@@ -127,6 +129,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       backrun: true,
       liquidation: true,
       jitLiquidity: true,
+      sniping: true,
     },
   },
   AGGRESSIVE: {
@@ -151,6 +154,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       backrun: true,
       liquidation: true,
       jitLiquidity: true,
+      sniping: true,
     },
   },
 };
@@ -196,6 +200,10 @@ export interface BotConfig {
   telegramChatId: string;
   discordWebhookUrl: string;
 
+  // Sniping
+  snipingEnabled: boolean;
+  snipeAmountSol: number;
+
   // Dynamic runtime state (updated by bot engine)
   /** Current SOL/USD price - updated every scan cycle from Jupiter */
   solPriceUsd: number;
@@ -224,6 +232,8 @@ export function loadConfig(): BotConfig {
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
+    snipingEnabled: process.env.SNIPING_ENABLED !== 'false',
+    snipeAmountSol: parseFloat(process.env.SNIPE_AMOUNT_SOL || '0.1'),
     solPriceUsd: 0,
   };
 }

@@ -12,7 +12,7 @@ import { BotConfig } from '../config.js';
 // ═══════════════════════════════════════════════
 
 /** Channels that clients can subscribe to for filtered events. */
-type Channel = 'trades' | 'opportunities' | 'pnl' | 'status' | 'alerts' | 'metrics';
+type Channel = 'trades' | 'opportunities' | 'pnl' | 'status' | 'alerts' | 'metrics' | 'sniping';
 
 const VALID_CHANNELS: ReadonlySet<string> = new Set<Channel>([
   'trades',

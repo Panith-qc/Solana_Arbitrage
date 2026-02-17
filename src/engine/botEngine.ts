@@ -29,6 +29,7 @@ import { FrontrunStrategy } from './strategies/frontrunStrategy.js';
 import { BackrunStrategy } from './strategies/backrunStrategy.js';
 import { LiquidationStrategy } from './strategies/liquidationStrategy.js';
 import { JITLiquidityStrategy } from './strategies/jitLiquidityStrategy.js';
+import { SnipingStrategy } from './sniping/snipingStrategy.js';
 
 export type BotStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'circuit_breaker' | 'error';
 
@@ -85,6 +86,7 @@ export class BotEngine {
   // Strategies
   private strategies: Map<string, BaseStrategy> = new Map();
   private mevStrategies: Array<SandwichStrategy | FrontrunStrategy | JITLiquidityStrategy> = [];
+  private snipingStrategy: SnipingStrategy | null = null;
 
   // State
   private status: BotStatus = 'stopped';
@@ -665,6 +667,13 @@ export class BotEngine {
       this.mevStrategies.push(strategy as any);
     }
 
+    // Sniping strategy (uses its own pool detection + execution pipeline)
+    if (this.config.snipingEnabled && profile.strategies.sniping) {
+      const strategy = new SnipingStrategy(this.connectionManager, this.config);
+      this.strategies.set('sniping', strategy);
+      this.snipingStrategy = strategy;
+    }
+
     engineLog.info(
       { strategies: Array.from(this.strategies.keys()) },
       `Initialized ${this.strategies.size} strategies`
@@ -856,6 +865,28 @@ export class BotEngine {
     this.stats.uptime = this.startedAt > 0 ? Date.now() - this.startedAt : 0;
     this.stats.wsClients = this.wsBroadcaster.getClientCount();
     this.wsBroadcaster.broadcastStatus(this.stats);
+
+    // Broadcast sniping data if active
+    if (this.snipingStrategy) {
+      const snipeStats = this.snipingStrategy.getSnipingStats();
+      const openPositions = this.snipingStrategy.getOpenSnipePositions();
+      this.wsBroadcaster.broadcast('sniping', {
+        stats: snipeStats,
+        openPositions: openPositions.map(p => ({
+          id: p.id,
+          token: p.tokenSymbol,
+          mint: p.tokenMint,
+          entryAmountSol: p.entryAmountSol,
+          entryTimestamp: p.entryTimestamp,
+          status: p.status,
+          tier1Sold: p.tier1Sold,
+          tier2Sold: p.tier2Sold,
+          tier3Sold: p.tier3Sold,
+          totalSolRecovered: p.totalSolRecovered,
+          realizedProfitSol: p.realizedProfitSol,
+        })),
+      });
+    }
   }
 
   private broadcastTrade(opp: Opportunity, result: ExecutionResult, latencyMs: number): void {
@@ -915,6 +946,10 @@ export class BotEngine {
 
   isRunning(): boolean {
     return this.status === 'running';
+  }
+
+  getSnipingStrategy(): SnipingStrategy | null {
+    return this.snipingStrategy;
   }
 
   setRiskLevel(level: string): void {
