@@ -195,6 +195,10 @@ export interface BotConfig {
   telegramBotToken: string;
   telegramChatId: string;
   discordWebhookUrl: string;
+
+  // Dynamic runtime state (updated by bot engine)
+  /** Current SOL/USD price - updated every scan cycle from Jupiter */
+  solPriceUsd: number;
 }
 
 export function loadConfig(): BotConfig {
@@ -220,5 +224,6 @@ export function loadConfig(): BotConfig {
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
+    solPriceUsd: 0,
   };
 }

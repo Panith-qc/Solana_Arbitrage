@@ -24,7 +24,7 @@ const SOLEND_PROGRAM_ID = 'So1endDq2YkqhipRh3WViPa8hFb7VGGKJhqoJdFt8iV';
 const MARGINFI_PROGRAM_ID = 'MFv2hWf31Z9kbCa1snEPYctwafyhdg97gDV7T3x4Go8';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const QUOTE_LIFETIME_MS = 20_000;           // liquidation quotes are less time-sensitive
 const LIQUIDATION_BONUS_BPS = 500;          // typical 5% liquidation bonus
 const BASE_GAS_LAMPORTS = 5_000;
@@ -225,7 +225,7 @@ export class LiquidationStrategy extends BaseStrategy {
       // How much collateral we receive for repaying the debt
       const maxRepayUsd = Math.min(
         position.maxLiquidationUsd,
-        this.riskProfile.maxTradeAmountSol * 150,  // roughly maxTrade in USD
+        this.riskProfile.maxTradeAmountSol * (this.botConfig.solPriceUsd || 150),
       );
 
       // Collateral we claim = repay * (1 + bonus)
@@ -233,7 +233,7 @@ export class LiquidationStrategy extends BaseStrategy {
       const liquidationBonusUsd = maxRepayUsd * bonus;
 
       // Convert to SOL (rough estimate)
-      const solPriceUsd = 150;
+      const solPriceUsd = this.botConfig.solPriceUsd || 150;
       const repayCostSol = maxRepayUsd / solPriceUsd;
       const collateralValueSol = collateralClaimUsd / solPriceUsd;
       const liquidationBonusSol = liquidationBonusUsd / solPriceUsd;

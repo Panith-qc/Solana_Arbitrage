@@ -24,7 +24,7 @@ import { ConnectionManager } from '../connectionManager.js';
 // ── Constants ──────────────────────────────────────────────────────────────────
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 100_000;
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const QUOTE_LIFETIME_MS = 15_000;
 const MIN_SWAP_SIZE_SOL = 5.0;              // only backrun swaps >= 5 SOL
 const EXPECTED_REVERSION_BPS = 20;          // expect ~0.2% mean-reversion
@@ -164,7 +164,7 @@ export class BackrunStrategy extends BaseStrategy {
         const expectedReversionSol = inputSol * (EXPECTED_REVERSION_BPS / 10_000);
         const fees = this.calculateFees(inputSol);
         const netProfitSol = expectedReversionSol - roundTripLoss - fees.total;
-        const solPriceUsd = 150;
+        const solPriceUsd = this.botConfig.solPriceUsd || 150;
         const netProfitUsd = netProfitSol * solPriceUsd;
 
         if (netProfitUsd >= this.config.minProfitUsd) {
@@ -258,7 +258,7 @@ export class BackrunStrategy extends BaseStrategy {
       const expectedReversionSol = backrunAmountSol * (EXPECTED_REVERSION_BPS / 10_000);
       const fees = this.calculateFees(backrunAmountSol);
       const netProfitSol = expectedReversionSol - fees.total;
-      const solPriceUsd = 150;
+      const solPriceUsd = this.botConfig.solPriceUsd || 150;
       const netProfitUsd = netProfitSol * solPriceUsd;
 
       if (netProfitUsd < this.config.minProfitUsd) return null;
@@ -399,7 +399,7 @@ export class BackrunStrategy extends BaseStrategy {
     amount: string,
     slippageBps: number,
   ): Promise<any | null> {
-    const url = new URL(JUPITER_QUOTE_URL);
+    const url = new URL(`${this.botConfig.jupiterApiUrl}/swap/v1/quote`);
     url.searchParams.set('inputMint', inputMint);
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);

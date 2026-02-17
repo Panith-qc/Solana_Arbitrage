@@ -252,11 +252,25 @@ export class Executor {
     allSignatures.push(...leg1Result.signatures);
 
     // ── INTER-LEG VERIFICATION ───────────────────────────────────
-    // Get a fresh reverse quote based on the token amount we actually received.
-    // The forward quote's outAmount is the expected amount; the actual amount
-    // may differ due to slippage. We use the expected amount as a starting point.
+    // Query actual on-chain token balance after Leg 1 to handle slippage.
+    // Fall back to the expected amount only if the balance check fails.
 
-    const tokenAmountReceived = forwardQuote.outAmount;
+    let tokenAmountReceived = forwardQuote.outAmount;
+    try {
+      const actualBalance = await this.connManager.getTokenBalance(tokenMint);
+      if (actualBalance > 0n) {
+        tokenAmountReceived = actualBalance.toString();
+        executionLog.info(
+          { tokenMint, expected: forwardQuote.outAmount, actual: tokenAmountReceived },
+          'Using actual on-chain token balance for reverse leg',
+        );
+      }
+    } catch (err) {
+      executionLog.warn(
+        { err, tokenMint, usingExpected: forwardQuote.outAmount },
+        'Could not fetch actual token balance, using expected from quote',
+      );
+    }
 
     await this.rateLimit();
 

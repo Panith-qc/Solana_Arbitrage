@@ -26,7 +26,7 @@ const ORCA_WHIRLPOOL_PROGRAM = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc';
 // ── Constants ──────────────────────────────────────────────────────────────────
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 150_000;      // higher priority for JIT timing
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const QUOTE_LIFETIME_MS = 5_000;            // very short-lived JIT window
 const MIN_SWAP_SIZE_SOL = 5.0;              // only JIT for swaps >= 5 SOL
 const TICK_SPACING_64 = 64;                 // common Orca whirlpool tick spacing
@@ -142,7 +142,7 @@ export class JITLiquidityStrategy extends BaseStrategy {
 
       const totalCostSol = gasCost + priorityCost + impermanentLoss;
       const netProfitSol = feeIncome - totalCostSol;
-      const solPriceUsd = 150;
+      const solPriceUsd = this.botConfig.solPriceUsd || 150;
       const netProfitUsd = netProfitSol * solPriceUsd;
 
       if (netProfitUsd < this.config.minProfitUsd) return null;

@@ -50,7 +50,7 @@ interface InstructionDecoder {
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 100_000;
 const JITO_TIP_LAMPORTS = 100_000;
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const QUOTE_LIFETIME_MS = 5_000;           // sandwich bundles expire fast
 const MIN_VICTIM_AMOUNT_SOL = 1.0;         // only sandwich swaps >= 1 SOL
 const MIN_VICTIM_SLIPPAGE_BPS = 50;        // only target if slippage tolerance allows
@@ -159,7 +159,7 @@ export class SandwichStrategy extends BaseStrategy {
           ((BASE_GAS_LAMPORTS * 2) + (PRIORITY_FEE_LAMPORTS * 2) + JITO_TIP_LAMPORTS) / LAMPORTS_PER_SOL;
 
         const netProfitSol = backrunProfitSol - totalCostSol;
-        const solPriceUsd = 150;
+        const solPriceUsd = this.botConfig.solPriceUsd || 150;
         const netProfitUsd = netProfitSol * solPriceUsd;
 
         if (netProfitUsd < this.config.minProfitUsd) continue;
@@ -318,7 +318,7 @@ export class SandwichStrategy extends BaseStrategy {
     amount: string,
     slippageBps: number,
   ): Promise<any | null> {
-    const url = new URL(JUPITER_QUOTE_URL);
+    const url = new URL(`${this.botConfig.jupiterApiUrl}/swap/v1/quote`);
     url.searchParams.set('inputMint', inputMint);
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);

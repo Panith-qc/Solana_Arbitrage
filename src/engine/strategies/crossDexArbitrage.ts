@@ -18,11 +18,11 @@ import { ConnectionManager } from '../connectionManager.js';
 
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 const BASE_GAS_LAMPORTS = 5_000;
-const PRIORITY_FEE_LAMPORTS = 100_000;
-const DEX_SWAP_FEE_BPS = 25;
+const PRIORITY_FEE_LAMPORTS = 200_000;
+const DEX_SWAP_FEE_BPS = 30;
 const QUOTE_LIFETIME_MS = 10_000;
 
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const RAYDIUM_QUOTE_URL = 'https://api-v3.raydium.io/compute/swap-base-in';
 
 interface DexQuote {
@@ -200,7 +200,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     amount: string,
     slippageBps: number,
   ): Promise<DexQuote | null> {
-    const url = new URL(JUPITER_QUOTE_URL);
+    const url = new URL(`${this.botConfig.jupiterApiUrl}/swap/v1/quote`);
     url.searchParams.set('inputMint', inputMint);
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
@@ -312,7 +312,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     const totalFeeSol = gasFee + priorityFee + dexFee + slippageCost;
     const netProfitSol = grossProfitSol - totalFeeSol;
-    const solPriceUsd = 150;
+    const solPriceUsd = this.botConfig.solPriceUsd || 150;
     const netProfitUsd = netProfitSol * solPriceUsd;
 
     return {

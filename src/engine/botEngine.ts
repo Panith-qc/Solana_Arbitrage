@@ -745,6 +745,8 @@ export class BotEngine {
         this.solPriceUsd = price;
         this.solPriceCacheTs = now;
         this.stats.currentSolPriceUsd = price;
+        // Push live price to config so all strategies can access it
+        this.config.solPriceUsd = price;
       }
     } catch (err) {
       if (this.solPriceUsd > 0) {

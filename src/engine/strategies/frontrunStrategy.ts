@@ -50,7 +50,7 @@ interface InstructionDecoder {
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 100_000;
 const JITO_TIP_LAMPORTS = 100_000;
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const QUOTE_LIFETIME_MS = 8_000;
 const MIN_VICTIM_AMOUNT_SOL = 10.0;         // only front-run genuinely large swaps
 const MIN_EXPECTED_MOVEMENT_BPS = 30;       // minimum 0.3% expected price impact
@@ -155,7 +155,7 @@ export class FrontrunStrategy extends BaseStrategy {
 
         const totalCostSol = gasCost + priorityCost + jitoTip + slippageCost;
         const netProfitSol = grossProfitSol - totalCostSol;
-        const solPriceUsd = 150;
+        const solPriceUsd = this.botConfig.solPriceUsd || 150;
         const netProfitUsd = netProfitSol * solPriceUsd;
 
         if (netProfitUsd < this.config.minProfitUsd) continue;
@@ -269,7 +269,7 @@ export class FrontrunStrategy extends BaseStrategy {
     amount: string,
     slippageBps: number,
   ): Promise<any | null> {
-    const url = new URL(JUPITER_QUOTE_URL);
+    const url = new URL(`${this.botConfig.jupiterApiUrl}/swap/v1/quote`);
     url.searchParams.set('inputMint', inputMint);
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);

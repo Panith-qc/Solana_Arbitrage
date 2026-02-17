@@ -18,11 +18,10 @@ import { ConnectionManager } from '../connectionManager.js';
 
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 const BASE_GAS_LAMPORTS = 5_000;              // base compute-unit fee
-const PRIORITY_FEE_LAMPORTS = 100_000;        // priority fee for fast inclusion
+const PRIORITY_FEE_LAMPORTS = 200_000;        // realistic priority fee (Jupiter auto-sets)
 const JUPITER_PLATFORM_FEE_BPS = 10;          // 0.10% Jupiter platform fee
-const DEX_SWAP_FEE_BPS = 25;                  // ~0.25% average DEX pool fee
+const DEX_SWAP_FEE_BPS = 30;                  // ~0.30% average DEX pool fee (Orca/Raydium)
 const QUOTE_LIFETIME_MS = 15_000;             // quotes expire after 15 s
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
 
 export class CyclicArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
@@ -170,7 +169,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     amount: string,
     slippageBps: number,
   ): Promise<any | null> {
-    const url = new URL(JUPITER_QUOTE_URL);
+    const url = new URL(`${this.botConfig.jupiterApiUrl}/swap/v1/quote`);
     url.searchParams.set('inputMint', inputMint);
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
@@ -225,7 +224,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     const netProfitSol = grossProfitSol - totalFeeSol;
 
     // Rough SOL price estimate (can be replaced with oracle)
-    const solPriceUsd = 150;
+    const solPriceUsd = this.botConfig.solPriceUsd || 150;
     const netProfitUsd = netProfitSol * solPriceUsd;
 
     return {

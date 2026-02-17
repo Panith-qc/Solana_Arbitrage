@@ -18,11 +18,11 @@ import { ConnectionManager } from '../connectionManager.js';
 
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 const BASE_GAS_LAMPORTS = 5_000;
-const PRIORITY_FEE_LAMPORTS = 100_000;
+const PRIORITY_FEE_LAMPORTS = 200_000;
 const JUPITER_PLATFORM_FEE_BPS = 10;
-const DEX_SWAP_FEE_BPS = 25;
+const DEX_SWAP_FEE_BPS = 30;
 const QUOTE_LIFETIME_MS = 12_000;   // 3-leg paths stale faster
-const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const MAX_PAIRS_TO_CHECK = 20;      // cap to stay within rate limits
 
 // Stablecoin mints to skip pairing together (no arb between two stables)
@@ -231,7 +231,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
     amount: string,
     slippageBps: number,
   ): Promise<any | null> {
-    const url = new URL(JUPITER_QUOTE_URL);
+    const url = new URL(`${this.botConfig.jupiterApiUrl}/swap/v1/quote`);
     url.searchParams.set('inputMint', inputMint);
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
@@ -277,7 +277,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
 
     const totalFeeSol = gasFee + priorityFee + jupiterFee + dexFee + slippageCost;
     const netProfitSol = grossProfitSol - totalFeeSol;
-    const solPriceUsd = 150;
+    const solPriceUsd = this.botConfig.solPriceUsd || 150;
     const netProfitUsd = netProfitSol * solPriceUsd;
 
     return {
