@@ -120,7 +120,7 @@ class HeliusService {
             apiKey: this.apiKey.substring(0, 8) + '...',
             rpcEndpoint: HELIUS_RPC_URL,
             apiEndpoint: HELIUS_API_URL,
-            network: 'devnet',
+            network: 'mainnet',
             isConfigured: this.apiKey !== 'your-helius-api-key-here'
         };
     }
