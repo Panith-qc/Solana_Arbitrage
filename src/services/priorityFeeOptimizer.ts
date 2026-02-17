@@ -158,23 +158,24 @@ export class PriorityFeeOptimizer {
    */
   private async getRecentPrioritizationFees(slot: number): Promise<number[]> {
     try {
-      // Get recent blocks to analyze fees
-      // Note: This is a simplified implementation
-      // Full implementation would query actual fee stats from RPC
-      
-      const fees: number[] = [];
-      
-      // For now, return estimated fees based on base levels
-      // In production, this would query actual network data
-      for (let i = 0; i < 20; i++) {
-        const randomFee = this.BASE_FEES.low + Math.random() * (this.BASE_FEES.high - this.BASE_FEES.low);
-        fees.push(Math.floor(randomFee));
+      // Query real prioritization fees from Solana RPC
+      const response = await (this.connection as any).getRecentPrioritizationFees();
+
+      if (response && response.length > 0) {
+        const fees = response
+          .map((entry: any) => entry.prioritizationFee)
+          .filter((fee: number) => fee > 0);
+
+        if (fees.length > 0) {
+          return fees;
+        }
       }
-      
-      return fees;
+
+      // Fallback if no recent fee data available
+      return [this.BASE_FEES.medium];
 
     } catch (error) {
-      console.error('❌ Failed to get recent fees:', error);
+      console.error('❌ Failed to get recent fees from RPC:', error);
       return [this.BASE_FEES.medium];
     }
   }

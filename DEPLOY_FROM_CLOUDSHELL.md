@@ -81,15 +81,15 @@ echo "✅ APIs enabled!"
 
 ```bash
 # Helius RPC URL
-echo "https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d" | \
+echo "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY" | \
   gcloud secrets create helius-rpc-url --data-file=- || echo "Secret already exists"
 
 # Helius API Key
-echo "926fd4af-7c9d-4fa3-9504-a2970ac5f16d" | \
+echo "YOUR_HELIUS_API_KEY" | \
   gcloud secrets create helius-api-key --data-file=- || echo "Secret already exists"
 
 # Jupiter Ultra API Key
-echo "bca82c35-07e5-4ab0-9a8f-7d23333ffa93" | \
+echo "YOUR_JUPITER_ULTRA_API_KEY" | \
   gcloud secrets create jupiter-ultra-api-key --data-file=- || echo "Secret already exists"
 
 # Jito Tip Accounts

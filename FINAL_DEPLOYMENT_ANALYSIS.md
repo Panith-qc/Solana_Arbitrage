@@ -32,8 +32,8 @@ While the code **DOES BUILD** and **TypeScript PASSES**, there are **CRITICAL SE
 - .env.production (COMMITTED TO GIT!)
 
 # Real API keys exposed:
-HELIUS_API_KEY=926fd4af-7c9d-4fa3-9504-a2970ac5f16d
-JUPITER_ULTRA_API_KEY=bca82c35-07e5-4ab0-9a8f-7d23333ffa93
+HELIUS_API_KEY=YOUR_HELIUS_API_KEY
+JUPITER_ULTRA_API_KEY=YOUR_JUPITER_ULTRA_API_KEY
 ```
 
 **Impact:**
@@ -287,10 +287,10 @@ git commit -m "Add .gitignore and remove secrets"
 
 # 3. Revoke exposed API keys
 # - Go to Helius dashboard
-# - Revoke key: 926fd4af-7c9d-4fa3-9504-a2970ac5f16d
+# - Revoke key: YOUR_HELIUS_API_KEY
 # - Create new key
 # - Go to Jupiter dashboard  
-# - Revoke key: bca82c35-07e5-4ab0-9a8f-7d23333ffa93
+# - Revoke key: YOUR_JUPITER_ULTRA_API_KEY
 # - Create new key
 
 # 4. Remove hardcoded keys from source

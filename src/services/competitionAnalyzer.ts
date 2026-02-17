@@ -10,7 +10,7 @@ export interface CompetitorData {
 }
 
 export class CompetitionAnalyzer {
-  private baseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
+  private baseUrl = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`
 
   async getCompetitorData(): Promise<CompetitorData[]> {
     try {

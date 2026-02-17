@@ -19,7 +19,7 @@
 - 2-10s timeouts (prevents 30s hangs)
 
 ### **3. API Keys** ✅
-- All using correct paid tier: 926fd4af-7c9d-4fa3-9504-a2970ac5f16d
+- All using correct paid tier: YOUR_HELIUS_API_KEY
 - No old free tier keys found
 
 ### **4. Mempool Monitor** ✅

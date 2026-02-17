@@ -14,8 +14,11 @@ export class PrivateKeyWallet {
             writable: true,
             value: null
         });
-        // Use Helius RPC endpoint with your API key from environment
-        const heliusRpcUrl = import.meta.env.VITE_HELIUS_RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
+        // Use Helius RPC endpoint from environment
+        const heliusRpcUrl = import.meta.env.VITE_HELIUS_RPC_URL || '';
+        if (!heliusRpcUrl) {
+            console.error('❌ CRITICAL: VITE_HELIUS_RPC_URL not configured. Set it in .env.production');
+        }
         this.connection = new Connection(heliusRpcUrl, {
             commitment: 'confirmed',
             confirmTransactionInitialTimeout: 60000,

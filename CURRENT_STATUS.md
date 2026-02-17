@@ -82,7 +82,7 @@ The **initial profit estimates** from strategy services are **optimistic/theoret
 
 **Problem:**
 ```
-POST https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1/helius-mev-service 500
+POST https://YOUR_PROJECT_REF.supabase.co/functions/v1/helius-mev-service 500
 ⚠️ Helius 500 error, retrying in 500ms...
 ❌ Real Jupiter quote failed: Error: Helius MEV Service failed: 500
 ```

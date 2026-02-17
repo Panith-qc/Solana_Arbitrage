@@ -106,7 +106,7 @@ App.tsx → RealTradingDashboard.tsx
 
 #### Jupiter API ✅
 - **Primary:** Supabase proxy at `helius-mev-service`
-- **Endpoint:** `https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1/helius-mev-service`
+- **Endpoint:** `https://YOUR_PROJECT_REF.supabase.co/functions/v1/helius-mev-service`
 - **Features:**
   - Quote generation
   - Swap execution
@@ -124,7 +124,7 @@ App.tsx → RealTradingDashboard.tsx
 - **⚠️ Security Note:** API key is exposed in code - should be rotated
 
 #### Supabase ✅
-- **URL:** `https://jxwynzsxyxzohlhkqmpt.supabase.co`
+- **URL:** `https://YOUR_PROJECT_REF.supabase.co`
 - **Status:** ✅ Configured and working
 - **Functions:** 16 edge functions available
 - **Key Functions:**

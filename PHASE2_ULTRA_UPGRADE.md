@@ -236,12 +236,12 @@ Execution speed: <1 second (vs 2-5 seconds)
 ### **1. `.env.production`**
 ```env
 # Helius (PAID: 600 req/min)
-VITE_HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=926fd4af...
+VITE_HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
 HELIUS_RATE_LIMIT_PER_SECOND=10
 HELIUS_RATE_LIMIT_PER_MINUTE=600
 
 # Jupiter Ultra (PAID: 1200 req/min)
-JUPITER_ULTRA_API_KEY=bca82c35-07e5-4ab0-9a8f-7d23333ffa93
+JUPITER_ULTRA_API_KEY=YOUR_JUPITER_ULTRA_API_KEY
 JUPITER_ULTRA_ENDPOINT=https://api.jup.ag/ultra
 JUPITER_ULTRA_ENABLED=true
 

@@ -40,7 +40,7 @@ Scanner → Jupiter V6 API (direct)
 
 ### **API Configuration:**
 ```typescript
-✅ Helius RPC: 926fd4af-7c9d-4fa3-9504-a2970ac5f16d (paid tier)
+✅ Helius RPC: YOUR_HELIUS_API_KEY (paid tier)
 ✅ Jupiter V6: https://quote-api.jup.ag/v6 (public, reliable)
 ✅ Rate Limits: 600 req/min Helius, no limit on Jupiter V6 quotes
 ✅ Timeouts: 5s per fetch call

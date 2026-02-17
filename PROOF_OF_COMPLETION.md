@@ -128,12 +128,12 @@ $ ls -lh .env.production
 # PRODUCTION CREDENTIALS - ACTUAL PAID TIERS
 
 # Helius RPC (PAID: 10 req/sec = 600 req/min)
-VITE_HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d
-HELIUS_API_KEY=926fd4af-7c9d-4fa3-9504-a2970ac5f16d
-HELIUS_PARSE_TX_URL=https://api.helius.xyz/v0/transactions/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d
+VITE_HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
+HELIUS_API_KEY=YOUR_HELIUS_API_KEY
+HELIUS_PARSE_TX_URL=https://api.helius.xyz/v0/transactions/?api-key=YOUR_HELIUS_API_KEY
 
 # Jupiter Ultra (PAID: Dynamic scaling)
-JUPITER_ULTRA_API_KEY=bca82c35-07e5-4ab0-9a8f-7d23333ffa93
+JUPITER_ULTRA_API_KEY=YOUR_JUPITER_ULTRA_API_KEY
 JUPITER_ULTRA_ENDPOINT=https://api.jup.ag/ultra
 ```
 

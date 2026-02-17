@@ -6,7 +6,7 @@ The **MEV Scanner** was using `realJupiterService.ts` which calls **Supabase Clo
 
 ```typescript
 // OLD CODE (WRONG):
-private baseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
+private baseUrl = 'https://YOUR_PROJECT_REF.supabase.co/functions/v1'
 const response = await fetch(`${this.baseUrl}/helius-mev-service`, {...})
 ```
 

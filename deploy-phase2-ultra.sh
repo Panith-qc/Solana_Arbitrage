@@ -55,9 +55,9 @@ create_secret_if_not_exists() {
 }
 
 # Create secrets
-create_secret_if_not_exists "helius-rpc-url" "https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d" "Helius RPC URL"
-create_secret_if_not_exists "helius-api-key" "926fd4af-7c9d-4fa3-9504-a2970ac5f16d" "Helius API Key"
-create_secret_if_not_exists "jupiter-ultra-api-key" "bca82c35-07e5-4ab0-9a8f-7d23333ffa93" "Jupiter Ultra API Key"
+create_secret_if_not_exists "helius-rpc-url" "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY" "Helius RPC URL"
+create_secret_if_not_exists "helius-api-key" "YOUR_HELIUS_API_KEY" "Helius API Key"
+create_secret_if_not_exists "jupiter-ultra-api-key" "YOUR_JUPITER_ULTRA_API_KEY" "Jupiter Ultra API Key"
 create_secret_if_not_exists "jito-tip-accounts" "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE,D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ,9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta,5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn,2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD,2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ,wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF,3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT,4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey,4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or" "Jito Tip Accounts"
 
 echo ""

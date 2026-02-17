@@ -53,7 +53,7 @@ class ProductionWalletManager {
             configurable: true,
             writable: true,
             value: [
-                'https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d',
+                `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY || process.env.HELIUS_API_KEY || ''}`,
                 'https://distinguished-soft-sound.solana-mainnet.quiknode.pro/dc3a1c3d732e4773cc0f83c5d58b578f053d07e0'
             ]
         });

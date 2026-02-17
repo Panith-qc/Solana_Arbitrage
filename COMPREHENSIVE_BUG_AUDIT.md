@@ -33,7 +33,7 @@
 import { realJupiterService } from './realJupiterService';
 
 // realJupiterService.ts line 26:
-private baseUrl = 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
+private baseUrl = 'https://YOUR_PROJECT_REF.supabase.co/functions/v1'
 ```
 
 **Fix Required:**

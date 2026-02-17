@@ -6,13 +6,13 @@ class EnhancedCorsProxyService {
             enumerable: true,
             configurable: true,
             writable: true,
-            value: 'https://jxwynzsxyxzohlhkqmpt.supabase.co'
+            value: import.meta.env.VITE_SUPABASE_URL || ''
         });
         Object.defineProperty(this, "supabaseKey", {
             enumerable: true,
             configurable: true,
             writable: true,
-            value: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4d3luenN4eXh6b2hsaGtxbXB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMjEyNDQsImV4cCI6MjA3MjU5NzI0NH0.69aj1AhvM0k7N788A7MRenHLBayd8aYjTs6UOYYvILY'
+            value: import.meta.env.VITE_SUPABASE_ANON_KEY || ''
         });
     }
     async healthCheck() {

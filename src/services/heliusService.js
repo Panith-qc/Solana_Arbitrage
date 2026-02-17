@@ -1,8 +1,11 @@
 // HELIUS API SERVICE - COMPREHENSIVE SOLANA DATA
 import { Connection } from '@solana/web3.js';
-const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || '926fd4af-7c9d-4fa3-9504-a2970ac5f16d';
-const HELIUS_RPC_URL = process.env.NEXT_PUBLIC_HELIUS_RPC_URL || `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+const HELIUS_API_KEY = import.meta.env.VITE_HELIUS_API_KEY || process.env.HELIUS_API_KEY || '';
+const HELIUS_RPC_URL = import.meta.env.VITE_HELIUS_RPC_URL || process.env.HELIUS_RPC_URL || '';
 const HELIUS_API_URL = `https://api.helius.xyz/v0`;
+if (!HELIUS_API_KEY || !HELIUS_RPC_URL) {
+    console.error('❌ CRITICAL: Helius API key or RPC URL not configured. Set HELIUS_API_KEY and HELIUS_RPC_URL in .env.production');
+}
 class HeliusService {
     constructor() {
         Object.defineProperty(this, "connection", {
@@ -19,7 +22,7 @@ class HeliusService {
         });
         this.apiKey = HELIUS_API_KEY;
         this.connection = new Connection(HELIUS_RPC_URL, 'confirmed');
-        console.log('🚀 Helius Service initialized with Devnet RPC:', HELIUS_RPC_URL.substring(0, 50) + '...');
+        console.log('🚀 Helius Service initialized with RPC:', HELIUS_RPC_URL ? HELIUS_RPC_URL.substring(0, 50) + '...' : 'NOT CONFIGURED');
     }
     // Get RPC connection
     getConnection() {
@@ -29,11 +32,11 @@ class HeliusService {
     async healthCheck() {
         try {
             const slot = await this.connection.getSlot();
-            console.log('✅ Helius Devnet RPC healthy, current slot:', slot);
+            console.log('✅ Helius RPC healthy, current slot:', slot);
             return true;
         }
         catch (error) {
-            console.error('❌ Helius Devnet RPC health check failed:', error);
+            console.error('❌ Helius RPC health check failed:', error);
             return false;
         }
     }
@@ -84,7 +87,7 @@ class HeliusService {
     // Get comprehensive wallet data using Helius
     async getWalletData(publicKey) {
         try {
-            console.log('📊 Fetching comprehensive wallet data using Helius Devnet for:', publicKey.toString());
+            console.log('📊 Fetching comprehensive wallet data using Helius for:', publicKey.toString());
             const [balance, tokenAccounts, recentTransactions] = await Promise.allSettled([
                 this.getBalance(publicKey),
                 this.getTokenAccounts(publicKey),
@@ -96,14 +99,13 @@ class HeliusService {
                 tokenAccounts: tokenAccounts.status === 'fulfilled' ? tokenAccounts.value : [],
                 recentTransactions: recentTransactions.status === 'fulfilled' ? recentTransactions.value : [],
                 timestamp: Date.now(),
-                network: 'devnet'
+                network: 'mainnet'
             };
             console.log('✅ Wallet data fetched successfully:', {
                 address: walletData.publicKey.substring(0, 8) + '...',
                 balance: walletData.balance,
                 tokens: walletData.tokenAccounts.length,
-                transactions: walletData.recentTransactions.length,
-                network: walletData.network
+                transactions: walletData.recentTransactions.length
             });
             return walletData;
         }
@@ -118,17 +120,17 @@ class HeliusService {
             apiKey: this.apiKey.substring(0, 8) + '...',
             rpcEndpoint: HELIUS_RPC_URL,
             apiEndpoint: HELIUS_API_URL,
-            network: 'devnet',
+            network: 'mainnet',
             isConfigured: this.apiKey !== 'your-helius-api-key-here'
         };
     }
     // Test connection with real API call
     async testConnection() {
         try {
-            console.log('🧪 Testing Helius Devnet connection...');
+            console.log('🧪 Testing Helius connection...');
             const slot = await this.connection.getSlot();
             const version = await this.connection.getVersion();
-            console.log('✅ Helius Devnet connection test successful:', {
+            console.log('✅ Helius connection test successful:', {
                 slot,
                 version: version['solana-core'],
                 rpcUrl: HELIUS_RPC_URL.substring(0, 50) + '...'
@@ -137,16 +139,16 @@ class HeliusService {
                 success: true,
                 slot,
                 version: version['solana-core'],
-                network: 'devnet'
+                network: 'mainnet'
             };
         }
         catch (error) {
-            console.error('❌ Helius Devnet connection test failed:', error);
+            console.error('❌ Helius connection test failed:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return {
                 success: false,
                 error: errorMessage,
-                network: 'devnet'
+                network: 'mainnet'
             };
         }
     }

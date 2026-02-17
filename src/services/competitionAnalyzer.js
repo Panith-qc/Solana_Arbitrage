@@ -4,7 +4,7 @@ export class CompetitionAnalyzer {
             enumerable: true,
             configurable: true,
             writable: true,
-            value: 'https://jxwynzsxyxzohlhkqmpt.supabase.co/functions/v1'
+            value: `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`
         });
     }
     async getCompetitorData() {
