@@ -16,7 +16,7 @@ import { AlertManager } from './alertManager.js';
 import { TradeJournal } from './tradeJournal.js';
 import { GeyserClient } from './geyserClient.js';
 import { PoolMonitor } from './poolMonitor.js';
-import { InstructionDecoder } from './instructionDecoder.js';
+import { decodeSwapInstruction, decodeAllSwaps } from './instructionDecoder.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
 
 // Strategies
@@ -69,7 +69,12 @@ export class BotEngine {
   // Data
   private geyserClient: GeyserClient;
   private poolMonitor: PoolMonitor;
-  private instructionDecoder: InstructionDecoder;
+  // Adapter object wrapping the instructionDecoder module functions
+  // to satisfy the local InstructionDecoder interface in sandwich/frontrun strategies
+  private instructionDecoderAdapter: {
+    decodeSwapInstruction: typeof decodeSwapInstruction;
+    decodeTransaction: (tx: any) => any | null;
+  };
 
   // Monitoring
   private metrics: MetricsCollector;
@@ -108,7 +113,25 @@ export class BotEngine {
     // Data
     this.geyserClient = new GeyserClient(this.config);
     this.poolMonitor = new PoolMonitor(this.connectionManager, this.config);
-    this.instructionDecoder = new InstructionDecoder();
+    this.instructionDecoderAdapter = {
+      decodeSwapInstruction,
+      decodeTransaction: (tx: any) => {
+        // Adapt raw Geyser transaction data into the ParsedTransactionData
+        // format that sandwich/frontrun strategies expect
+        if (!tx || !tx.instructions) return null;
+        const swaps = tx.instructions
+          .map((ix: any) => decodeSwapInstruction(ix))
+          .filter(Boolean);
+        if (swaps.length === 0) return null;
+        return {
+          signature: tx.signature || '',
+          instructions: swaps,
+          feePayer: tx.accounts?.[0] || '',
+          recentBlockhash: '',
+          raw: tx,
+        };
+      },
+    };
 
     // Monitoring
     this.metrics = new MetricsCollector();
@@ -408,7 +431,7 @@ export class BotEngine {
       this.positionTracker.openPosition(
         opp.id, opp.strategy,
         opp.mintPath[1], opp.tokenPath[1],
-        tradeAmountLamports.toString(), this.solPriceUsd
+        tradeAmountLamports, this.solPriceUsd
       );
     }
 
@@ -470,9 +493,13 @@ export class BotEngine {
           result.gasUsed || 0, (result.gasUsed || 0) * this.solPriceUsd
         );
         this.metrics.recordTrade(opp.strategy, 'success', result.profitSol || 0, latencyMs);
+        // Compute the output amount from input + profit
+        const outputLamports = tradeAmountLamports + BigInt(Math.round((result.profitSol || 0) * 1e9));
+        const outputAmountStr = outputLamports.toString();
+
         this.tradeJournal.completeTrade(
           opp.id,
-          result.outputAmount || '0',
+          outputAmountStr,
           result.profitSol || 0,
           result.profitUsd || 0,
           result.gasUsed || 0,
@@ -482,7 +509,7 @@ export class BotEngine {
         );
 
         // Close position
-        this.positionTracker.closePosition(opp.id, result.outputAmount || '0', this.solPriceUsd);
+        this.positionTracker.closePosition(opp.id, outputLamports, this.solPriceUsd);
 
         log.info({
           profitSol: result.profitSol,
@@ -507,17 +534,17 @@ export class BotEngine {
         log.error({ error: result.error, signatures: result.signatures }, 'Trade failed');
 
         // Handle stuck tokens
-        if (result.needsRecovery && result.stuckTokenMint) {
+        if (result.stuckToken) {
           this.database.addStuckToken(
-            result.stuckTokenMint,
-            opp.tokenPath[1] || 'UNKNOWN',
-            result.stuckTokenBalance || '0',
+            result.stuckToken.tokenMint,
+            result.stuckToken.tokenSymbol || opp.tokenPath[1] || 'UNKNOWN',
+            String(result.stuckToken.estimatedBalanceLamports),
             opp.id
           );
           await this.alertManager.alertStuckToken(
-            opp.tokenPath[1] || 'UNKNOWN',
-            result.stuckTokenMint,
-            result.stuckTokenBalance || '0'
+            result.stuckToken.tokenSymbol || opp.tokenPath[1] || 'UNKNOWN',
+            result.stuckToken.tokenMint,
+            String(result.stuckToken.estimatedBalanceLamports)
           );
         }
       }
@@ -545,10 +572,15 @@ export class BotEngine {
           if (!strategy.isActive()) continue;
 
           if (strategy instanceof SandwichStrategy) {
-            const opp = await strategy.onPendingTransaction(txData);
+            // Adapt geyser ParsedTransactionData to the strategy's local format
+            const adapted = this.instructionDecoderAdapter.decodeTransaction(txData);
+            if (!adapted) continue;
+            const opp = await strategy.onPendingTransaction(adapted);
             if (opp) await this.executeOpportunity(opp);
           } else if (strategy instanceof FrontrunStrategy) {
-            const opp = await strategy.onPendingTransaction(txData);
+            const adapted = this.instructionDecoderAdapter.decodeTransaction(txData);
+            if (!adapted) continue;
+            const opp = await strategy.onPendingTransaction(adapted);
             if (opp) await this.executeOpportunity(opp);
           }
           // JIT liquidity uses onPendingSwap with decoded swap details
@@ -595,7 +627,8 @@ export class BotEngine {
 
     if (profile.strategies.sandwich) {
       const strategy = new SandwichStrategy(
-        this.connectionManager, this.config, this.geyserClient, this.instructionDecoder
+        this.connectionManager, this.config, this.riskProfile,
+        this.geyserClient as any, this.instructionDecoderAdapter as any
       );
       this.strategies.set('sandwich', strategy);
       this.mevStrategies.push(strategy);
@@ -603,7 +636,8 @@ export class BotEngine {
 
     if (profile.strategies.frontrun) {
       const strategy = new FrontrunStrategy(
-        this.connectionManager, this.config, this.geyserClient, this.instructionDecoder
+        this.connectionManager, this.config, this.riskProfile,
+        this.geyserClient as any, this.instructionDecoderAdapter as any
       );
       this.strategies.set('frontrun', strategy);
       this.mevStrategies.push(strategy);
@@ -625,7 +659,7 @@ export class BotEngine {
 
     if (profile.strategies.jitLiquidity) {
       const strategy = new JITLiquidityStrategy(
-        this.connectionManager, this.config, this.riskProfile, this.geyserClient
+        this.connectionManager, this.config, this.riskProfile, this.geyserClient as any
       );
       this.strategies.set('jit-liquidity', strategy);
       this.mevStrategies.push(strategy as any);
@@ -657,9 +691,23 @@ export class BotEngine {
           continue;
         }
 
-        // Try to swap back to SOL
+        // Get a proper Jupiter quote for the recovery swap
+        const quoteUrl = new URL(`${this.config.jupiterApiUrl}/swap/v1/quote`);
+        quoteUrl.searchParams.set('inputMint', stuck.token_mint);
+        quoteUrl.searchParams.set('outputMint', 'So11111111111111111111111111111111111111112');
+        quoteUrl.searchParams.set('amount', balance.toString());
+        quoteUrl.searchParams.set('slippageBps', this.riskProfile.slippageBps.toString());
+
+        const quoteResp = await fetch(quoteUrl.toString());
+        if (!quoteResp.ok) {
+          engineLog.warn({ symbol: stuck.symbol, status: quoteResp.status }, 'Failed to get recovery quote');
+          continue;
+        }
+        const recoveryQuote = await quoteResp.json();
+
+        // Swap back to SOL
         const result = await this.executor.executeQuotedSwap(
-          { inputMint: stuck.token_mint, outputMint: 'So11111111111111111111111111111111111111112', amount: balance.toString() },
+          recoveryQuote,
           this.riskProfile.slippageBps
         );
 
@@ -738,7 +786,7 @@ export class BotEngine {
       if (this.status !== 'running') return;
       const aged = this.positionTracker.getOldPositions(300000); // 5 min
       for (const pos of aged) {
-        engineLog.warn({ tradeId: pos.tradeId, age: Date.now() - pos.openedAt, token: pos.tokenSymbol }, 'Position aging');
+        engineLog.warn({ tradeId: pos.tradeId, age: Date.now() - pos.entryTimestamp, token: pos.tokenSymbol }, 'Position aging');
       }
     }, 60000);
 

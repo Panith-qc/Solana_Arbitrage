@@ -4,6 +4,7 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { engineLog } from './logger.js';
 
 export interface TradeRecord {
@@ -64,7 +65,6 @@ export class BotDatabase {
     const resolvedPath = dbPath || path.join(process.cwd(), 'data', 'bot.db');
     // Ensure directory exists
     const dir = path.dirname(resolvedPath);
-    const fs = require('fs');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
