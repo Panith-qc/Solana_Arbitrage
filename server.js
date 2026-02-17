@@ -112,9 +112,9 @@ async function getSOLPriceUSD() {
       console.warn(`⚠️  SOL price fetch failed, using cached: $${solPriceCache.price.toFixed(2)}`);
       return solPriceCache.price;
     }
-    // Last resort - conservative fallback, but log it clearly
-    console.error('❌ SOL price unavailable, using conservative fallback: $150');
-    return 150;
+    // No cached price and API failed — return null so callers skip trades
+    console.error('❌ SOL price unavailable — skipping this cycle');
+    return null;
   }
 }
 
@@ -122,6 +122,9 @@ async function getSOLPriceUSD() {
 let botRunning = false;
 let consecutiveFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 10; // Circuit breaker threshold
+
+// Stuck token recovery queue — tokens left over from failed reverse swaps
+let stuckTokens = [];
 
 let botStats = {
   totalScans: 0,
@@ -301,16 +304,67 @@ app.post('/api/quote', requireAdmin, async (req, res) => {
 // MEV BOT LOGIC (Unified with frontend logic)
 // ==========================================
 
+// ==========================================
+// RATE LIMITING (free tier safe)
+// ==========================================
+const JUPITER_MAX_REQ_PER_SEC = parseInt(process.env.JUPITER_RATE_LIMIT_PER_SEC || '1', 10);
+const JUPITER_MIN_DELAY_MS = Math.ceil(1000 / JUPITER_MAX_REQ_PER_SEC);
+
+async function rateLimitedDelay() {
+  return new Promise(resolve => setTimeout(resolve, JUPITER_MIN_DELAY_MS));
+}
+
 /**
- * Get scan interval based on time of day (mirrors frontend StrategyEngine)
+ * Get scan interval based on time of day.
+ * Increased to stay safe on free tier:
+ *   - With serialized requests and ~15 tokens → ~30s per cycle
+ *   - Interval adds buffer after cycle completes
  */
 function getScanInterval() {
   const hour = new Date().getUTCHours();
   // High activity periods
   if ((hour >= 7 && hour <= 11) || (hour >= 13 && hour <= 16) || (hour >= 21 && hour <= 24)) {
-    return 12000; // 12 seconds
+    return 30000; // 30 seconds
   }
-  return 20000; // 20 seconds
+  return 45000; // 45 seconds
+}
+
+/**
+ * Attempt to recover stuck tokens from failed reverse swaps.
+ * Tries to swap them back to SOL.
+ */
+async function recoverStuckTokens() {
+  if (stuckTokens.length === 0) return;
+
+  console.log(`🔧 Attempting recovery of ${stuckTokens.length} stuck token(s)...`);
+  const remaining = [];
+
+  for (const stuck of stuckTokens) {
+    try {
+      // Check if we still hold the token
+      const balance = await verifyTokenBalance(stuck.tokenMint, 3000);
+      if (balance <= 0n) {
+        console.log(`   ✅ ${stuck.symbol} already recovered (balance is 0)`);
+        continue;
+      }
+
+      await rateLimitedDelay();
+      const quote = await getQuote(stuck.tokenMint, SOL_MINT, balance.toString());
+      await rateLimitedDelay();
+      const sig = await executeSwap(quote);
+      console.log(`   ✅ Recovered ${stuck.symbol} → SOL: ${sig}`);
+    } catch (error) {
+      console.error(`   ❌ Recovery failed for ${stuck.symbol}: ${error.message}`);
+      // Keep in queue if less than 1 hour old
+      if (Date.now() - stuck.timestamp < 3600000) {
+        remaining.push(stuck);
+      } else {
+        console.warn(`   ⏰ Giving up on ${stuck.symbol} (>1 hour old) — manual intervention needed`);
+      }
+    }
+  }
+
+  stuckTokens = remaining;
 }
 
 async function startMEVBot() {
@@ -341,11 +395,20 @@ async function startMEVBot() {
         console.log('🔄 Circuit breaker reset, resuming...');
       }
 
+      // Attempt to recover any stuck tokens from previous failed swaps
+      await recoverStuckTokens();
+
       botStats.totalScans++;
       botStats.lastScanTime = new Date().toISOString();
 
-      // Refresh SOL price periodically
+      // Refresh SOL price periodically — skip cycle if unavailable
       const solPrice = await getSOLPriceUSD();
+      if (solPrice === null) {
+        console.warn('⚠️  Skipping scan — no SOL price available');
+        const interval = getScanInterval();
+        await new Promise(resolve => setTimeout(resolve, interval));
+        continue;
+      }
       botStats.currentSOLPrice = solPrice;
 
       const opportunities = await scanForOpportunities(solPrice);
@@ -394,23 +457,25 @@ async function scanForOpportunities(solPrice) {
   const scanAmount = 100000000; // 0.1 SOL in lamports
   const opportunities = [];
 
-  // Scan all tokens in parallel (mirrors frontend's parallel scanning)
-  const scanPromises = SCAN_TOKENS.map(async (token) => {
+  // Scan tokens SEQUENTIALLY to respect free tier rate limits
+  // Each getQuote call is followed by a rate-limit delay
+  for (const token of SCAN_TOKENS) {
     try {
+      await rateLimitedDelay();
       const forwardQuote = await getQuote(SOL_MINT, token.mint, scanAmount);
-      if (!forwardQuote || !forwardQuote.outAmount) return null;
+      if (!forwardQuote || !forwardQuote.outAmount) continue;
 
+      await rateLimitedDelay();
       const backwardQuote = await getQuote(token.mint, SOL_MINT, forwardQuote.outAmount);
-      if (!backwardQuote || !backwardQuote.outAmount) return null;
+      if (!backwardQuote || !backwardQuote.outAmount) continue;
 
       const solBack = parseInt(backwardQuote.outAmount);
       const profit = (solBack - scanAmount) / 1e9;
-      const profitUSD = profit * solPrice;
       const lossPercent = ((scanAmount - solBack) / scanAmount) * 100;
 
-      // Quality gate: reject if round-trip loss > 3% (tightened from 5%)
-      if (lossPercent > 3 && profit < 0) {
-        return null;
+      // Quality gate: reject if round-trip loss > 3%
+      if (lossPercent > 3) {
+        continue;
       }
 
       // Only pursue if profitable after estimated fees (~0.004 SOL for 2 swaps)
@@ -418,8 +483,9 @@ async function scanForOpportunities(solPrice) {
       const netProfitSOL = profit - estimatedFeesSOL;
       const netProfitUSD = netProfitSOL * solPrice;
 
-      if (netProfitUSD > 0.01) {
-        return {
+      // Minimum $0.50 profit to justify gas + risk
+      if (netProfitUSD > 0.50) {
+        opportunities.push({
           token: token.symbol,
           tokenMint: token.mint,
           inputAmount: scanAmount / 1e9,
@@ -429,19 +495,11 @@ async function scanForOpportunities(solPrice) {
           lossPercent,
           forwardQuote,
           backwardQuote,
-        };
+        });
       }
-      return null;
     } catch (error) {
       // Skip failed quotes silently
-      return null;
-    }
-  });
-
-  const results = await Promise.allSettled(scanPromises);
-  for (const result of results) {
-    if (result.status === 'fulfilled' && result.value) {
-      opportunities.push(result.value);
+      continue;
     }
   }
 
@@ -568,8 +626,15 @@ async function executeArbitrageServerSide(opportunity, solPrice) {
       tokenBalance = await verifyTokenBalance(opportunity.tokenMint);
       console.log(`   ✅ Token balance verified: ${tokenBalance}`);
     } catch (verifyError) {
-      console.error(`   ⚠️  Token verification failed, using quote amount`);
-      tokenBalance = BigInt(opportunity.forwardQuote.outAmount);
+      console.error(`   ❌ Token verification failed — cannot confirm forward swap landed`);
+      console.error(`   ⚠️  Aborting reverse. Tokens may need manual recovery.`);
+      return {
+        success: false,
+        error: 'Forward swap unverified — aborted reverse to prevent blind swap',
+        signatures,
+        needsRecovery: true,
+        stuckToken: opportunity.tokenMint,
+      };
     }
 
     // ═══════════════════════════════════════════════════════
@@ -577,14 +642,15 @@ async function executeArbitrageServerSide(opportunity, solPrice) {
     // ═══════════════════════════════════════════════════════
     let reverseQuote;
     try {
+      await rateLimitedDelay();
       reverseQuote = await getQuote(
         opportunity.tokenMint,
         SOL_MINT,
         tokenBalance.toString()
       );
     } catch (quoteError) {
-      // Fallback: use original backward quote
-      console.warn(`   ⚠️  Fresh reverse quote failed, using original`);
+      // Fallback: use original backward quote (from scan, may be slightly stale)
+      console.warn(`   ⚠️  Fresh reverse quote failed, using scan quote as fallback`);
       reverseQuote = opportunity.backwardQuote;
     }
 
@@ -607,8 +673,9 @@ async function executeArbitrageServerSide(opportunity, solPrice) {
         if (reverseAttempts < maxReverseAttempts) {
           // Wait before retry with exponential backoff
           await new Promise(r => setTimeout(r, 1000 * reverseAttempts));
-          // Get fresh quote for retry
+          // Get fresh quote for retry (with rate limit delay)
           try {
+            await rateLimitedDelay();
             reverseQuote = await getQuote(opportunity.tokenMint, SOL_MINT, tokenBalance.toString());
           } catch (e) {
             // Use previous quote
@@ -619,10 +686,16 @@ async function executeArbitrageServerSide(opportunity, solPrice) {
 
     if (!reverseSig) {
       console.error(`   ❌ CRITICAL: Reverse swap failed after ${maxReverseAttempts} attempts!`);
-      console.error(`   ⚠️  Holding ${opportunity.token} tokens - manual intervention needed`);
+      console.error(`   ⚠️  Queuing ${opportunity.token} for auto-recovery on next cycle`);
+      stuckTokens.push({
+        tokenMint: opportunity.tokenMint,
+        symbol: opportunity.token,
+        balance: tokenBalance.toString(),
+        timestamp: Date.now(),
+      });
       return {
         success: false,
-        error: 'Reverse swap failed - stuck holding tokens',
+        error: 'Reverse swap failed - queued for auto-recovery',
         signatures,
         needsRecovery: true,
         stuckToken: opportunity.tokenMint,

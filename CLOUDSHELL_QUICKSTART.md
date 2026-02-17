@@ -47,9 +47,9 @@ git clone https://github.com/Panith-qc/Solana_Arbitrage.git && \
 cd Solana_Arbitrage && \
 gcloud config set project YOUR_PROJECT_ID && \
 gcloud services enable cloudbuild.googleapis.com run.googleapis.com secretmanager.googleapis.com containerregistry.googleapis.com && \
-echo "https://mainnet.helius-rpc.com/?api-key=926fd4af-7c9d-4fa3-9504-a2970ac5f16d" | gcloud secrets create helius-rpc-url --data-file=- 2>/dev/null; \
-echo "926fd4af-7c9d-4fa3-9504-a2970ac5f16d" | gcloud secrets create helius-api-key --data-file=- 2>/dev/null; \
-echo "bca82c35-07e5-4ab0-9a8f-7d23333ffa93" | gcloud secrets create jupiter-ultra-api-key --data-file=- 2>/dev/null; \
+echo "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY" | gcloud secrets create helius-rpc-url --data-file=- 2>/dev/null; \
+echo "YOUR_HELIUS_API_KEY" | gcloud secrets create helius-api-key --data-file=- 2>/dev/null; \
+echo "YOUR_JUPITER_ULTRA_API_KEY" | gcloud secrets create jupiter-ultra-api-key --data-file=- 2>/dev/null; \
 echo "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE,D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ,9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta,5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn,2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD,2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ,wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF,3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT,4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey,4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or" | gcloud secrets create jito-tip-accounts --data-file=- 2>/dev/null; \
 gcloud run deploy solana-mev-bot --source . --platform managed --region us-central1 --allow-unauthenticated --memory 2Gi --cpu 2 --min-instances 1 --max-instances 3 --port 8080 --timeout 300 --set-env-vars "NODE_ENV=production,JUPITER_ULTRA_ENABLED=true" --set-secrets "VITE_HELIUS_RPC_URL=helius-rpc-url:latest,HELIUS_API_KEY=helius-api-key:latest,JUPITER_ULTRA_API_KEY=jupiter-ultra-api-key:latest,JITO_TIP_ACCOUNTS=jito-tip-accounts:latest" && \
 echo "✅ DEPLOYMENT COMPLETE!" && \

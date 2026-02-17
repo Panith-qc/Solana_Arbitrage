@@ -18,7 +18,7 @@
 'c3b1a2d9-41e7-46c2-b6ff-f9b7e4cb8a23'
 
 // NEW (paid tier - 600 req/min):
-'926fd4af-7c9d-4fa3-9504-a2970ac5f16d'
+'YOUR_HELIUS_API_KEY'
 ```
 
 **Files Fixed:**

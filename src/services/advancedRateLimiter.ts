@@ -32,11 +32,11 @@ export class AdvancedRateLimiter {
   };
 
   constructor(config: Partial<RateLimitConfig> = {}) {
-    // Default: Jupiter FREE tier
+    // Default: Jupiter FREE tier (conservative)
     this.config = {
-      requestsPerMinute: config.requestsPerMinute || 100,
-      requestsPerSecond: config.requestsPerSecond || 3,
-      burstSize: config.burstSize || 5,
+      requestsPerMinute: config.requestsPerMinute || 60,
+      requestsPerSecond: config.requestsPerSecond || 1,
+      burstSize: config.burstSize || 2,
       tier: config.tier || 'free',
     };
 
@@ -260,33 +260,39 @@ export class AdvancedRateLimiter {
 // Rate limiter configurations
 export const RATE_LIMIT_CONFIGS = {
   // Jupiter API limits
-  JUPITER_LITE: {
+  JUPITER_FREE: {
     requestsPerMinute: 60,
     requestsPerSecond: 1,
     burstSize: 2,
     tier: 'free' as const,
   },
-  JUPITER_ULTRA: {
+  JUPITER_PAID: {
     requestsPerMinute: 1200, // 20 req/sec
     requestsPerSecond: 20,
     burstSize: 50,
     tier: 'paid' as const,
   },
-  
-  // Helius RPC limits (ACTUAL PAID TIER: 10 req/sec)
+
+  // Helius RPC limits
+  HELIUS_FREE: {
+    requestsPerMinute: 120, // ~2 req/sec
+    requestsPerSecond: 2,
+    burstSize: 3,
+    tier: 'free' as const,
+  },
   HELIUS_PAID: {
-    requestsPerMinute: 600, // 10 req/sec = 600 req/min
+    requestsPerMinute: 600, // 10 req/sec
     requestsPerSecond: 10,
     burstSize: 30,
     tier: 'paid' as const,
   },
 };
 
-// Determine tier from environment variable
-function getJupiterTier(): 'free' | 'paid' {
+// Determine tier from environment variable (defaults to 'free')
+function getTier(envKey: string): 'free' | 'paid' {
   try {
-    const tier = import.meta.env?.VITE_JUPITER_RATE_LIMIT_TIER
-      || import.meta.env?.JUPITER_RATE_LIMIT_TIER
+    const tier = import.meta.env?.[`VITE_${envKey}`]
+      || import.meta.env?.[envKey]
       || 'free';
     return tier === 'paid' ? 'paid' : 'free';
   } catch {
@@ -294,9 +300,12 @@ function getJupiterTier(): 'free' | 'paid' {
   }
 }
 
-const jupiterTier = getJupiterTier();
-const jupiterConfig = jupiterTier === 'paid' ? RATE_LIMIT_CONFIGS.JUPITER_ULTRA : RATE_LIMIT_CONFIGS.JUPITER_LITE;
+const jupiterTier = getTier('JUPITER_RATE_LIMIT_TIER');
+const heliusTier = getTier('HELIUS_RATE_LIMIT_TIER');
 
-// Export singleton instances - tier selected from env (set JUPITER_RATE_LIMIT_TIER=paid for Ultra)
+const jupiterConfig = jupiterTier === 'paid' ? RATE_LIMIT_CONFIGS.JUPITER_PAID : RATE_LIMIT_CONFIGS.JUPITER_FREE;
+const heliusConfig = heliusTier === 'paid' ? RATE_LIMIT_CONFIGS.HELIUS_PAID : RATE_LIMIT_CONFIGS.HELIUS_FREE;
+
+// Export singleton instances - tier selected from env (defaults to FREE)
 export const jupiterRateLimiter = new AdvancedRateLimiter(jupiterConfig);
-export const heliusRateLimiter = new AdvancedRateLimiter(RATE_LIMIT_CONFIGS.HELIUS_PAID);
+export const heliusRateLimiter = new AdvancedRateLimiter(heliusConfig);
