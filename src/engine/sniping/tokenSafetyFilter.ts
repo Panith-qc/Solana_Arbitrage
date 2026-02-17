@@ -37,7 +37,7 @@ export interface TokenCheckInput {
 }
 
 // Metaplex Token Metadata program
-const TOKEN_METADATA_PROGRAM = new PublicKey('metaqbxxUoYSflSKQASbR64Q5ELBGKBTVma3KmGkfLP');
+const TOKEN_METADATA_PROGRAM = new PublicKey('metaqbxxUoYSf1SKQASbR64Q5ELBGKBTVma3KmGkfLP');
 
 export class TokenSafetyFilter {
   private connectionManager: ConnectionManager;
