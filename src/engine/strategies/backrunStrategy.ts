@@ -164,7 +164,8 @@ export class BackrunStrategy extends BaseStrategy {
         const expectedReversionSol = inputSol * (EXPECTED_REVERSION_BPS / 10_000);
         const fees = this.calculateFees(inputSol);
         const netProfitSol = expectedReversionSol - roundTripLoss - fees.total;
-        const solPriceUsd = this.botConfig.solPriceUsd || 150;
+        const solPriceUsd = this.botConfig.solPriceUsd;
+        if (!solPriceUsd || solPriceUsd <= 0) continue;
         const netProfitUsd = netProfitSol * solPriceUsd;
 
         if (netProfitUsd >= this.config.minProfitUsd) {
@@ -258,7 +259,8 @@ export class BackrunStrategy extends BaseStrategy {
       const expectedReversionSol = backrunAmountSol * (EXPECTED_REVERSION_BPS / 10_000);
       const fees = this.calculateFees(backrunAmountSol);
       const netProfitSol = expectedReversionSol - fees.total;
-      const solPriceUsd = this.botConfig.solPriceUsd || 150;
+      const solPriceUsd = this.botConfig.solPriceUsd;
+      if (!solPriceUsd || solPriceUsd <= 0) return null;
       const netProfitUsd = netProfitSol * solPriceUsd;
 
       if (netProfitUsd < this.config.minProfitUsd) return null;

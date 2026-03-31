@@ -19,7 +19,7 @@ import { BotConfig, SOL_MINT, LAMPORTS_PER_SOL } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const SNIPE_SLIPPAGE_BPS = 1500;              // 15% slippage for new tokens
+const SNIPE_SLIPPAGE_BPS = 500;               // 5% slippage for new tokens
 const PRIORITY_FEE_LAMPORTS = 1_000_000;      // 0.001 SOL priority fee
 const CONFIRM_TIMEOUT_MS = 30_000;
 const EXIT_POLL_INTERVAL_MS = 3_000;          // Check exit conditions every 3s
@@ -194,7 +194,13 @@ export class SnipeExecutor {
       // 7. Calculate entry price
       const entryPricePerToken = amountSol / Number(tokenBalance);
 
-      // 8. Create position
+      // 8. Require valid SOL price
+      const solPriceUsd = this.config.solPriceUsd;
+      if (!solPriceUsd || solPriceUsd <= 0) {
+        return { success: false, position: null, error: 'SOL price not available', signature };
+      }
+
+      // 9. Create position
       const position: SnipePosition = {
         id,
         tokenMint,
@@ -204,7 +210,7 @@ export class SnipeExecutor {
         entryTokenAmount: tokenBalance,
         entryPricePerToken,
         entryTimestamp: Date.now(),
-        entrySolPrice: this.config.solPriceUsd || 150,
+        entrySolPrice: solPriceUsd,
         entrySignature: signature,
         initialPoolLiquidityLamports,
         status: 'open',

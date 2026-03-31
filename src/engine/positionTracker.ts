@@ -4,6 +4,7 @@
 
 import { riskLog } from './logger.js';
 import { LAMPORTS_PER_SOL } from './config.js';
+import { BotDatabase } from './database.js';
 
 // ═══════════════════════════════════════════════════════════
 // TYPES
@@ -47,12 +48,37 @@ export interface PositionSummary {
 export class PositionTracker {
   private readonly openPositions: Map<string, Position> = new Map();
   private readonly closedPositions: ClosedPosition[] = [];
+  private db: BotDatabase | null = null;
 
   // Caps to prevent unbounded memory growth on long-running bots
   private static readonly MAX_CLOSED_HISTORY = 10_000;
 
-  constructor() {
-    riskLog.info('PositionTracker initialized');
+  constructor(db?: BotDatabase) {
+    if (db) {
+      this.db = db;
+      this.loadFromDatabase();
+    }
+    riskLog.info({ restoredPositions: this.openPositions.size }, 'PositionTracker initialized');
+  }
+
+  private loadFromDatabase(): void {
+    if (!this.db) return;
+    const rows = this.db.getOpenPositions();
+    for (const row of rows) {
+      this.openPositions.set(row.trade_id, {
+        tradeId: row.trade_id,
+        strategy: row.strategy,
+        tokenMint: row.token_mint,
+        tokenSymbol: row.token_symbol,
+        amountLamports: BigInt(row.amount_lamports),
+        entrySolPrice: row.entry_sol_price,
+        entryTimestamp: row.entry_timestamp,
+        status: 'open',
+      });
+    }
+    if (rows.length > 0) {
+      riskLog.info({ count: rows.length }, 'Restored open positions from database');
+    }
   }
 
   // ─────────────────────────────────────────────────────────
@@ -88,6 +114,11 @@ export class PositionTracker {
     };
 
     this.openPositions.set(tradeId, position);
+
+    // Persist to SQLite
+    if (this.db) {
+      this.db.savePosition(tradeId, strategy, tokenMint, tokenSymbol, amountLamports.toString(), entrySolPrice, position.entryTimestamp);
+    }
 
     riskLog.info(
       {
@@ -138,6 +169,11 @@ export class PositionTracker {
     // Move from open to closed
     this.openPositions.delete(tradeId);
     this.closedPositions.push(closed);
+
+    // Persist closure to SQLite
+    if (this.db) {
+      this.db.closePositionRecord(tradeId);
+    }
 
     // Prune closed history if it grows too large
     if (this.closedPositions.length > PositionTracker.MAX_CLOSED_HISTORY) {
@@ -280,6 +316,9 @@ export class PositionTracker {
   removePosition(tradeId: string): boolean {
     const existed = this.openPositions.delete(tradeId);
     if (existed) {
+      if (this.db) {
+        this.db.removePositionRecord(tradeId);
+      }
       riskLog.warn({ tradeId }, 'Position force-removed without close');
     }
     return existed;

@@ -223,9 +223,12 @@ export class LiquidationStrategy extends BaseStrategy {
       const bonus = position.liquidationBonus || LIQUIDATION_BONUS_BPS / 10_000;
 
       // How much collateral we receive for repaying the debt
+      const solPriceUsd = this.botConfig.solPriceUsd;
+      if (!solPriceUsd || solPriceUsd <= 0) return null;
+
       const maxRepayUsd = Math.min(
         position.maxLiquidationUsd,
-        this.riskProfile.maxTradeAmountSol * (this.botConfig.solPriceUsd || 150),
+        this.riskProfile.maxTradeAmountSol * solPriceUsd,
       );
 
       // Collateral we claim = repay * (1 + bonus)
@@ -233,7 +236,6 @@ export class LiquidationStrategy extends BaseStrategy {
       const liquidationBonusUsd = maxRepayUsd * bonus;
 
       // Convert to SOL (rough estimate)
-      const solPriceUsd = this.botConfig.solPriceUsd || 150;
       const repayCostSol = maxRepayUsd / solPriceUsd;
       const collateralValueSol = collateralClaimUsd / solPriceUsd;
       const liquidationBonusSol = liquidationBonusUsd / solPriceUsd;

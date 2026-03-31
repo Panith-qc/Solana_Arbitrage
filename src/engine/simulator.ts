@@ -165,12 +165,15 @@ export async function simulateSwapProfitability(
   expectedOutputLamports: number,
   quote: Record<string, any> = {},
 ): Promise<ProfitabilityResult> {
-  // Estimate gas cost: typical Jupiter swap uses 200k-400k CU.
-  // At the current priority fee market we approximate 5000 lamports per 200k CU.
-  // This is a conservative upper-bound estimate; the real cost is often lower.
-  const ESTIMATED_CU = 400_000;
-  const MICRO_LAMPORTS_PER_CU = 25; // ~25 micro-lamports per CU is a reasonable priority fee
-  const estimatedGasCostLamports = Math.ceil((ESTIMATED_CU * MICRO_LAMPORTS_PER_CU) / 1_000_000) + 5_000; // base fee
+  // Realistic gas cost estimation for a single Jupiter swap:
+  // - Base fee: ~5,000 lamports (Solana base transaction fee)
+  // - Priority fee: ~100,000-200,000 lamports (Jupiter sets via 'auto')
+  // - For a 2-leg arb cycle, multiply by 2
+  // IMPORTANT: This must be a REALISTIC estimate, not an underestimate.
+  // Underestimating causes us to execute trades that lose money on fees.
+  const BASE_FEE_LAMPORTS = 5_000;
+  const PRIORITY_FEE_LAMPORTS = 200_000; // Jupiter 'auto' priority fee
+  const estimatedGasCostLamports = BASE_FEE_LAMPORTS + PRIORITY_FEE_LAMPORTS; // ~205k lamports per swap
 
   const grossProfitLamports = expectedOutputLamports - inputLamports;
   const netProfitLamports = grossProfitLamports - estimatedGasCostLamports;

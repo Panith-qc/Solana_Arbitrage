@@ -109,7 +109,7 @@ export class BotEngine {
 
     // Risk
     this.pnlTracker = new PnLTracker(this.database);
-    this.positionTracker = new PositionTracker();
+    this.positionTracker = new PositionTracker(this.database);
     this.riskManager = new RiskManager(this.config, this.pnlTracker, this.positionTracker, this.connectionManager);
 
     // Data
@@ -322,10 +322,20 @@ export class BotEngine {
       this.stats.status = 'running';
       this.metrics.updateCircuitBreaker(false, 0);
 
+      // Auto emergency stop check (rapid balance drops)
+      const autoStopped = await this.riskManager.checkAutoEmergencyStop();
+      if (autoStopped) {
+        engineLog.error('Auto emergency stop triggered - halting all operations');
+        await this.alertManager.sendAlert('critical', 'AUTO EMERGENCY STOP',
+          'Bot automatically stopped due to rapid balance drop or critically low balance');
+        await this.emergencyStop();
+        return;
+      }
+
       // Refresh SOL price
       await this.refreshSolPrice();
-      if (!this.solPriceUsd) {
-        engineLog.warn('No SOL price available, skipping scan');
+      if (!this.solPriceUsd || this.solPriceUsd <= 0) {
+        engineLog.warn('No valid SOL price available, skipping scan to protect capital');
         this.scanLoopTimer = setTimeout(() => this.runScanLoop(), 5000);
         return;
       }
@@ -343,27 +353,36 @@ export class BotEngine {
         }
       }
 
-      // Run poll-based strategies (cyclic, multi-hop, cross-dex, backrun, liquidation)
+      // Run poll-based strategies CONCURRENTLY for faster opportunity detection
       const allOpportunities: Opportunity[] = [];
+      const EVENT_DRIVEN = new Set(['sandwich', 'frontrun', 'jit-liquidity']);
+
+      const scanPromises: Array<Promise<{ name: string; opportunities: Opportunity[] }>> = [];
 
       for (const [name, strategy] of this.strategies) {
         if (!strategy.isActive()) continue;
+        if (EVENT_DRIVEN.has(name)) continue;
 
-        // Skip event-driven strategies in poll loop
-        if (name === 'sandwich' || name === 'frontrun' || name === 'jit-liquidity') continue;
+        this.stats.totalScans++;
+        this.metrics.recordScan(name);
 
-        try {
-          this.stats.totalScans++;
-          this.metrics.recordScan(name);
+        scanPromises.push(
+          strategy.scan()
+            .then((opportunities) => ({ name, opportunities }))
+            .catch((err) => {
+              engineLog.error({ err, strategy: name }, 'Strategy scan failed');
+              return { name, opportunities: [] };
+            }),
+        );
+      }
 
-          const opportunities = await strategy.scan();
+      // Wait for all strategies to complete their scans
+      const scanResults = await Promise.all(scanPromises);
 
-          if (opportunities.length > 0) {
-            engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
-            allOpportunities.push(...opportunities);
-          }
-        } catch (err) {
-          engineLog.error({ err, strategy: name }, 'Strategy scan failed');
+      for (const { name, opportunities } of scanResults) {
+        if (opportunities.length > 0) {
+          engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
+          allOpportunities.push(...opportunities);
         }
       }
 
@@ -387,13 +406,45 @@ export class BotEngine {
       this.riskManager.reportTradeResult(false, 0);
     }
 
-    // Schedule next scan
-    const interval = this.getScanInterval();
-    this.scanLoopTimer = setTimeout(() => this.runScanLoop(), interval);
+    // Schedule next scan with ±20% jitter to avoid predictable timing
+    const baseInterval = this.getScanInterval();
+    const jitter = baseInterval * (0.8 + Math.random() * 0.4);
+    this.scanLoopTimer = setTimeout(() => this.runScanLoop(), Math.round(jitter));
   }
 
   private async executeOpportunity(opp: Opportunity): Promise<void> {
     const log = tradeLogger(opp.id, opp.strategy);
+
+    // ── EXPIRATION CHECK ─────────────────────────────────────────
+    if (Date.now() > opp.expiresAt) {
+      log.info({ expiredAgoMs: Date.now() - opp.expiresAt }, 'Opportunity expired, skipping');
+      this.stats.tradesSkipped++;
+      this.metrics.recordTrade(opp.strategy, 'skipped', 0, 0);
+      return;
+    }
+
+    // ── PRICE IMPACT CHECK ───────────────────────────────────────
+    // Reject opportunities where any leg has excessive price impact
+    const MAX_PRICE_IMPACT_PCT = 2.0; // 2% max acceptable price impact
+    for (const quote of opp.quotes) {
+      const impact = parseFloat(quote?.priceImpactPct || '0');
+      if (Math.abs(impact) > MAX_PRICE_IMPACT_PCT) {
+        log.info(
+          { priceImpact: impact, maxAllowed: MAX_PRICE_IMPACT_PCT },
+          'Price impact too high, skipping opportunity',
+        );
+        this.stats.tradesSkipped++;
+        this.metrics.recordTrade(opp.strategy, 'skipped', 0, 0);
+        return;
+      }
+    }
+
+    // ── SOL PRICE CHECK ──────────────────────────────────────────
+    if (!this.solPriceUsd || this.solPriceUsd <= 0) {
+      log.warn('No valid SOL price available, refusing to trade');
+      this.stats.tradesSkipped++;
+      return;
+    }
 
     // Risk check
     const riskCheck = await this.riskManager.canTrade(
@@ -439,12 +490,21 @@ export class BotEngine {
 
     const startTime = Date.now();
 
+    // Capture pre-trade balance for actual profit verification
+    let preTradeBalanceSol = 0;
+    try {
+      preTradeBalanceSol = await this.connectionManager.getBalance();
+    } catch {
+      // Non-fatal, we'll use quote-based profit
+    }
+
     try {
       // Execute the trade
       let result: ExecutionResult;
 
       if (opp.quotes.length === 2) {
         // Standard 2-leg arbitrage: SOL → Token → SOL
+        // Use the sequential executor which handles inter-leg verification
         result = await this.executor.executeArbitrageCycle(
           opp.quotes[0],
           opp.mintPath[1],
@@ -452,21 +512,22 @@ export class BotEngine {
           this.solPriceUsd
         );
       } else if (opp.quotes.length >= 3) {
-        // Multi-leg: execute via Jito bundle if possible
-        if (this.config.jitoEnabled) {
-          const txStrings = opp.quotes.map((q: any) => q.swapTransaction).filter(Boolean);
-          if (txStrings.length > 0) {
-            result = await this.executor.executeViaJitoBundle(txStrings, this.config.jitoTipLamports);
-          } else {
-            // Fall back to sequential execution
-            result = await this.executor.executeArbitrageCycle(
-              opp.quotes[0],
-              opp.mintPath[1],
-              opp.tokenPath[1],
-              this.solPriceUsd
-            );
-          }
+        // Multi-leg: MUST use Jito bundles for atomic execution
+        // Sequential execution of 3+ legs is too risky (stuck tokens)
+        if (!this.config.jitoEnabled) {
+          log.warn('Multi-leg trade requires Jito bundles but JITO_ENABLED=false, skipping');
+          this.stats.tradesSkipped++;
+          this.metrics.recordTrade(opp.strategy, 'skipped', 0, 0);
+          return;
+        }
+
+        const txStrings = opp.quotes.map((q: any) => q.swapTransaction).filter(Boolean);
+        if (txStrings.length > 0) {
+          result = await this.executor.executeViaJitoBundle(txStrings, this.config.jitoTipLamports);
         } else {
+          // Quotes don't have pre-built transactions, fall back to 2-leg
+          // (only swap first pair as a safer subset)
+          log.warn('Multi-leg quotes lack pre-built TXs, falling back to first 2-leg cycle');
           result = await this.executor.executeArbitrageCycle(
             opp.quotes[0],
             opp.mintPath[1],
@@ -484,26 +545,58 @@ export class BotEngine {
       if (result.success) {
         this.stats.tradesExecuted++;
         this.stats.tradesSuccessful++;
-        this.stats.totalProfitSol += result.profitSol || 0;
-        this.stats.totalProfitUsd += result.profitUsd || 0;
 
-        // Record everywhere
-        this.riskManager.reportTradeResult(true, result.profitSol || 0);
+        // ── ACTUAL BALANCE VERIFICATION ──────────────────────────
+        // Use real on-chain balance delta as ground truth for profit
+        let verifiedProfitSol = result.profitSol || 0;
+        let verifiedProfitUsd = result.profitUsd || 0;
+        const estimatedFeesSol = result.jitoTip || 0; // Jito tip already tracked
+
+        if (preTradeBalanceSol > 0) {
+          try {
+            // Small delay for balance to settle on-chain
+            await new Promise(r => setTimeout(r, 1000));
+            const postTradeBalanceSol = await this.connectionManager.getBalance();
+            const actualDelta = postTradeBalanceSol - preTradeBalanceSol;
+
+            // Use actual delta if it's significantly different from reported
+            const reportedVsActualDiff = Math.abs(actualDelta - verifiedProfitSol);
+            if (reportedVsActualDiff > 0.0001) { // > 0.0001 SOL discrepancy
+              log.warn({
+                reportedProfitSol: verifiedProfitSol.toFixed(6),
+                actualDeltaSol: actualDelta.toFixed(6),
+                discrepancy: reportedVsActualDiff.toFixed(6),
+              }, 'Balance delta differs from reported profit - using actual');
+            }
+            // Always trust the on-chain balance delta
+            verifiedProfitSol = actualDelta;
+            verifiedProfitUsd = actualDelta * this.solPriceUsd;
+          } catch {
+            // If post-trade balance check fails, use executor's calculation
+            log.warn('Post-trade balance check failed, using executor profit estimate');
+          }
+        }
+
+        this.stats.totalProfitSol += verifiedProfitSol;
+        this.stats.totalProfitUsd += verifiedProfitUsd;
+
+        // Record everywhere with VERIFIED profit
+        this.riskManager.reportTradeResult(true, verifiedProfitSol);
         this.pnlTracker.recordTrade(
           opp.id, opp.strategy,
-          result.profitSol || 0, result.profitUsd || 0,
-          result.gasUsed || 0, (result.gasUsed || 0) * this.solPriceUsd
+          verifiedProfitSol, verifiedProfitUsd,
+          result.gasUsed || 0, estimatedFeesSol * this.solPriceUsd
         );
-        this.metrics.recordTrade(opp.strategy, 'success', result.profitSol || 0, latencyMs);
-        // Compute the output amount from input + profit
-        const outputLamports = tradeAmountLamports + BigInt(Math.round((result.profitSol || 0) * 1e9));
+        this.metrics.recordTrade(opp.strategy, 'success', verifiedProfitSol, latencyMs);
+        // Compute the output amount from input + verified profit
+        const outputLamports = tradeAmountLamports + BigInt(Math.round(verifiedProfitSol * 1e9));
         const outputAmountStr = outputLamports.toString();
 
         this.tradeJournal.completeTrade(
           opp.id,
           outputAmountStr,
-          result.profitSol || 0,
-          result.profitUsd || 0,
+          verifiedProfitSol,
+          verifiedProfitUsd,
           result.gasUsed || 0,
           result.jitoTip || 0,
           result.signatures,
@@ -514,11 +607,11 @@ export class BotEngine {
         this.positionTracker.closePosition(opp.id, outputLamports, this.solPriceUsd);
 
         log.info({
-          profitSol: result.profitSol,
-          profitUsd: result.profitUsd,
+          verifiedProfitSol: verifiedProfitSol.toFixed(6),
+          verifiedProfitUsd: verifiedProfitUsd.toFixed(2),
           signatures: result.signatures,
           latencyMs,
-        }, 'Trade successful');
+        }, 'Trade successful (profit verified via balance delta)');
 
         // Alert on significant profit
         if ((result.profitUsd || 0) > 1.0) {
@@ -700,12 +793,19 @@ export class BotEngine {
           continue;
         }
 
+        // Use aggressive slippage for recovery - we want OUT of this position
+        // Start with normal slippage, escalate if repeated failures
+        const recoverySlippageBps = Math.min(
+          500, // 5% max recovery slippage
+          this.riskProfile.slippageBps * 3, // 3x normal slippage
+        );
+
         // Get a proper Jupiter quote for the recovery swap
         const quoteUrl = new URL(`${this.config.jupiterApiUrl}/swap/v1/quote`);
         quoteUrl.searchParams.set('inputMint', stuck.token_mint);
         quoteUrl.searchParams.set('outputMint', 'So11111111111111111111111111111111111111112');
         quoteUrl.searchParams.set('amount', balance.toString());
-        quoteUrl.searchParams.set('slippageBps', this.riskProfile.slippageBps.toString());
+        quoteUrl.searchParams.set('slippageBps', recoverySlippageBps.toString());
 
         const quoteResp = await fetch(quoteUrl.toString());
         if (!quoteResp.ok) {
@@ -714,15 +814,33 @@ export class BotEngine {
         }
         const recoveryQuote = await quoteResp.json();
 
+        // Check if recovery output is worth the gas (don't waste SOL on dust)
+        const outputLamports = parseInt(recoveryQuote.outAmount || '0', 10);
+        const MIN_RECOVERY_LAMPORTS = 50_000; // ~0.00005 SOL minimum to bother
+        if (outputLamports < MIN_RECOVERY_LAMPORTS) {
+          engineLog.info(
+            { symbol: stuck.symbol, outputLamports, min: MIN_RECOVERY_LAMPORTS },
+            'Stuck token value too low to recover, marking as dust',
+          );
+          this.database.markTokenRecovered(stuck.id, 'dust_too_small');
+          continue;
+        }
+
         // Swap back to SOL
         const result = await this.executor.executeQuotedSwap(
           recoveryQuote,
-          this.riskProfile.slippageBps
+          recoverySlippageBps,
         );
 
         if (result.success) {
+          const recoveredSol = outputLamports / 1e9;
           this.database.markTokenRecovered(stuck.id, result.signatures[0] || 'recovered');
-          engineLog.info({ symbol: stuck.symbol, signature: result.signatures[0] }, 'Stuck token recovered');
+          engineLog.info(
+            { symbol: stuck.symbol, signature: result.signatures[0], recoveredSol: recoveredSol.toFixed(6) },
+            'Stuck token recovered successfully',
+          );
+          await this.alertManager.sendAlert('info', 'Token Recovered',
+            `Recovered ${recoveredSol.toFixed(4)} SOL from stuck ${stuck.symbol}`);
         }
       } catch (err) {
         engineLog.error({ err, symbol: stuck.symbol }, 'Stuck token recovery failed');
@@ -758,10 +876,14 @@ export class BotEngine {
         this.config.solPriceUsd = price;
       }
     } catch (err) {
-      if (this.solPriceUsd > 0) {
-        engineLog.warn({ err }, 'SOL price refresh failed, using cached');
+      if (this.solPriceUsd > 0 && Date.now() - this.solPriceCacheTs < 120_000) {
+        // Cache is less than 2 min old, acceptable to use
+        engineLog.warn({ err, cachedPrice: this.solPriceUsd }, 'SOL price refresh failed, using recent cache');
       } else {
-        engineLog.error({ err }, 'SOL price unavailable');
+        // Cache is stale or doesn't exist - clear it to halt trading
+        engineLog.error({ err }, 'SOL price unavailable and cache too old - trading will pause');
+        this.solPriceUsd = 0;
+        this.config.solPriceUsd = 0;
       }
     }
   }

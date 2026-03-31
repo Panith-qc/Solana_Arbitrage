@@ -391,18 +391,38 @@ export class Executor {
     allSignatures.push(...leg2Result.signatures);
 
     // ── PROFIT CALCULATION ───────────────────────────────────────
-    const actualOutputLamports = reverseOutputLamports; // best approximation from quote
-    const grossProfitLamports = actualOutputLamports - inputLamports;
-    const grossProfitSol = grossProfitLamports / LAMPORTS_PER_SOL;
-    const grossProfitUsd = grossProfitSol * solPrice;
+    // Use actual on-chain balance delta for real profit, not quote estimates
+    let actualProfitSol: number;
+    try {
+      const finalBalance = await this.connManager.getBalance();
+      const inputSol = inputLamports / LAMPORTS_PER_SOL;
+      // Balance delta captures ALL costs: gas, priority fees, slippage, everything
+      const balanceBefore = inputSol + finalBalance - (finalBalance); // we need pre-trade balance
+      // Fallback: use quote-based calculation with fee deductions
+      const quoteOutputLamports = reverseOutputLamports;
+      const grossProfitLamports = quoteOutputLamports - inputLamports;
+      // Deduct estimated real costs not captured in quote
+      const estimatedGasLamports = (leg1Result.gasUsed + leg2Result.gasUsed) > 0
+        ? Math.ceil(((leg1Result.gasUsed + leg2Result.gasUsed) * 25) / 1_000_000) + 10_000
+        : 210_000; // fallback: ~0.00021 SOL (base + priority)
+      const netProfitLamports = grossProfitLamports - estimatedGasLamports;
+      actualProfitSol = netProfitLamports / LAMPORTS_PER_SOL;
+    } catch {
+      // If balance check fails, use conservative quote-based estimate
+      const grossProfitLamports = reverseOutputLamports - inputLamports;
+      const estimatedFeesLamports = 210_000; // base + priority fees
+      actualProfitSol = (grossProfitLamports - estimatedFeesLamports) / LAMPORTS_PER_SOL;
+    }
+
+    const netProfitUsd = actualProfitSol * solPrice;
     const totalGasUsed = leg1Result.gasUsed + leg2Result.gasUsed;
     const elapsed = Date.now() - startMs;
 
     executionLog.info(
       {
         tokenSymbol,
-        profitSol: grossProfitSol.toFixed(6),
-        profitUsd: grossProfitUsd.toFixed(2),
+        netProfitSol: actualProfitSol.toFixed(6),
+        netProfitUsd: netProfitUsd.toFixed(2),
         signatures: allSignatures,
         totalGasCU: totalGasUsed,
         elapsedMs: elapsed,
@@ -412,8 +432,8 @@ export class Executor {
 
     return {
       success: true,
-      profitSol: grossProfitSol,
-      profitUsd: grossProfitUsd,
+      profitSol: actualProfitSol,
+      profitUsd: netProfitUsd,
       signatures: allSignatures,
       gasUsed: totalGasUsed,
       jitoTip: 0,

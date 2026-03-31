@@ -77,6 +77,11 @@ export class RiskManager {
   // Peak balance tracking for drawdown calculation
   private peakBalanceSol = 0;
 
+  // Auto emergency stop tracking
+  private recentBalances: Array<{ balance: number; timestamp: number }> = [];
+  private static readonly RAPID_DROP_WINDOW_MS = 60_000; // 1 minute window
+  private static readonly RAPID_DROP_THRESHOLD_PERCENT = 10; // 10% drop in 1 min = auto stop
+
   constructor(
     config: BotConfig,
     pnlTracker: PnLTracker,
@@ -515,6 +520,57 @@ export class RiskManager {
   setPeakBalance(peakSol: number): void {
     this.peakBalanceSol = peakSol;
     riskLog.info({ peakSol: peakSol.toFixed(4) }, 'Peak balance updated');
+  }
+
+  /**
+   * Check for rapid balance drops and trigger emergency stop automatically.
+   * Should be called periodically (e.g. every scan cycle).
+   * Returns true if emergency stop was triggered.
+   */
+  async checkAutoEmergencyStop(): Promise<boolean> {
+    if (this.emergencyStopped) return true;
+
+    try {
+      const balance = await this.getBalanceSol();
+      const now = Date.now();
+
+      // Track recent balances
+      this.recentBalances.push({ balance, timestamp: now });
+
+      // Remove entries older than the window
+      this.recentBalances = this.recentBalances.filter(
+        (entry) => now - entry.timestamp < RiskManager.RAPID_DROP_WINDOW_MS,
+      );
+
+      if (this.recentBalances.length < 2) return false;
+
+      // Check for rapid drop: compare current balance to the max in the window
+      const maxRecentBalance = Math.max(...this.recentBalances.map((e) => e.balance));
+      if (maxRecentBalance <= 0) return false;
+
+      const dropPercent = ((maxRecentBalance - balance) / maxRecentBalance) * 100;
+
+      if (dropPercent >= RiskManager.RAPID_DROP_THRESHOLD_PERCENT) {
+        this.activateEmergencyStop(
+          `AUTOMATIC: Rapid balance drop detected: ${dropPercent.toFixed(1)}% in ${RiskManager.RAPID_DROP_WINDOW_MS / 1000}s ` +
+          `(${maxRecentBalance.toFixed(4)} SOL -> ${balance.toFixed(4)} SOL)`,
+        );
+        return true;
+      }
+
+      // Also auto-stop if balance drops below minimum operational threshold
+      const MIN_OPERATIONAL_SOL = 0.05; // need at least 0.05 SOL for fees
+      if (balance < MIN_OPERATIONAL_SOL) {
+        this.activateEmergencyStop(
+          `AUTOMATIC: Balance critically low: ${balance.toFixed(6)} SOL < ${MIN_OPERATIONAL_SOL} SOL minimum`,
+        );
+        return true;
+      }
+    } catch (err) {
+      riskLog.error({ err }, 'Auto emergency stop check failed');
+    }
+
+    return false;
   }
 
   /**

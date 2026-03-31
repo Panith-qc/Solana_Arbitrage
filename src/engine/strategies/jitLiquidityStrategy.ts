@@ -142,7 +142,8 @@ export class JITLiquidityStrategy extends BaseStrategy {
 
       const totalCostSol = gasCost + priorityCost + impermanentLoss;
       const netProfitSol = feeIncome - totalCostSol;
-      const solPriceUsd = this.botConfig.solPriceUsd || 150;
+      const solPriceUsd = this.botConfig.solPriceUsd;
+      if (!solPriceUsd || solPriceUsd <= 0) return null;
       const netProfitUsd = netProfitSol * solPriceUsd;
 
       if (netProfitUsd < this.config.minProfitUsd) return null;

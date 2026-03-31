@@ -17,13 +17,14 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 // ── Fee Constants ──────────────────────────────────────────────────────────────
+// IMPORTANT: Jupiter's outAmount already includes DEX/platform fees.
+// Only add costs NOT reflected in the quote output.
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 200_000;
-const JUPITER_PLATFORM_FEE_BPS = 10;
-const DEX_SWAP_FEE_BPS = 30;
-const QUOTE_LIFETIME_MS = 12_000;   // 3-leg paths stale faster
-// Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
-const MAX_PAIRS_TO_CHECK = 20;      // cap to stay within rate limits
+const JITO_TIP_LAMPORTS = 150_000;   // slightly higher tip for 3-leg bundles
+const QUOTE_LIFETIME_MS = 12_000;    // 3-leg paths stale faster
+const EXECUTION_SAFETY_BUFFER_BPS = 25;  // higher buffer for 3-hop (more execution risk)
+const MAX_PAIRS_TO_CHECK = 20;       // cap to stay within rate limits
 
 // Stablecoin mints to skip pairing together (no arb between two stables)
 const STABLECOIN_MINTS = new Set([
@@ -266,18 +267,25 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
   } {
     const inputSol = Number(inputLamports) / LAMPORTS_PER_SOL;
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
+    // Jupiter quotes already embed DEX/platform fees in outAmount
     const grossProfitSol = outputSol - inputSol;
 
-    // 3 legs -> 3x swap fees
+    // Only costs NOT in the Jupiter quote:
     const gasFee = (BASE_GAS_LAMPORTS * 3) / LAMPORTS_PER_SOL;
     const priorityFee = PRIORITY_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-    const jupiterFee = inputSol * (JUPITER_PLATFORM_FEE_BPS / 10_000) * 3;
-    const dexFee = inputSol * (DEX_SWAP_FEE_BPS / 10_000) * 3;
-    const slippageCost = inputSol * (this.config.slippageBps / 10_000) * 3;
+    const jitoTip = JITO_TIP_LAMPORTS / LAMPORTS_PER_SOL;
+    const safetyBuffer = inputSol * (EXECUTION_SAFETY_BUFFER_BPS / 10_000);
 
-    const totalFeeSol = gasFee + priorityFee + jupiterFee + dexFee + slippageCost;
+    const totalFeeSol = gasFee + priorityFee + jitoTip + safetyBuffer;
     const netProfitSol = grossProfitSol - totalFeeSol;
-    const solPriceUsd = this.botConfig.solPriceUsd || 150;
+
+    const solPriceUsd = this.botConfig.solPriceUsd;
+    if (!solPriceUsd || solPriceUsd <= 0) {
+      return {
+        grossProfitSol, netProfitSol: -1, netProfitUsd: -1, totalFeeSol,
+        feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
+      };
+    }
     const netProfitUsd = netProfitSol * solPriceUsd;
 
     return {
@@ -285,7 +293,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
       netProfitSol,
       netProfitUsd,
       totalFeeSol,
-      feeBreakdown: { gasFee, priorityFee, jupiterFee, dexFee, slippageCost },
+      feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
     };
   }
 

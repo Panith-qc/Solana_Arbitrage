@@ -137,6 +137,19 @@ export class BotDatabase {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS positions (
+        trade_id TEXT PRIMARY KEY,
+        strategy TEXT NOT NULL,
+        token_mint TEXT NOT NULL,
+        token_symbol TEXT NOT NULL,
+        amount_lamports TEXT NOT NULL,
+        entry_sol_price REAL NOT NULL,
+        entry_timestamp INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
     `);
   }
 
@@ -301,6 +314,29 @@ export class BotDatabase {
     this.db.prepare(`
       INSERT OR REPLACE INTO bot_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
     `).run(key, value);
+  }
+
+  // ═══════════════════════════════════════════════
+  // POSITIONS (survive restarts)
+  // ═══════════════════════════════════════════════
+
+  savePosition(tradeId: string, strategy: string, tokenMint: string, tokenSymbol: string, amountLamports: string, entrySolPrice: number, entryTimestamp: number): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO positions (trade_id, strategy, token_mint, token_symbol, amount_lamports, entry_sol_price, entry_timestamp, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'open')
+    `).run(tradeId, strategy, tokenMint, tokenSymbol, amountLamports, entrySolPrice, entryTimestamp);
+  }
+
+  closePositionRecord(tradeId: string): void {
+    this.db.prepare(`UPDATE positions SET status = 'closed' WHERE trade_id = ?`).run(tradeId);
+  }
+
+  removePositionRecord(tradeId: string): void {
+    this.db.prepare(`DELETE FROM positions WHERE trade_id = ?`).run(tradeId);
+  }
+
+  getOpenPositions(): Array<{ trade_id: string; strategy: string; token_mint: string; token_symbol: string; amount_lamports: string; entry_sol_price: number; entry_timestamp: number }> {
+    return this.db.prepare(`SELECT * FROM positions WHERE status = 'open'`).all() as any[];
   }
 
   // ═══════════════════════════════════════════════
