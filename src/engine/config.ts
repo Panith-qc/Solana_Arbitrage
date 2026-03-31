@@ -166,8 +166,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       sandwich: false,
       frontrun: false,
       backrun: true,
-      liquidation: true,
-      jitLiquidity: true,
+      liquidation: false, // stub implementation - not ready for production
+      jitLiquidity: false, // stub implementation - whirlpool discovery not implemented
       sniping: true,
     },
   },

@@ -239,7 +239,7 @@ export function isTargetableForSandwich(
   details: SwapDetails,
   minProfitUsd: number,
   poolReserves?: PoolReserves,
-  solPriceUsd: number = 150
+  solPriceUsd: number = 0
 ): SandwichAnalysis {
   const defaultResult: SandwichAnalysis = {
     isTargetable: false,
@@ -248,6 +248,11 @@ export function isTargetableForSandwich(
     optimalFrontrunAmount: 0n,
     reason: '',
   };
+
+  // Refuse to analyze if SOL price is unavailable
+  if (!solPriceUsd || solPriceUsd <= 0) {
+    return { ...defaultResult, reason: 'SOL price unavailable - cannot assess profitability' };
+  }
 
   // Minimum viable swap size: 0.01 SOL equivalent
   const MIN_SWAP_LAMPORTS = BigInt(LAMPORTS_PER_SOL) / 100n;

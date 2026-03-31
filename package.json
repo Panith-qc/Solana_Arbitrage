@@ -12,9 +12,9 @@
     "lint": "eslint --quiet ./src",
     "lint:fix": "eslint --fix ./src",
     "format": "prettier --write src/**/*.{ts,tsx,css}",
-    "start": "node --import=dotenv/config server.new.js",
-    "start:legacy": "node --import=dotenv/config server.js",
-    "bot": "node --import=dotenv/config server.new.js",
+    "start": "tsx server.new.js",
+    "start:legacy": "tsx server.js",
+    "bot": "tsx server.new.js",
     "test": "node --test --import=tsx tests/engine.test.ts",
     "deploy": "npm run build && npm run start"
   },
@@ -96,7 +96,8 @@
     "vite-plugin-node-polyfills": "^0.24.0",
     "ws": "^8.19.0",
     "zod": "^3.23.8",
-    "zustand": "^4.5.0"
+    "zustand": "^4.5.0",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.11.0",

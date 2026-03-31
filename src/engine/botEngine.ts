@@ -489,6 +489,14 @@ export class BotEngine {
 
     const startTime = Date.now();
 
+    // Capture pre-trade balance for actual profit verification
+    let preTradeBalanceSol = 0;
+    try {
+      preTradeBalanceSol = await this.connectionManager.getBalance();
+    } catch {
+      // Non-fatal, we'll use quote-based profit
+    }
+
     try {
       // Execute the trade
       let result: ExecutionResult;
@@ -536,26 +544,58 @@ export class BotEngine {
       if (result.success) {
         this.stats.tradesExecuted++;
         this.stats.tradesSuccessful++;
-        this.stats.totalProfitSol += result.profitSol || 0;
-        this.stats.totalProfitUsd += result.profitUsd || 0;
 
-        // Record everywhere
-        this.riskManager.reportTradeResult(true, result.profitSol || 0);
+        // ── ACTUAL BALANCE VERIFICATION ──────────────────────────
+        // Use real on-chain balance delta as ground truth for profit
+        let verifiedProfitSol = result.profitSol || 0;
+        let verifiedProfitUsd = result.profitUsd || 0;
+        const estimatedFeesSol = result.jitoTip || 0; // Jito tip already tracked
+
+        if (preTradeBalanceSol > 0) {
+          try {
+            // Small delay for balance to settle on-chain
+            await new Promise(r => setTimeout(r, 1000));
+            const postTradeBalanceSol = await this.connectionManager.getBalance();
+            const actualDelta = postTradeBalanceSol - preTradeBalanceSol;
+
+            // Use actual delta if it's significantly different from reported
+            const reportedVsActualDiff = Math.abs(actualDelta - verifiedProfitSol);
+            if (reportedVsActualDiff > 0.0001) { // > 0.0001 SOL discrepancy
+              log.warn({
+                reportedProfitSol: verifiedProfitSol.toFixed(6),
+                actualDeltaSol: actualDelta.toFixed(6),
+                discrepancy: reportedVsActualDiff.toFixed(6),
+              }, 'Balance delta differs from reported profit - using actual');
+            }
+            // Always trust the on-chain balance delta
+            verifiedProfitSol = actualDelta;
+            verifiedProfitUsd = actualDelta * this.solPriceUsd;
+          } catch {
+            // If post-trade balance check fails, use executor's calculation
+            log.warn('Post-trade balance check failed, using executor profit estimate');
+          }
+        }
+
+        this.stats.totalProfitSol += verifiedProfitSol;
+        this.stats.totalProfitUsd += verifiedProfitUsd;
+
+        // Record everywhere with VERIFIED profit
+        this.riskManager.reportTradeResult(true, verifiedProfitSol);
         this.pnlTracker.recordTrade(
           opp.id, opp.strategy,
-          result.profitSol || 0, result.profitUsd || 0,
-          result.gasUsed || 0, (result.gasUsed || 0) * this.solPriceUsd
+          verifiedProfitSol, verifiedProfitUsd,
+          result.gasUsed || 0, estimatedFeesSol * this.solPriceUsd
         );
-        this.metrics.recordTrade(opp.strategy, 'success', result.profitSol || 0, latencyMs);
-        // Compute the output amount from input + profit
-        const outputLamports = tradeAmountLamports + BigInt(Math.round((result.profitSol || 0) * 1e9));
+        this.metrics.recordTrade(opp.strategy, 'success', verifiedProfitSol, latencyMs);
+        // Compute the output amount from input + verified profit
+        const outputLamports = tradeAmountLamports + BigInt(Math.round(verifiedProfitSol * 1e9));
         const outputAmountStr = outputLamports.toString();
 
         this.tradeJournal.completeTrade(
           opp.id,
           outputAmountStr,
-          result.profitSol || 0,
-          result.profitUsd || 0,
+          verifiedProfitSol,
+          verifiedProfitUsd,
           result.gasUsed || 0,
           result.jitoTip || 0,
           result.signatures,
@@ -566,11 +606,11 @@ export class BotEngine {
         this.positionTracker.closePosition(opp.id, outputLamports, this.solPriceUsd);
 
         log.info({
-          profitSol: result.profitSol,
-          profitUsd: result.profitUsd,
+          verifiedProfitSol: verifiedProfitSol.toFixed(6),
+          verifiedProfitUsd: verifiedProfitUsd.toFixed(2),
           signatures: result.signatures,
           latencyMs,
-        }, 'Trade successful');
+        }, 'Trade successful (profit verified via balance delta)');
 
         // Alert on significant profit
         if ((result.profitUsd || 0) > 1.0) {
