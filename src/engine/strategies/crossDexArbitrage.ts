@@ -83,9 +83,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     this.scanCount++;
     const opportunities: Opportunity[] = [];
-    // Use minimum 5 SOL for scanning to reveal AMM curve differences between pools.
-    // Tiny amounts (0.1 SOL) show no spread because all pools price similarly at low volume.
-    // This is just for QUOTING — actual trade size is controlled by risk manager.
+    // Use 5-10 SOL range for scanning to reveal AMM curve differences between pools.
     const scanSol = Math.max(5.0, this.botConfig.scanAmountSol);
     const scanAmountLamports = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL));
     const scanAmountStr = scanAmountLamports.toString();
@@ -110,6 +108,16 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         }
 
         if (buyQuotes.length < 2) {
+          // Still emit a scan result so the dashboard shows activity
+          this.onScanResult?.({
+            strategy: this.name,
+            token: `${token.symbol} (${buyQuotes.length}/3 DEXes)`,
+            spreadBps: 0,
+            grossProfitSol: 0,
+            netProfitUsd: 0,
+            fees: 0,
+            profitable: false,
+          });
           strategyLog.debug({ token: token.symbol, gotQuotes: buyQuotes.length }, 'Not enough DEX quotes for comparison');
           continue;
         }
@@ -117,6 +125,20 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         // Sort: best buy = most tokens for our SOL (highest outputAmount)
         buyQuotes.sort((a, b) => parseFloat(b.outputAmount) - parseFloat(a.outputAmount));
         const bestBuy = buyQuotes[0];
+        const worstBuy = buyQuotes[buyQuotes.length - 1];
+
+        // Log the buy-side spread between DEXes
+        const buySideDiffPct = (parseFloat(bestBuy.outputAmount) - parseFloat(worstBuy.outputAmount))
+          / parseFloat(worstBuy.outputAmount) * 100;
+        strategyLog.info(
+          {
+            token: token.symbol,
+            best: `${bestBuy.source}=${bestBuy.outputAmount}`,
+            worst: `${worstBuy.source}=${worstBuy.outputAmount}`,
+            diffPct: buySideDiffPct.toFixed(3),
+          },
+          `Buy-side spread: ${token.symbol} ${buySideDiffPct.toFixed(3)}% across ${buyQuotes.length} DEXes`,
+        );
 
         // Get SELL quotes (Token→SOL) from each DEX group using bestBuy output
         const sellQuotes: DexQuote[] = [];
@@ -133,7 +155,18 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           }
         }
 
-        if (sellQuotes.length === 0) continue;
+        if (sellQuotes.length === 0) {
+          this.onScanResult?.({
+            strategy: this.name,
+            token: `${token.symbol} (no sell route)`,
+            spreadBps: 0,
+            grossProfitSol: 0,
+            netProfitUsd: 0,
+            fees: 0,
+            profitable: false,
+          });
+          continue;
+        }
 
         // Sort: best sell = most SOL back (highest outputAmount)
         sellQuotes.sort((a, b) => parseFloat(b.outputAmount) - parseFloat(a.outputAmount));
@@ -227,7 +260,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
   // ────────────────────────────────────────────────────────────────────────────
   // DEX-SPECIFIC JUPITER QUOTE
-  // Uses the `dexes` parameter to force routing through specific DEXes only
+  // Uses the `dexes` parameter to force routing through specific DEXes only.
+  // Does NOT use onlyDirectRoutes — allows multi-hop within a single DEX
+  // ecosystem to maximize quote success rate.
   // ────────────────────────────────────────────────────────────────────────────
 
   private async getDexSpecificQuote(
@@ -243,7 +278,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
     url.searchParams.set('dexes', dexes);
-    url.searchParams.set('onlyDirectRoutes', 'true'); // Single pool only — no aggregation
+    // NOTE: No onlyDirectRoutes — allow multi-hop within the DEX for better quote coverage
 
     try {
       const response = await fetch(url.toString());
