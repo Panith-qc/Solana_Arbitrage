@@ -47,6 +47,17 @@ interface Trade {
   signatures: string;
 }
 
+interface OpportunityInfo {
+  id: string;
+  strategy: string;
+  tokenPath: string[];
+  expectedProfitSol: number;
+  expectedProfitUsd: number;
+  confidence: number;
+  timestamp: number;
+  metadata: Record<string, any>;
+}
+
 export default function Phase2AutoTrading() {
   const [privateKey, setPrivateKey] = useState('');
   const [selectedRisk, setSelectedRisk] = useState<RiskLevel>('BALANCED');
@@ -56,6 +67,7 @@ export default function Phase2AutoTrading() {
   const [error, setError] = useState<string>('');
   const [stats, setStats] = useState<BotStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [opportunities, setOpportunities] = useState<OpportunityInfo[]>([]);
   const [activeStrategies, setActiveStrategies] = useState<string[]>([]);
 
   const profiles = getAllRiskProfiles();
@@ -88,6 +100,9 @@ export default function Phase2AutoTrading() {
       }
       if (statusRes?.running !== undefined) {
         setIsTrading(statusRes.running);
+      }
+      if (statusRes?.recentOpportunities) {
+        setOpportunities(statusRes.recentOpportunities);
       }
       if (tradesRes?.trades) setTrades(tradesRes.trades);
     } catch { /* ignore */ }
@@ -457,6 +472,40 @@ export default function Phase2AutoTrading() {
                                 <Rocket className="w-3 h-3 mr-1 inline animate-pulse" />
                                 {strategy}
                               </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Recent Opportunities Found */}
+                      {opportunities.length > 0 && (
+                        <div>
+                          <p className="text-sm font-semibold mb-2">
+                            <TrendingUp className="w-4 h-4 inline mr-1 text-green-600" />
+                            Opportunities Found ({opportunities.length}):
+                          </p>
+                          <div className="space-y-2 max-h-60 overflow-y-auto">
+                            {opportunities.slice(0, 10).map(opp => (
+                              <div key={opp.id} className="bg-green-50 p-3 rounded-lg border border-green-200 shadow-sm">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-semibold text-sm">{opp.tokenPath.join(' → ')}</span>
+                                      <Badge className="bg-blue-100 text-blue-700 text-xs">{opp.strategy}</Badge>
+                                    </div>
+                                    <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
+                                      <span className="font-semibold text-green-600">
+                                        +{opp.expectedProfitSol.toFixed(6)} SOL
+                                      </span>
+                                      <span className="font-semibold text-green-600">
+                                        ${opp.expectedProfitUsd.toFixed(4)}
+                                      </span>
+                                      <span>Confidence: {(opp.confidence * 100).toFixed(1)}%</span>
+                                      <span>{new Date(opp.timestamp).toLocaleTimeString()}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             ))}
                           </div>
                         </div>

@@ -15,6 +15,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Stale compiled JS in src/ (Vite compiles .ts directly)
+src/**/*.js
+
 # IDE
 .vscode/
 .idea/

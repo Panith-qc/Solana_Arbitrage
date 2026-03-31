@@ -16,16 +16,21 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
+// High-volatility tokens for cyclic arb (meme + governance = wider spreads)
+// LSTs have <0.1% spread — unprofitable for SOL→Token→SOL cycles.
+const CYCLIC_SYMBOLS = new Set(['JUP', 'RAY', 'ORCA', 'BONK', 'WIF', 'MEW', 'BOME', 'W', 'RENDER', 'PYTH']);
+const CYCLIC_TOKENS = SCAN_TOKENS.filter(t => CYCLIC_SYMBOLS.has(t.symbol));
+
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 // IMPORTANT: Jupiter's outAmount already includes DEX swap fees, platform fees,
 // and route-level costs. We must NOT double-count them.
 // Only add costs that are NOT reflected in the Jupiter quote output:
 const BASE_GAS_LAMPORTS = 5_000;              // Solana base fee per transaction
-const PRIORITY_FEE_LAMPORTS = 200_000;        // priority fee (Jupiter auto-sets via 'auto')
-const JITO_TIP_LAMPORTS = 100_000;            // Jito bundle tip (if using bundles)
+const PRIORITY_FEE_LAMPORTS = 50_000;         // conservative priority fee estimate (Jupiter 'auto' handles most)
+const JITO_TIP_LAMPORTS = 50_000;             // Jito bundle tip (keep low for micro-arb)
 const QUOTE_LIFETIME_MS = 15_000;             // quotes expire after 15 s
 // Safety buffer for quote staleness and execution slippage (% of input)
-const EXECUTION_SAFETY_BUFFER_BPS = 15;       // 0.15% buffer for real-world execution variance
+const EXECUTION_SAFETY_BUFFER_BPS = 5;        // 0.05% buffer — tight for real execution
 
 export class CyclicArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
@@ -66,11 +71,11 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     );
 
     strategyLog.debug(
-      { scanAmountSol: this.botConfig.scanAmountSol, tokens: SCAN_TOKENS.length },
+      { scanAmountSol: this.botConfig.scanAmountSol, tokens: CYCLIC_TOKENS.length },
       'Cyclic arbitrage scan starting',
     );
 
-    for (const token of SCAN_TOKENS) {
+    for (const token of CYCLIC_TOKENS) {
       try {
         // Rate-limit: sleep between API call pairs
         await this.rateLimit();
@@ -106,6 +111,19 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
         // ── Profitability check ──────────────────────────────────────────────
         const outputLamports = BigInt(leg2Quote.outAmount);
         const profitAnalysis = this.calculateProfit(scanAmountLamports, outputLamports, token);
+
+        // Log ALL spreads (including negative) for visibility
+        const spreadBps = ((Number(outputLamports) - Number(scanAmountLamports)) / Number(scanAmountLamports) * 10000).toFixed(1);
+        strategyLog.info(
+          {
+            token: token.symbol,
+            spreadBps,
+            grossProfitSol: profitAnalysis.grossProfitSol.toFixed(6),
+            netProfitUsd: profitAnalysis.netProfitUsd.toFixed(4),
+            fees: profitAnalysis.totalFeeSol.toFixed(6),
+          },
+          `Spread: ${token.symbol} ${spreadBps}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
+        );
 
         if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
           const now = Date.now();

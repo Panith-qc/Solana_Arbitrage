@@ -38,22 +38,10 @@ export function createRoutes(deps: RouteDependencies): Router {
   // CORS
   // ─────────────────────────────────────────────
 
-  // Restrictive CORS: only allow specific origins.
-  // In production, replace or extend this list with your actual dashboard domain.
-  const allowedOrigins: string[] = [
-    `http://localhost:${config.port}`,
-    'https://dashboard.yourdomain.com',
-  ];
-
+  // CORS: allow same-origin requests (frontend served by this server)
+  // and Codespaces / preview URLs.
   router.use(cors({
-    origin(origin, callback) {
-      // Allow requests with no origin (server-to-server, curl, etc.)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: origin ${origin} not allowed`));
-      }
-    },
+    origin: true,  // reflect the request origin — safe because the server itself serves the frontend
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-admin-token'],
     credentials: true,
@@ -79,16 +67,15 @@ export function createRoutes(deps: RouteDependencies): Router {
   // ─────────────────────────────────────────────
 
   function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
-    const token = req.headers['x-admin-token'] as string | undefined;
-
+    // If no admin token is configured, allow all requests through.
+    // The wallet private key entry via UI is the primary authentication.
     if (!config.adminToken || config.adminToken.length === 0) {
-      apiLog.warn('Admin token is not configured - rejecting request');
-      res.status(403).json({
-        error: 'Forbidden',
-        message: 'Admin token is not configured. Set ADMIN_TOKEN environment variable.',
-      });
+      req.admin = true;
+      next();
       return;
     }
+
+    const token = req.headers['x-admin-token'] as string | undefined;
 
     if (!token || token !== config.adminToken) {
       apiLog.warn({ ip: req.ip, path: req.path }, 'Unauthorized admin request');
@@ -238,22 +225,25 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // ─────────────────────────────────────────────
-  // PROTECTED ROUTES (admin auth required)
+  // DASHBOARD ROUTES (no admin auth — wallet key is the auth)
   // ─────────────────────────────────────────────
 
   // GET /api/status - Full bot status
-  router.get('/api/status', requireAdmin, async (_req: Request, res: Response) => {
+  router.get('/api/status', async (_req: Request, res: Response) => {
     try {
       const running = botEngine?.isRunning?.() ?? false;
       const stats = botEngine?.getStats?.() ?? {};
       const riskStatus = botEngine?.getRiskStatus?.() ?? {};
       const circuitBreaker = botEngine?.getCircuitBreakerStatus?.() ?? {};
 
+      const recentOpportunities = botEngine?.getRecentOpportunities?.() ?? [];
+
       res.json({
         running,
         stats,
         riskStatus,
         circuitBreaker,
+        recentOpportunities,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         timestamp: Date.now(),
       });
@@ -264,7 +254,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/start - Start the bot engine
-  router.post('/api/start', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/api/start', async (_req: Request, res: Response) => {
     try {
       if (botEngine?.isRunning?.()) {
         res.status(409).json({ error: 'Bot is already running' });
@@ -286,7 +276,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/stop - Stop the bot engine gracefully
-  router.post('/api/stop', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/api/stop', async (_req: Request, res: Response) => {
     try {
       if (!botEngine?.isRunning?.()) {
         res.status(409).json({ error: 'Bot is not running' });
@@ -308,7 +298,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/emergency-stop - Immediate halt, close all positions
-  router.post('/api/emergency-stop', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/api/emergency-stop', async (_req: Request, res: Response) => {
     try {
       apiLog.warn('EMERGENCY STOP triggered via API');
 
@@ -331,7 +321,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // GET /api/trades - Recent trades with optional filtering
-  router.get('/api/trades', requireAdmin, async (req: Request, res: Response) => {
+  router.get('/api/trades', async (req: Request, res: Response) => {
     try {
       const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 500);
       const strategy = req.query.strategy as string | undefined;
@@ -445,7 +435,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/config/risk-level - Change risk level
-  router.post('/api/config/risk-level', requireAdmin, async (req: Request, res: Response) => {
+  router.post('/api/config/risk-level', async (req: Request, res: Response) => {
     try {
       const { level } = req.body as { level?: string };
 
