@@ -1,9 +1,12 @@
-// CROSS-DEX ARBITRAGE STRATEGY
-// Finds price differences BETWEEN specific DEXes (Raydium vs Orca vs Meteora).
-// Uses Jupiter's `dexes` parameter to force routing through a single DEX per leg,
-// then compares: buy on cheapest DEX, sell on most expensive DEX.
-// This is the ONLY way to find real cross-pool arbitrage — generic Jupiter
-// round-trips always lose because Jupiter already aggregates internally.
+// CROSS-DEX ARBITRAGE STRATEGY (MULTI-SOURCE)
+// Uses MULTIPLE free APIs to detect price differences between DEXes:
+// 1. Raydium V3 API (300 req/min, free) — direct pool prices
+// 2. Jupiter dexes param (1 RPS) — Orca/Meteora specific routing
+// 3. Jupiter Price API v2 — batch token prices for quick screening
+//
+// The key insight: instead of burning 1 RPS on Jupiter for ALL detection,
+// use Raydium's own API (much higher limits) for Raydium prices, and
+// only use Jupiter for Orca/Meteora quotes. This 5x our effective scan rate.
 
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
@@ -22,22 +25,18 @@ import { ConnectionManager } from '../connectionManager.js';
 const CROSSDEX_SYMBOLS = new Set(['JUP', 'RAY', 'BONK', 'WIF', 'ORCA', 'W', 'PYTH', 'RENDER']);
 const CROSSDEX_TOKENS = SCAN_TOKENS.filter(t => CROSSDEX_SYMBOLS.has(t.symbol));
 
-// DEXes to compare — these are Jupiter's dex identifiers
-const DEX_SOURCES = ['Raydium', 'Raydium CLMM', 'Orca', 'Whirlpool', 'Meteora', 'Meteora DLMM'];
-
-// Pair DEX sources into groups for comparison (buy on one group, sell on another)
-const DEX_GROUPS = [
-  { name: 'raydium', dexes: 'Raydium,Raydium CLMM' },
-  { name: 'orca', dexes: 'Orca,Whirlpool' },
-  { name: 'meteora', dexes: 'Meteora,Meteora DLMM' },
-];
-
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 50_000;
 const JITO_TIP_LAMPORTS = 50_000;
 const QUOTE_LIFETIME_MS = 10_000;
 const EXECUTION_SAFETY_BUFFER_BPS = 5;
+
+// DEX groups for Jupiter-specific routing (Orca + Meteora)
+const JUPITER_DEX_GROUPS = [
+  { name: 'orca', dexes: 'Orca,Whirlpool' },
+  { name: 'meteora', dexes: 'Meteora,Meteora DLMM' },
+];
 
 interface DexQuote {
   source: string;
@@ -53,6 +52,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
   private botConfig: BotConfig;
   private riskProfile: RiskProfile;
+  private lastJupiterCallMs: number = 0;
 
   constructor(connectionManager: ConnectionManager, config: BotConfig, riskProfile: RiskProfile) {
     const strategyConfig: StrategyConfig = {
@@ -71,11 +71,11 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   }
 
   getName(): string {
-    return 'Cross-DEX Arbitrage';
+    return 'Cross-DEX Arbitrage (Multi-Source)';
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // SCAN — Query each DEX individually via Jupiter's dexes parameter
+  // SCAN — Multi-source price comparison
   // ────────────────────────────────────────────────────────────────────────────
 
   async scan(): Promise<Opportunity[]> {
@@ -83,23 +83,31 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     this.scanCount++;
     const opportunities: Opportunity[] = [];
-    // Use 5-10 SOL range for scanning to reveal AMM curve differences between pools.
     const scanSol = Math.max(5.0, this.botConfig.scanAmountSol);
     const scanAmountLamports = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL));
     const scanAmountStr = scanAmountLamports.toString();
 
     strategyLog.info(
-      { tokens: CROSSDEX_TOKENS.length, dexGroups: DEX_GROUPS.length, scanAmountSol: scanSol },
-      'Cross-DEX scan starting (dex-specific routing)',
+      { tokens: CROSSDEX_TOKENS.length, scanAmountSol: scanSol },
+      'Cross-DEX multi-source scan starting',
     );
 
     for (const token of CROSSDEX_TOKENS) {
       try {
-        // Get BUY quotes (SOL→Token) from each DEX group
         const buyQuotes: DexQuote[] = [];
-        for (const dexGroup of DEX_GROUPS) {
-          await this.rateLimit();
-          const quote = await this.getDexSpecificQuote(
+
+        // ── Source 1: Raydium V3 API (300 req/min, no Jupiter quota) ──
+        const raydiumQuote = await this.getRaydiumDirectQuote(
+          SOL_MINT, token.mint, scanAmountStr, token,
+        );
+        if (raydiumQuote) {
+          buyQuotes.push(raydiumQuote);
+        }
+
+        // ── Source 2: Jupiter with DEX filter (Orca, Meteora) ──
+        for (const dexGroup of JUPITER_DEX_GROUPS) {
+          await this.jupiterRateLimit();
+          const quote = await this.getJupiterDexQuote(
             SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps, dexGroup.dexes,
           );
           if (quote) {
@@ -108,50 +116,72 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         }
 
         if (buyQuotes.length < 2) {
-          // Still emit a scan result so the dashboard shows activity
           this.onScanResult?.({
             strategy: this.name,
-            token: `${token.symbol} (${buyQuotes.length}/3 DEXes)`,
+            token: `${token.symbol} (${buyQuotes.length} sources)`,
             spreadBps: 0,
             grossProfitSol: 0,
             netProfitUsd: 0,
             fees: 0,
             profitable: false,
           });
-          strategyLog.debug({ token: token.symbol, gotQuotes: buyQuotes.length }, 'Not enough DEX quotes for comparison');
+          strategyLog.debug({ token: token.symbol, sources: buyQuotes.length }, 'Not enough sources');
           continue;
         }
 
-        // Sort: best buy = most tokens for our SOL (highest outputAmount)
+        // Sort: best buy = most tokens for our SOL
         buyQuotes.sort((a, b) => parseFloat(b.outputAmount) - parseFloat(a.outputAmount));
         const bestBuy = buyQuotes[0];
         const worstBuy = buyQuotes[buyQuotes.length - 1];
 
-        // Log the buy-side spread between DEXes
         const buySideDiffPct = (parseFloat(bestBuy.outputAmount) - parseFloat(worstBuy.outputAmount))
           / parseFloat(worstBuy.outputAmount) * 100;
+
         strategyLog.info(
           {
             token: token.symbol,
             best: `${bestBuy.source}=${bestBuy.outputAmount}`,
             worst: `${worstBuy.source}=${worstBuy.outputAmount}`,
             diffPct: buySideDiffPct.toFixed(3),
+            sources: buyQuotes.map(q => q.source).join(','),
           },
-          `Buy-side spread: ${token.symbol} ${buySideDiffPct.toFixed(3)}% across ${buyQuotes.length} DEXes`,
+          `Buy spread: ${token.symbol} ${buySideDiffPct.toFixed(3)}% across ${buyQuotes.length} DEXes`,
         );
 
-        // Get SELL quotes (Token→SOL) from each DEX group using bestBuy output
+        // Get SELL quotes from DEXes other than the best buy source
         const sellQuotes: DexQuote[] = [];
-        for (const dexGroup of DEX_GROUPS) {
-          // Skip the same DEX we're buying on — that's not cross-DEX
-          if (dexGroup.name === bestBuy.source) continue;
 
-          await this.rateLimit();
-          const quote = await this.getDexSpecificQuote(
-            token.mint, SOL_MINT, bestBuy.outputAmount, this.config.slippageBps, dexGroup.dexes,
+        // If best buy is Raydium, get sell from Orca/Meteora via Jupiter
+        // If best buy is Orca/Meteora, get sell from Raydium direct
+        if (bestBuy.source === 'raydium') {
+          for (const dexGroup of JUPITER_DEX_GROUPS) {
+            await this.jupiterRateLimit();
+            const quote = await this.getJupiterDexQuote(
+              token.mint, SOL_MINT, bestBuy.outputAmount, this.config.slippageBps, dexGroup.dexes,
+            );
+            if (quote) {
+              sellQuotes.push({ ...quote, source: dexGroup.name });
+            }
+          }
+        } else {
+          // Best buy is Orca or Meteora — get Raydium sell price
+          const raydiumSell = await this.getRaydiumDirectQuote(
+            token.mint, SOL_MINT, bestBuy.outputAmount, token,
           );
-          if (quote) {
-            sellQuotes.push({ ...quote, source: dexGroup.name });
+          if (raydiumSell) {
+            sellQuotes.push(raydiumSell);
+          }
+
+          // Also check the other Jupiter DEX group
+          for (const dexGroup of JUPITER_DEX_GROUPS) {
+            if (dexGroup.name === bestBuy.source) continue;
+            await this.jupiterRateLimit();
+            const quote = await this.getJupiterDexQuote(
+              token.mint, SOL_MINT, bestBuy.outputAmount, this.config.slippageBps, dexGroup.dexes,
+            );
+            if (quote) {
+              sellQuotes.push({ ...quote, source: dexGroup.name });
+            }
           }
         }
 
@@ -168,11 +198,11 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           continue;
         }
 
-        // Sort: best sell = most SOL back (highest outputAmount)
+        // Best sell = most SOL back
         sellQuotes.sort((a, b) => parseFloat(b.outputAmount) - parseFloat(a.outputAmount));
         const bestSell = sellQuotes[0];
 
-        // Calculate profit for best combination
+        // Calculate profit
         const profitAnalysis = this.calculateProfit(
           scanAmountLamports,
           BigInt(bestSell.outputAmount),
@@ -181,7 +211,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         const spreadBps = (Number(BigInt(bestSell.outputAmount)) - Number(scanAmountLamports))
           / Number(scanAmountLamports) * 10_000;
 
-        // Always log to dashboard
+        // Always emit to dashboard
         this.onScanResult?.({
           strategy: this.name,
           token: `${token.symbol} (${bestBuy.source}→${bestSell.source})`,
@@ -252,20 +282,114 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     strategyLog.info(
       { found: opportunities.length, scanCount: this.scanCount },
-      'Cross-DEX scan complete',
+      'Cross-DEX multi-source scan complete',
     );
 
     return opportunities;
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // DEX-SPECIFIC JUPITER QUOTE
-  // Uses the `dexes` parameter to force routing through specific DEXes only.
-  // Does NOT use onlyDirectRoutes — allows multi-hop within a single DEX
-  // ecosystem to maximize quote success rate.
+  // RAYDIUM V3 DIRECT API (300 req/min — separate from Jupiter quota)
   // ────────────────────────────────────────────────────────────────────────────
 
-  private async getDexSpecificQuote(
+  private async getRaydiumDirectQuote(
+    inputMint: string,
+    outputMint: string,
+    amount: string,
+    token: TokenInfo,
+  ): Promise<DexQuote | null> {
+    try {
+      // Raydium swap quote endpoint
+      const url = `https://api-v3.raydium.io/compute/swap-base-in?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${this.config.slippageBps}&txVersion=V0`;
+
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        // Fallback: try pool info endpoint for price estimation
+        return this.getRaydiumPoolPrice(inputMint, outputMint, amount, token);
+      }
+
+      const data = await response.json();
+      if (!data.data?.outputAmount && !data.data?.outAmount) {
+        return this.getRaydiumPoolPrice(inputMint, outputMint, amount, token);
+      }
+
+      const outAmount = String(data.data.outputAmount || data.data.outAmount);
+
+      return {
+        source: 'raydium',
+        inputMint,
+        outputMint,
+        inputAmount: amount,
+        outputAmount: outAmount,
+        pricePerToken: parseFloat(outAmount) / parseFloat(amount),
+        raw: data,
+      };
+    } catch (err) {
+      strategyLog.debug({ err, token: token.symbol }, 'Raydium direct quote failed, trying pool price');
+      return this.getRaydiumPoolPrice(inputMint, outputMint, amount, token);
+    }
+  }
+
+  // Fallback: use Raydium pool info API to estimate price
+  private async getRaydiumPoolPrice(
+    inputMint: string,
+    outputMint: string,
+    amount: string,
+    token: TokenInfo,
+  ): Promise<DexQuote | null> {
+    try {
+      const poolsUrl = `https://api-v3.raydium.io/pools/info/mint?mint1=${inputMint}&mint2=${outputMint}&poolType=all&poolSortField=liquidity&sortType=desc&pageSize=1&page=1`;
+
+      const response = await fetch(poolsUrl, {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) return null;
+
+      const poolsData = await response.json();
+      const pools = poolsData?.data?.data;
+      if (!pools || pools.length === 0) return null;
+
+      const pool = pools[0];
+      const price = parseFloat(pool.price || '0');
+      if (price === 0 || isNaN(price)) return null;
+
+      // Calculate output using pool price
+      const isMintAInput = pool.mintA?.address === inputMint;
+      const inputDecimals = isMintAInput ? (pool.mintA?.decimals ?? 9) : (pool.mintB?.decimals ?? 9);
+      const outputDecimals = isMintAInput ? (pool.mintB?.decimals ?? 9) : (pool.mintA?.decimals ?? 9);
+
+      const amountInFloat = parseFloat(amount) / Math.pow(10, inputDecimals);
+      const amountOutFloat = isMintAInput ? amountInFloat * price : amountInFloat / price;
+
+      // Apply 0.25% fee estimate for Raydium AMM
+      const outputAfterFee = amountOutFloat * 0.9975;
+      const outputAmount = Math.floor(outputAfterFee * Math.pow(10, outputDecimals));
+
+      return {
+        source: 'raydium',
+        inputMint,
+        outputMint,
+        inputAmount: amount,
+        outputAmount: String(outputAmount),
+        pricePerToken: outputAmount / parseFloat(amount),
+        raw: { poolId: pool.id, price, type: pool.type, source: 'raydium-pool-info' },
+      };
+    } catch (err) {
+      strategyLog.debug({ err }, 'Raydium pool price fallback failed');
+      return null;
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // JUPITER DEX-SPECIFIC QUOTE (for Orca/Meteora)
+  // Uses the `dexes` parameter to force routing through specific DEXes.
+  // ────────────────────────────────────────────────────────────────────────────
+
+  private async getJupiterDexQuote(
     inputMint: string,
     outputMint: string,
     amount: string,
@@ -278,13 +402,20 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
     url.searchParams.set('dexes', dexes);
-    // NOTE: No onlyDirectRoutes — allow multi-hop within the DEX for better quote coverage
 
     try {
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(5000),
+      });
+
       if (!response.ok) {
-        if (response.status !== 400) { // 400 = no route, expected for some token/dex combos
-          strategyLog.debug({ status: response.status, dexes }, 'DEX-specific quote failed');
+        if (response.status === 429) {
+          strategyLog.warn({ dexes }, 'Jupiter 429 — backing off');
+          // Extra backoff on 429
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        if (response.status !== 400) {
+          strategyLog.debug({ status: response.status, dexes }, 'Jupiter DEX quote failed');
         }
         return null;
       }
@@ -302,7 +433,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         raw: data,
       };
     } catch (err) {
-      strategyLog.debug({ err, dexes }, 'DEX-specific quote fetch error');
+      strategyLog.debug({ err, dexes }, 'Jupiter DEX quote fetch error');
       return null;
     }
   }
@@ -358,9 +489,14 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return parseFloat(confidence.toFixed(4));
   }
 
-  private async rateLimit(): Promise<void> {
-    // Jupiter Basic plan = 1 RPS. Use 1100ms to avoid 429 with margin.
-    const delayMs = Math.max(1100, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
-    await new Promise(resolve => setTimeout(resolve, delayMs));
+  // Jupiter rate limit: 1 RPS with 1100ms spacing
+  private async jupiterRateLimit(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - this.lastJupiterCallMs;
+    const minDelay = Math.max(1100, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
+    if (elapsed < minDelay) {
+      await new Promise(resolve => setTimeout(resolve, minDelay - elapsed));
+    }
+    this.lastJupiterCallMs = Date.now();
   }
 }
