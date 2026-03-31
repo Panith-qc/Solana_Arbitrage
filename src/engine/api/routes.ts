@@ -225,11 +225,11 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // ─────────────────────────────────────────────
-  // PROTECTED ROUTES (admin auth required)
+  // DASHBOARD ROUTES (no admin auth — wallet key is the auth)
   // ─────────────────────────────────────────────
 
   // GET /api/status - Full bot status
-  router.get('/api/status', requireAdmin, async (_req: Request, res: Response) => {
+  router.get('/api/status', async (_req: Request, res: Response) => {
     try {
       const running = botEngine?.isRunning?.() ?? false;
       const stats = botEngine?.getStats?.() ?? {};
@@ -251,7 +251,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/start - Start the bot engine
-  router.post('/api/start', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/api/start', async (_req: Request, res: Response) => {
     try {
       if (botEngine?.isRunning?.()) {
         res.status(409).json({ error: 'Bot is already running' });
@@ -273,7 +273,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/stop - Stop the bot engine gracefully
-  router.post('/api/stop', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/api/stop', async (_req: Request, res: Response) => {
     try {
       if (!botEngine?.isRunning?.()) {
         res.status(409).json({ error: 'Bot is not running' });
@@ -295,7 +295,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/emergency-stop - Immediate halt, close all positions
-  router.post('/api/emergency-stop', requireAdmin, async (_req: Request, res: Response) => {
+  router.post('/api/emergency-stop', async (_req: Request, res: Response) => {
     try {
       apiLog.warn('EMERGENCY STOP triggered via API');
 
@@ -318,7 +318,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // GET /api/trades - Recent trades with optional filtering
-  router.get('/api/trades', requireAdmin, async (req: Request, res: Response) => {
+  router.get('/api/trades', async (req: Request, res: Response) => {
     try {
       const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 500);
       const strategy = req.query.strategy as string | undefined;
@@ -432,7 +432,7 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // POST /api/config/risk-level - Change risk level
-  router.post('/api/config/risk-level', requireAdmin, async (req: Request, res: Response) => {
+  router.post('/api/config/risk-level', async (req: Request, res: Response) => {
     try {
       const { level } = req.body as { level?: string };
 
