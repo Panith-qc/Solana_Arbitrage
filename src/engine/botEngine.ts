@@ -1162,6 +1162,29 @@ export class BotEngine {
     return this.status === 'running';
   }
 
+  getStats(): BotStats {
+    return {
+      ...this.stats,
+      uptime: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
+      currentSolPriceUsd: this.solPriceUsd,
+    };
+  }
+
+  getRiskStatus(): Record<string, any> {
+    return {
+      riskLevel: this.config.riskLevel,
+      capitalSol: this.config.capitalSol,
+    };
+  }
+
+  getCircuitBreakerStatus(): Record<string, any> {
+    try {
+      return this.riskManager.getCircuitBreakerStatus();
+    } catch {
+      return { triggered: false, consecutiveFailures: 0 };
+    }
+  }
+
   getSnipingStrategy(): SnipingStrategy | null {
     return this.snipingStrategy;
   }
