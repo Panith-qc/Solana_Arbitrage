@@ -110,6 +110,17 @@ export class RiskManager {
     );
   }
 
+  /**
+   * Sync capital and peak balance to the actual wallet balance.
+   * Called when a wallet is connected (from env or UI) so that
+   * risk calculations use the real balance, not a hardcoded value.
+   */
+  syncCapital(balanceSol: number): void {
+    this.config.capitalSol = balanceSol;
+    this.peakBalanceSol = Math.max(this.peakBalanceSol, balanceSol);
+    riskLog.info({ capitalSol: balanceSol, peakBalanceSol: this.peakBalanceSol }, 'Capital synced to wallet balance');
+  }
+
   // ─────────────────────────────────────────────────────────
   // MAIN GATE
   // ─────────────────────────────────────────────────────────

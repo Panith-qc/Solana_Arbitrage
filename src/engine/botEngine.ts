@@ -159,7 +159,10 @@ export class BotEngine {
       engineLog.warn('No wallet configured - bot will run in read-only/scan mode');
     } else {
       const balance = await this.connectionManager.getBalance();
-      engineLog.info({ balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet balance');
+      // Sync capital to actual wallet balance
+      this.config.capitalSol = balance;
+      this.riskManager.syncCapital(balance);
+      engineLog.info({ balance, capitalSol: balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet loaded — capital synced to wallet balance');
       this.stats.currentBalanceSol = balance;
     }
 
@@ -189,7 +192,9 @@ export class BotEngine {
     // If wallet was loaded from env, complete init fully
     if (this.connectionManager.hasWallet()) {
       const balance = await this.connectionManager.getBalance();
-      engineLog.info({ balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet balance');
+      this.config.capitalSol = balance;
+      this.riskManager.syncCapital(balance);
+      engineLog.info({ balance, capitalSol: balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet loaded — capital synced to wallet balance');
       this.stats.currentBalanceSol = balance;
       await this.completeInitialization();
       return;
@@ -215,12 +220,16 @@ export class BotEngine {
     const balanceSol = await this.connectionManager.getBalance();
     this.stats.currentBalanceSol = balanceSol;
 
+    // Sync capital to actual wallet balance — don't use a hardcoded value
+    this.config.capitalSol = balanceSol;
+    this.riskManager.syncCapital(balanceSol);
+
     // Complete initialization if strategies haven't been set up yet
     if (this.strategies.size === 0) {
       await this.completeInitialization();
     }
 
-    engineLog.info({ publicKey, balanceSol }, 'Wallet connected via UI');
+    engineLog.info({ publicKey, balanceSol, capitalSol: balanceSol }, 'Wallet connected via UI — capital synced to wallet balance');
     return { publicKey, balanceSol };
   }
 
