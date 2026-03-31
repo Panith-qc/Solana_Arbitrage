@@ -19,10 +19,10 @@ import { ConnectionManager } from '../connectionManager.js';
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 // IMPORTANT: DEX quotes already include swap fees in outAmount. Don't double-count.
 const BASE_GAS_LAMPORTS = 5_000;
-const PRIORITY_FEE_LAMPORTS = 200_000;
-const JITO_TIP_LAMPORTS = 100_000;
+const PRIORITY_FEE_LAMPORTS = 50_000;
+const JITO_TIP_LAMPORTS = 50_000;
 const QUOTE_LIFETIME_MS = 10_000;
-const EXECUTION_SAFETY_BUFFER_BPS = 15;
+const EXECUTION_SAFETY_BUFFER_BPS = 5;
 
 // Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const RAYDIUM_QUOTE_URL = 'https://api-v3.raydium.io/compute/swap-base-in';

@@ -20,10 +20,10 @@ import { ConnectionManager } from '../connectionManager.js';
 // IMPORTANT: Jupiter's outAmount already includes DEX/platform fees.
 // Only add costs NOT reflected in the quote output.
 const BASE_GAS_LAMPORTS = 5_000;
-const PRIORITY_FEE_LAMPORTS = 200_000;
-const JITO_TIP_LAMPORTS = 150_000;   // slightly higher tip for 3-leg bundles
+const PRIORITY_FEE_LAMPORTS = 50_000;
+const JITO_TIP_LAMPORTS = 75_000;    // slightly higher tip for 3-leg bundles
 const QUOTE_LIFETIME_MS = 12_000;    // 3-leg paths stale faster
-const EXECUTION_SAFETY_BUFFER_BPS = 25;  // higher buffer for 3-hop (more execution risk)
+const EXECUTION_SAFETY_BUFFER_BPS = 10;  // tighter buffer to catch more opps
 const MAX_PAIRS_TO_CHECK = 20;       // cap to stay within rate limits
 
 // Stablecoin mints to skip pairing together (no arb between two stables)
