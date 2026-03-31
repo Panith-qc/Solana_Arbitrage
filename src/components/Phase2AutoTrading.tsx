@@ -1,40 +1,107 @@
-import { strategyEngine, StrategyOpportunity } from '@/services/StrategyEngine';
-// PHASE 2 AUTO-TRADING - ALL ADVANCED STRATEGIES INTEGRATED
-// One-click setup with ALL Phase 2 MEV strategies
+// PHASE 2 AUTO-TRADING — BACKEND-CONNECTED
+// Same beautiful UI, powered by the backend engine via API.
+// Flow: Enter Key → Connect Wallet (backend) → Start Bot (backend) → Poll Stats
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { RiskLevel, getAllRiskProfiles } from '../config/riskProfiles';
-import { autoConfigService, AutoConfig } from '../services/autoConfigService';
+import { RiskLevel, getAllRiskProfiles, getRiskProfile } from '../config/riskProfiles';
 import { Loader2, CheckCircle2, AlertCircle, TrendingUp, Shield, Zap, Activity, Rocket } from 'lucide-react';
-import { privateKeyWallet } from '../services/privateKeyWallet';
-// import { strategyEngine, StrategyOpportunity } from '../strategies/StrategyEngine';
-import { realTradeExecutor } from '../services/realTradeExecutor';
-import { Keypair } from '@solana/web3.js';
-import { APIHealthDashboard } from './APIHealthDashboard';
-import { advancedMEVScanner } from '../services/advancedMEVScanner';
 
+interface WalletStatus {
+  connected: boolean;
+  publicKey: string | null;
+  balanceSol: number;
+  rpcConnected: boolean;
+}
+
+interface BotStats {
+  status: string;
+  uptime: number;
+  totalScans: number;
+  opportunitiesFound: number;
+  tradesExecuted: number;
+  tradesSuccessful: number;
+  tradesFailed: number;
+  tradesSkipped: number;
+  totalProfitSol: number;
+  totalProfitUsd: number;
+  currentBalanceSol: number;
+  currentSolPriceUsd: number;
+  activeStrategies: string[];
+  riskLevel: string;
+}
+
+interface Trade {
+  trade_id: string;
+  strategy: string;
+  status: string;
+  profit_sol: number | null;
+  profit_usd: number | null;
+  created_at: string;
+  route_description: string | null;
+  signatures: string;
+}
 
 export default function Phase2AutoTrading() {
   const [privateKey, setPrivateKey] = useState('');
   const [selectedRisk, setSelectedRisk] = useState<RiskLevel>('BALANCED');
   const [isConfiguring, setIsConfiguring] = useState(false);
-  const [config, setConfig] = useState<AutoConfig | null>(null);
+  const [wallet, setWallet] = useState<WalletStatus>({ connected: false, publicKey: null, balanceSol: 0, rpcConnected: false });
   const [isTrading, setIsTrading] = useState(false);
   const [error, setError] = useState<string>('');
-  const [opportunities, setOpportunities] = useState<StrategyOpportunity[]>([]);
-  const [totalProfit, setTotalProfit] = useState(0);
-  const [tradesExecuted, setTradesExecuted] = useState(0);
+  const [stats, setStats] = useState<BotStats | null>(null);
+  const [trades, setTrades] = useState<Trade[]>([]);
   const [activeStrategies, setActiveStrategies] = useState<string[]>([]);
 
   const profiles = getAllRiskProfiles();
 
-  // Handle auto-configuration
+  // ── Poll wallet status on mount ──────────────────────────
+  useEffect(() => {
+    const checkWallet = async () => {
+      try {
+        const res = await fetch('/api/wallet/status');
+        const data = await res.json();
+        setWallet(data);
+      } catch { /* ignore */ }
+    };
+    checkWallet();
+    const interval = setInterval(checkWallet, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ── Poll bot stats while trading ─────────────────────────
+  const pollStats = useCallback(async () => {
+    try {
+      const [statusRes, tradesRes] = await Promise.all([
+        fetch('/api/status', { headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' } }).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/trades?limit=20', { headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' } }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      if (statusRes?.stats) {
+        setStats(statusRes.stats);
+        if (statusRes.stats.activeStrategies) setActiveStrategies(statusRes.stats.activeStrategies);
+        setIsTrading(statusRes.stats.status === 'running');
+      }
+      if (statusRes?.running !== undefined) {
+        setIsTrading(statusRes.running);
+      }
+      if (tradesRes?.trades) setTrades(tradesRes.trades);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (wallet.connected) {
+      pollStats();
+      const interval = setInterval(pollStats, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [wallet.connected, pollStats]);
+
+  // ── Connect wallet via backend ───────────────────────────
   const handleConfigure = async () => {
     if (!privateKey.trim()) {
       setError('Please enter your wallet private key');
@@ -45,217 +112,80 @@ export default function Phase2AutoTrading() {
     setIsConfiguring(true);
 
     try {
-      // Derive wallet address from private key
-      let walletAddress: string;
-      
-      try {
-        const { Keypair } = await import('@solana/web3.js');
-        const bs58 = await import('bs58');
-        
-        let keypair: any;
-        const trimmedKey = privateKey.trim();
-        
-        if (trimmedKey.startsWith('[')) {
-          const secretKey = Uint8Array.from(JSON.parse(trimmedKey));
-          keypair = Keypair.fromSecretKey(secretKey);
-        } else {
-          const secretKey = bs58.default.decode(trimmedKey);
-          keypair = Keypair.fromSecretKey(secretKey);
-        }
-        
-        walletAddress = keypair.publicKey.toString();
-        console.log('✅ Wallet derived:', walletAddress);
-      } catch (keyError) {
-        throw new Error('Invalid private key format. Use base58 string or [1,2,3...] array format.');
-      }
-      
-      // Auto-configure everything!
-      const autoConfig = await autoConfigService.autoConfigureBot(
-        walletAddress,
-        selectedRisk
-      );
+      const res = await fetch('/api/wallet/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ privateKey: privateKey.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error);
 
-      setConfig(autoConfig);
+      // Set risk level on backend
+      await fetch('/api/config/risk-level', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': localStorage.getItem('adminToken') || '' },
+        body: JSON.stringify({ level: selectedRisk }),
+      });
+
+      setWallet({ connected: true, publicKey: data.publicKey, balanceSol: data.balanceSol, rpcConnected: true });
+      setPrivateKey(''); // Clear private key from memory
       setIsConfiguring(false);
-
-      if (autoConfig.readyToTrade) {
-        console.log('✅ Configuration complete! Ready to start trading.');
-      }
     } catch (err) {
       setError('Failed to configure bot: ' + (err as Error).message);
       setIsConfiguring(false);
     }
   };
 
-  // Start ALL Phase 2 strategies with REAL TRADING
+  // ── Start trading via backend ────────────────────────────
   const handleStartTrading = async () => {
-    if (!config) return;
-    
-    setIsTrading(true);
-    console.log('═══════════════════════════════════════════════════════════');
-    console.log('🚀 PHASE 2 AUTO-TRADING STARTED - REAL EXECUTION MODE');
-    console.log('═══════════════════════════════════════════════════════════');
-    console.log('📊 Risk Profile:', config.profile.name);
-    console.log('💰 Capital:', config.calculatedSettings.maxPositionSol.toFixed(4), 'SOL per trade');
-    console.log('📈 Strategies:', config.enabledStrategies.join(', '));
-    console.log('⚠️  REAL TRADING: Transactions will be sent to Solana mainnet');
-    console.log('💸 Fee Check: Only profitable trades (after ALL fees) will execute');
-    console.log('═══════════════════════════════════════════════════════════');
-    
+    setError('');
     try {
-      // Connect wallet and derive keypair
-      await privateKeyWallet.connectWithPrivateKey(privateKey);
-      console.log('✅ Wallet connected');
-      
-      // Derive keypair for signing transactions
-      const bs58 = await import('bs58');
-      let keypair: Keypair;
-      const trimmedKey = privateKey.trim();
-      
-      if (trimmedKey.startsWith('[')) {
-        const secretKey = Uint8Array.from(JSON.parse(trimmedKey));
-        keypair = Keypair.fromSecretKey(secretKey);
-      } else {
-        const secretKey = bs58.default.decode(trimmedKey);
-        keypair = Keypair.fromSecretKey(secretKey);
-      }
-      
-      console.log('🔑 Keypair derived for transaction signing');
-      console.log('🔗 Will execute as:', keypair.publicKey.toString());
-      
-      // Track enabled strategies
-      const enabled: string[] = [];
-      if (config.profile.enabledStrategies.backrun) enabled.push('Backrun');
-      if (config.profile.enabledStrategies.cyclicArbitrage) enabled.push('Cyclic Arbitrage');
-      if (config.profile.enabledStrategies.jitLiquidity) enabled.push('JIT Liquidity');
-      if (config.profile.enabledStrategies.longTailArbitrage) enabled.push('Long-Tail Arbitrage');
-      if (config.profile.enabledStrategies.microArbitrage) enabled.push('Micro Arbitrage');
-      if (config.profile.enabledStrategies.crossDexArbitrage) enabled.push('Cross-DEX Arbitrage');
-      if (config.profile.enabledStrategies.sandwich) enabled.push('Sandwich');
-      if (config.profile.enabledStrategies.liquidation) enabled.push('Liquidation');
-      
-      setActiveStrategies(enabled);
-      
-      console.log('🔥 Starting ALL Phase 2 strategies...');
-      enabled.forEach(s => console.log(`   ✅ ${s}`));
-      
-      // Start StrategyEngine with REAL EXECUTION CALLBACK
-      advancedMEVScanner.setWallet(keypair); 
-      await strategyEngine.startAllStrategies(
-        config.calculatedSettings.maxPositionSol,
-        async (detectedOpps: StrategyOpportunity[]) => {
-          // Filter opportunities by configuration
-          const riskLevels = { 'ULTRA_LOW': 1, 'LOW': 2, 'MEDIUM': 3, 'HIGH': 4 };
-          const maxRisk = config.profile.level === 'CONSERVATIVE' ? 2 : 
-                         config.profile.level === 'BALANCED' ? 3 : 4;
-          
-          const filtered = detectedOpps.filter(opp => {
-            const oppRisk = riskLevels[opp.riskLevel as keyof typeof riskLevels] || 0;
-            const meetsProfit = opp.profitUsd && opp.profitUsd >= config.profile.minProfitUsd;
-            const meetsConfidence = opp.confidence >= 0.7;
-            const meetsRisk = oppRisk <= maxRisk;
-            
-            return meetsProfit && meetsConfidence && meetsRisk;
-          });
-          
-          if (filtered.length > 0) {
-            console.log(`🎯 Found ${filtered.length} potentially profitable opportunities!`);
-            
-            // Execute REAL trades with full fee calculation
-            for (const opp of filtered.slice(0, config.profile.maxConcurrentTrades)) {
-              console.log('');
-              console.log(`💎 Evaluating: ${opp.strategyName} - ${opp.pair}`);
-              console.log(`   Expected Profit: $${opp.profitUsd?.toFixed(4) || '0.0000'}`);
-              console.log(`   Confidence: ${(opp.confidence * 100).toFixed(1)}%`);
-              
-              try {
-                // Execute REAL trade with profitability check
-                const SOL_MINT = 'So11111111111111111111111111111111111111112';
-                const amountSOL = opp.recommendedCapital || config.calculatedSettings.maxPositionSol * 0.5;
-
-                // Type guard: ensure outputMint exists
-                if (!opp.outputMint) {
-                  throw new Error('Invalid opportunity: missing outputMint');
-                }
-
-                const result = await realTradeExecutor.executeArbitrageCycle(
-                  opp.outputMint,                          // ← tokenMint (now guaranteed string)
-                  amountSOL,                               // ← amountSOL (correct spelling)
-                  config.profile.slippageBps,              // ← slippageBps
-                  keypair,                                 // ← wallet
-                  config.profile.level === 'AGGRESSIVE'   // ← useJito
-                );
-
-                
-                // const result = await realTradeExecutor.executeArbitrageCycle({
-                //   tokenMint: opp.outputMint,
-                //   amountSol: amountSOL,
-                //   slippageBps: config.profile.slippageBps,
-                //   wallet: keypair,
-                //   useJito: config.profile.level === 'AGGRESSIVE',
-                //   expectedCycleProfitUsd: opp.profitUsd,
-                //   minNetProfitUsd: config.profile.minProfitUsd
-                // });
-                
-                if (result.success) {
-                  console.log(`✅ REAL TRADE EXECUTED!`);
-                  console.log(`   Net Profit: $${result.netProfitUSD.toFixed(4)}`);
-                  console.log(`   TX Signatures: ${result.txSignatures.join(', ')}`);
-                  
-                  setTotalProfit(prev => prev + result.netProfitUSD);
-                  setTradesExecuted(prev => prev + 1);
-                  
-                  // Add to opportunities list
-                  setOpportunities(prev => [{
-                    ...opp,
-                    profitUsd: result.netProfitUSD,
-                    executed: true,
-                    txSignatures: result.txSignatures
-                  }, ...prev].slice(0, 20));
-                } else {
-              console.log(`❌ Trade rejected: Not profitable after fees`);
-                }
-                
-              } catch (execError) {
-                console.error(`❌ Execution error for ${opp.pair}:`, execError);
-              }
-
-            }
-          }
-        }
-      );
-      
-      console.log('');
-      console.log('✅ ALL PHASE 2 STRATEGIES ACTIVE - REAL TRADING ENABLED!');
-      console.log('═══════════════════════════════════════════════════════════');
-      
+      const res = await fetch('/api/start', {
+        method: 'POST',
+        headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error);
+      setIsTrading(true);
+      pollStats();
     } catch (err) {
-      console.error('❌ Failed to start:', err);
       setError('Failed to start: ' + (err as Error).message);
-      setIsTrading(false);
     }
   };
 
-  // Stop all strategies
+  // ── Stop trading ─────────────────────────────────────────
   const handleStopTrading = async () => {
-    console.log('⏹️ Stopping all Phase 2 strategies...');
-    await strategyEngine.stopAllStrategies();
-    setIsTrading(false);
-    setOpportunities([]);
-    setActiveStrategies([]);
-    console.log('✅ All strategies stopped');
+    try {
+      await fetch('/api/stop', {
+        method: 'POST',
+        headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' },
+      });
+      setIsTrading(false);
+      setActiveStrategies([]);
+    } catch { /* ignore */ }
   };
-  
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (isTrading) {
-        strategyEngine.stopAllStrategies();
-      }
-    };
-  }, [isTrading]);
 
-  // Icon helpers
+  // ── Emergency stop ───────────────────────────────────────
+  const handleEmergencyStop = async () => {
+    await fetch('/api/emergency-stop', {
+      method: 'POST',
+      headers: { 'x-admin-token': localStorage.getItem('adminToken') || '' },
+    }).catch(() => {});
+    setIsTrading(false);
+    setActiveStrategies([]);
+  };
+
+  // ── Reset ────────────────────────────────────────────────
+  const handleReset = async () => {
+    if (isTrading) await handleStopTrading();
+    await fetch('/api/wallet/disconnect', { method: 'POST' }).catch(() => {});
+    setWallet({ connected: false, publicKey: null, balanceSol: 0, rpcConnected: false });
+    setStats(null);
+    setTrades([]);
+    setActiveStrategies([]);
+  };
+
+  // ── Helpers ──────────────────────────────────────────────
   const getRiskIcon = (level: RiskLevel) => {
     if (level === 'CONSERVATIVE') return <Shield className="w-5 h-5" />;
     if (level === 'BALANCED') return <TrendingUp className="w-5 h-5" />;
@@ -268,32 +198,35 @@ export default function Phase2AutoTrading() {
     return 'bg-red-500';
   };
 
+  const currentProfile = getRiskProfile(stats?.riskLevel as RiskLevel || selectedRisk);
+
   return (
     <div className="container mx-auto p-6 max-w-6xl">
       <Card>
         <CardHeader>
-          <CardTitle className="text-3xl">🚀 Phase 2 Automated MEV Bot</CardTitle>
+          <CardTitle className="text-3xl">Phase 2 Automated MEV Bot</CardTitle>
           <CardDescription>
-            All 7 advanced strategies. Auto-configured based on risk profile. One-click start.
+            All advanced strategies. Auto-configured based on risk profile. One-click start.
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {/* Step 1 & 2: Configuration */}
-          {!config && (
+          {/* Step 1 & 2: Configuration — shown when wallet not connected */}
+          {!wallet.connected && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="privateKey">Wallet Private Key</Label>
                 <Input
                   id="privateKey"
                   type="password"
-                  placeholder="Enter your Solana wallet private key..."
+                  placeholder="Enter your Solana wallet private key (bs58)..."
                   value={privateKey}
                   onChange={(e) => setPrivateKey(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleConfigure()}
                   className="font-mono"
                 />
                 <p className="text-sm text-muted-foreground">
-                  Your private key never leaves your browser. Stored locally only.
+                  Your private key is sent to the server securely. It stays in memory only — never saved to disk or logged.
                 </p>
               </div>
 
@@ -318,7 +251,7 @@ export default function Phase2AutoTrading() {
                           </div>
                           <h3 className="font-bold text-lg">{profile.name}</h3>
                         </div>
-                        
+
                         <p className="text-sm text-muted-foreground mb-4">
                           {profile.description}
                         </p>
@@ -355,29 +288,23 @@ export default function Phase2AutoTrading() {
                 {isConfiguring ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Configuring Bot...
+                    Connecting & Configuring...
                   </>
                 ) : (
-                  '⚡ Auto-Configure Bot'
+                  'Auto-Configure Bot'
                 )}
               </Button>
             </>
           )}
 
-          {/* Step 3: Trading Dashboard */}
-          {config && (
+          {/* Step 3: Trading Dashboard — shown when wallet connected */}
+          {wallet.connected && (
             <>
               {/* Config Summary */}
-              <Alert className={config.readyToTrade ? 'border-green-500 bg-green-50' : 'border-yellow-500'}>
-                {config.readyToTrade ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                ) : (
-                  <AlertCircle className="h-4 w-4 text-yellow-500" />
-                )}
+              <Alert className="border-green-500 bg-green-50">
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
                 <AlertDescription>
-                  {config.readyToTrade
-                    ? '✅ Bot configured! All Phase 2 strategies ready.'
-                    : '⚠️ Configuration complete but warnings detected.'}
+                  Wallet connected! Bot configured with <strong>{currentProfile.name}</strong> profile. Ready to trade.
                 </AlertDescription>
               </Alert>
 
@@ -386,33 +313,35 @@ export default function Phase2AutoTrading() {
                   <CardTitle>Configuration Summary</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Risk Profile</p>
-                      <p className="font-bold text-lg">{config.profile.name}</p>
+                      <p className="font-bold text-lg">{currentProfile.name}</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Balance</p>
-                      <p className="font-bold text-lg">{config.walletBalance.toFixed(4)} SOL</p>
+                      <p className="font-bold text-lg">{wallet.balanceSol.toFixed(4)} SOL</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Wallet</p>
+                      <p className="font-mono text-xs">{wallet.publicKey?.slice(0, 8)}...{wallet.publicKey?.slice(-6)}</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Max Position</p>
-                      <p className="font-bold">{config.calculatedSettings.maxPositionSol.toFixed(4)} SOL</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Min Profit</p>
-                      <p className="font-bold">${config.profile.minProfitUsd.toFixed(3)}</p>
+                      <p className="font-bold">{(wallet.balanceSol * currentProfile.maxPositionPercent / 100).toFixed(4)} SOL</p>
                     </div>
                   </div>
 
                   <div>
-                    <p className="text-sm text-muted-foreground mb-2">Enabled Strategies ({config.enabledStrategies.length}):</p>
+                    <p className="text-sm text-muted-foreground mb-2">Enabled Strategies:</p>
                     <div className="flex flex-wrap gap-2">
-                      {config.enabledStrategies.map(strategy => (
-                        <Badge key={strategy} variant="secondary" className="text-xs">
-                          {strategy}
-                        </Badge>
-                      ))}
+                      {Object.entries(currentProfile.enabledStrategies)
+                        .filter(([, enabled]) => enabled)
+                        .map(([name]) => (
+                          <Badge key={name} variant="secondary" className="text-xs">
+                            {name.replace(/([A-Z])/g, ' $1').trim()}
+                          </Badge>
+                        ))}
                     </div>
                   </div>
                 </CardContent>
@@ -420,39 +349,51 @@ export default function Phase2AutoTrading() {
 
               {/* Control Buttons */}
               <div className="flex gap-4">
-                {isTrading ? (
-                  <Button
-                    className="flex-1"
-                    size="lg"
-                    variant="destructive"
-                    onClick={handleStopTrading}
-                  >
-                    ⏹️ Stop All Strategies
-                  </Button>
-                ) : (
+                {!isTrading ? (
                   <Button
                     className="flex-1"
                     size="lg"
                     onClick={handleStartTrading}
-                    disabled={!config.readyToTrade}
                   >
-                    🚀 Start Phase 2 Trading
+                    <Rocket className="mr-2 h-4 w-4" />
+                    Start Phase 2 Trading
                   </Button>
+                ) : (
+                  <>
+                    <Button
+                      className="flex-1"
+                      size="lg"
+                      variant="destructive"
+                      onClick={handleStopTrading}
+                    >
+                      Stop All Strategies
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={handleEmergencyStop}
+                      className="border-red-500 text-red-600 hover:bg-red-50"
+                    >
+                      EMERGENCY
+                    </Button>
+                  </>
                 )}
 
-                <Button 
-                  variant="outline" 
-                  onClick={() => {
-                    setConfig(null);
-                    setOpportunities([]);
-                    setTotalProfit(0);
-                    setTradesExecuted(0);
-                  }} 
+                <Button
+                  variant="outline"
+                  onClick={handleReset}
                   disabled={isTrading}
                 >
                   Reset
                 </Button>
               </div>
+
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
 
               {/* Live Trading Dashboard */}
               {isTrading && (
@@ -473,77 +414,85 @@ export default function Phase2AutoTrading() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {/* Stats */}
-                      <div className="grid grid-cols-3 gap-4">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <Card>
                           <CardContent className="pt-4 text-center">
-                            <p className="text-sm text-muted-foreground">Opportunities</p>
-                            <p className="text-4xl font-bold text-blue-600">{opportunities.length}</p>
+                            <p className="text-sm text-muted-foreground">Scans</p>
+                            <p className="text-3xl font-bold text-blue-600">{stats?.totalScans || 0}</p>
+                            <p className="text-xs text-muted-foreground">{stats?.opportunitiesFound || 0} opps found</p>
                           </CardContent>
                         </Card>
                         <Card>
                           <CardContent className="pt-4 text-center">
                             <p className="text-sm text-muted-foreground">Trades</p>
-                            <p className="text-4xl font-bold text-purple-600">{tradesExecuted}</p>
+                            <p className="text-3xl font-bold text-purple-600">{stats?.tradesExecuted || 0}</p>
+                            <p className="text-xs text-muted-foreground">{stats?.tradesSuccessful || 0} won / {stats?.tradesFailed || 0} lost</p>
                           </CardContent>
                         </Card>
                         <Card>
                           <CardContent className="pt-4 text-center">
                             <p className="text-sm text-muted-foreground">Profit</p>
-                            <p className="text-4xl font-bold text-green-600">${totalProfit.toFixed(2)}</p>
+                            <p className={`text-3xl font-bold ${(stats?.totalProfitSol || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {(stats?.totalProfitSol || 0) >= 0 ? '+' : ''}{(stats?.totalProfitSol || 0).toFixed(4)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">${(stats?.totalProfitUsd || 0).toFixed(2)} USD</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-4 text-center">
+                            <p className="text-sm text-muted-foreground">Balance</p>
+                            <p className="text-3xl font-bold text-amber-600">{(stats?.currentBalanceSol || wallet.balanceSol).toFixed(4)}</p>
+                            <p className="text-xs text-muted-foreground">SOL @ ${(stats?.currentSolPriceUsd || 0).toFixed(2)}</p>
                           </CardContent>
                         </Card>
                       </div>
 
                       {/* Active Strategies */}
-                      <div>
-                        <p className="text-sm font-semibold mb-2">🔥 Active Strategies:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {activeStrategies.map(strategy => (
-                            <Badge key={strategy} className="bg-green-100 text-green-700">
-                              <Rocket className="w-3 h-3 mr-1 inline animate-pulse" />
-                              {strategy}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Live Opportunities */}
-                      {opportunities.length > 0 ? (
+                      {activeStrategies.length > 0 && (
                         <div>
-                          <p className="text-sm font-semibold mb-2">🎯 Recent Opportunities ({opportunities.length}):</p>
+                          <p className="text-sm font-semibold mb-2">Active Strategies:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {activeStrategies.map(strategy => (
+                              <Badge key={strategy} className="bg-green-100 text-green-700">
+                                <Rocket className="w-3 h-3 mr-1 inline animate-pulse" />
+                                {strategy}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Recent Trades */}
+                      {trades.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold mb-2">Recent Trades ({trades.length}):</p>
                           <div className="space-y-2 max-h-80 overflow-y-auto">
-                            {opportunities.slice(0, 15).map(opp => (
-                              <div key={opp.id} className="bg-white p-3 rounded-lg border shadow-sm">
+                            {trades.slice(0, 15).map(trade => (
+                              <div key={trade.trade_id} className="bg-white p-3 rounded-lg border shadow-sm">
                                 <div className="flex justify-between items-start">
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="font-semibold text-sm">{opp.pair}</span>
+                                      <span className="font-semibold text-sm">{trade.route_description || trade.trade_id.slice(0, 12)}</span>
                                       <Badge className="bg-purple-100 text-purple-700 text-xs">
-                                        {opp.strategyName}
-                                      </Badge>
-                                      <Badge className={`text-xs ${
-                                        opp.riskLevel === 'LOW' ? 'bg-green-100 text-green-700' :
-                                        opp.riskLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
-                                        'bg-red-100 text-red-700'
-                                      }`}>
-                                        {opp.riskLevel}
+                                        {trade.strategy}
                                       </Badge>
                                     </div>
                                     <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                                      <span className="text-green-600 font-semibold">
-                                        ${opp.profitUsd.toFixed(4)}
+                                      <span className={`font-semibold ${(trade.profit_sol ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        {trade.profit_sol !== null ? `${trade.profit_sol >= 0 ? '+' : ''}${trade.profit_sol.toFixed(6)} SOL` : 'pending'}
                                       </span>
-                                      <span>{(opp.confidence * 100).toFixed(0)}% confident</span>
-                                      <span>{opp.recommendedCapital.toFixed(3)} SOL</span>
+                                      {trade.profit_usd !== null && (
+                                        <span>${trade.profit_usd.toFixed(4)}</span>
+                                      )}
+                                      <span>{new Date(trade.created_at).toLocaleTimeString()}</span>
                                     </div>
-                                    {opp.executionPlan && opp.executionPlan.length > 0 && (
-                                      <div className="mt-1 text-xs text-gray-500 font-mono">
-                                        {opp.executionPlan.slice(0, 3).join(' → ')}
-                                      </div>
-                                    )}
                                   </div>
-                                  <Badge className="bg-green-500 text-white text-xs">
-                                    ✅ Executed
+                                  <Badge className={`text-xs ${
+                                    trade.status === 'completed' ? 'bg-green-500 text-white' :
+                                    trade.status === 'failed' ? 'bg-red-100 text-red-700' :
+                                    'bg-yellow-100 text-yellow-700'
+                                  }`}>
+                                    {trade.status === 'completed' ? 'Executed' : trade.status}
                                   </Badge>
                                 </div>
                               </div>
@@ -555,7 +504,7 @@ export default function Phase2AutoTrading() {
                           <Activity className="w-16 h-16 mx-auto text-blue-400 animate-pulse mb-3" />
                           <p className="text-base font-semibold mb-2">Monitoring Market...</p>
                           <p className="text-sm text-muted-foreground mb-4">
-                            Bot is actively scanning {activeStrategies.length} Phase 2 strategies
+                            Bot is actively scanning {activeStrategies.length} strategies for profitable opportunities
                           </p>
                           <div className="max-w-xs mx-auto space-y-1">
                             {activeStrategies.map(s => (
@@ -571,13 +520,37 @@ export default function Phase2AutoTrading() {
                   </Card>
                 </>
               )}
+
+              {/* Stats when NOT trading (but wallet connected) */}
+              {!isTrading && stats && stats.tradesExecuted > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Session Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Trades</p>
+                        <p className="text-2xl font-bold">{stats.tradesExecuted}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Win Rate</p>
+                        <p className="text-2xl font-bold">{stats.tradesExecuted > 0 ? ((stats.tradesSuccessful / stats.tradesExecuted) * 100).toFixed(0) : 0}%</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Net Profit</p>
+                        <p className={`text-2xl font-bold ${stats.totalProfitSol >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {stats.totalProfitSol >= 0 ? '+' : ''}{stats.totalProfitSol.toFixed(4)} SOL
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </>
           )}
         </CardContent>
       </Card>
-      
-      {/* API Health Dashboard - Always visible when trading */}
-      {isTrading && <APIHealthDashboard />}
     </div>
   );
 }

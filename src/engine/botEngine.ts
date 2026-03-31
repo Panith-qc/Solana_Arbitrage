@@ -177,16 +177,13 @@ export class BotEngine {
   async initializeDeferred(): Promise<void> {
     engineLog.info('Initializing bot engine (deferred mode — waiting for wallet via UI)...');
 
-    // Connect RPC if configured
+    // Connect RPC if configured — gracefully handle all failures so the
+    // server starts regardless and the user can fix config via the dashboard.
     try {
       await this.connectionManager.initialize();
     } catch (err: any) {
-      // If RPC fails, the server can still start — user will configure via UI
-      if (err.message?.includes('No RPC connection')) {
-        engineLog.warn('No RPC configured — server will start but bot requires RPC + wallet to trade');
-        return;
-      }
-      throw err;
+      engineLog.warn({ error: err.message }, 'RPC initialization failed — server will start but bot requires valid RPC + wallet to trade');
+      return;
     }
 
     // If wallet was loaded from env, complete init fully
