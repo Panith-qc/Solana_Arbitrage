@@ -17,10 +17,12 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 // ── Fee Constants ──────────────────────────────────────────────────────────────
+// IMPORTANT: DEX quotes already include swap fees in outAmount. Don't double-count.
 const BASE_GAS_LAMPORTS = 5_000;
 const PRIORITY_FEE_LAMPORTS = 200_000;
-const DEX_SWAP_FEE_BPS = 30;
+const JITO_TIP_LAMPORTS = 100_000;
 const QUOTE_LIFETIME_MS = 10_000;
+const EXECUTION_SAFETY_BUFFER_BPS = 15;
 
 // Jupiter URL loaded from config via this.botConfig.jupiterApiUrl
 const RAYDIUM_QUOTE_URL = 'https://api-v3.raydium.io/compute/swap-base-in';
@@ -303,16 +305,25 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   } {
     const inputSol = Number(inputLamports) / LAMPORTS_PER_SOL;
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
+    // DEX quotes already embed swap fees in output amounts
     const grossProfitSol = outputSol - inputSol;
 
+    // Only costs NOT in the DEX quotes:
     const gasFee = (BASE_GAS_LAMPORTS * 2) / LAMPORTS_PER_SOL;
     const priorityFee = PRIORITY_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-    const dexFee = inputSol * (DEX_SWAP_FEE_BPS / 10_000) * 2;
-    const slippageCost = inputSol * (this.config.slippageBps / 10_000) * 2;
+    const jitoTip = JITO_TIP_LAMPORTS / LAMPORTS_PER_SOL;
+    const safetyBuffer = inputSol * (EXECUTION_SAFETY_BUFFER_BPS / 10_000);
 
-    const totalFeeSol = gasFee + priorityFee + dexFee + slippageCost;
+    const totalFeeSol = gasFee + priorityFee + jitoTip + safetyBuffer;
     const netProfitSol = grossProfitSol - totalFeeSol;
-    const solPriceUsd = this.botConfig.solPriceUsd || 150;
+
+    const solPriceUsd = this.botConfig.solPriceUsd;
+    if (!solPriceUsd || solPriceUsd <= 0) {
+      return {
+        grossProfitSol, netProfitSol: -1, netProfitUsd: -1, totalFeeSol,
+        feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
+      };
+    }
     const netProfitUsd = netProfitSol * solPriceUsd;
 
     return {
@@ -320,7 +331,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       netProfitSol,
       netProfitUsd,
       totalFeeSol,
-      feeBreakdown: { gasFee, priorityFee, dexFee, slippageCost },
+      feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
     };
   }
 

@@ -194,7 +194,13 @@ export class SnipeExecutor {
       // 7. Calculate entry price
       const entryPricePerToken = amountSol / Number(tokenBalance);
 
-      // 8. Create position
+      // 8. Require valid SOL price
+      const solPriceUsd = this.config.solPriceUsd;
+      if (!solPriceUsd || solPriceUsd <= 0) {
+        return { success: false, position: null, error: 'SOL price not available', signature };
+      }
+
+      // 9. Create position
       const position: SnipePosition = {
         id,
         tokenMint,
@@ -204,7 +210,7 @@ export class SnipeExecutor {
         entryTokenAmount: tokenBalance,
         entryPricePerToken,
         entryTimestamp: Date.now(),
-        entrySolPrice: this.config.solPriceUsd || 150,
+        entrySolPrice: solPriceUsd,
         entrySignature: signature,
         initialPoolLiquidityLamports,
         status: 'open',

@@ -155,7 +155,8 @@ export class FrontrunStrategy extends BaseStrategy {
 
         const totalCostSol = gasCost + priorityCost + jitoTip + slippageCost;
         const netProfitSol = grossProfitSol - totalCostSol;
-        const solPriceUsd = this.botConfig.solPriceUsd || 150;
+        const solPriceUsd = this.botConfig.solPriceUsd;
+        if (!solPriceUsd || solPriceUsd <= 0) continue;
         const netProfitUsd = netProfitSol * solPriceUsd;
 
         if (netProfitUsd < this.config.minProfitUsd) continue;

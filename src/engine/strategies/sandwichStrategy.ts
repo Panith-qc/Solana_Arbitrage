@@ -159,7 +159,8 @@ export class SandwichStrategy extends BaseStrategy {
           ((BASE_GAS_LAMPORTS * 2) + (PRIORITY_FEE_LAMPORTS * 2) + JITO_TIP_LAMPORTS) / LAMPORTS_PER_SOL;
 
         const netProfitSol = backrunProfitSol - totalCostSol;
-        const solPriceUsd = this.botConfig.solPriceUsd || 150;
+        const solPriceUsd = this.botConfig.solPriceUsd;
+        if (!solPriceUsd || solPriceUsd <= 0) continue;
         const netProfitUsd = netProfitSol * solPriceUsd;
 
         if (netProfitUsd < this.config.minProfitUsd) continue;

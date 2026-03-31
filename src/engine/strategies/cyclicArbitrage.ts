@@ -17,11 +17,15 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 // ── Fee Constants ──────────────────────────────────────────────────────────────
-const BASE_GAS_LAMPORTS = 5_000;              // base compute-unit fee
-const PRIORITY_FEE_LAMPORTS = 200_000;        // realistic priority fee (Jupiter auto-sets)
-const JUPITER_PLATFORM_FEE_BPS = 10;          // 0.10% Jupiter platform fee
-const DEX_SWAP_FEE_BPS = 30;                  // ~0.30% average DEX pool fee (Orca/Raydium)
+// IMPORTANT: Jupiter's outAmount already includes DEX swap fees, platform fees,
+// and route-level costs. We must NOT double-count them.
+// Only add costs that are NOT reflected in the Jupiter quote output:
+const BASE_GAS_LAMPORTS = 5_000;              // Solana base fee per transaction
+const PRIORITY_FEE_LAMPORTS = 200_000;        // priority fee (Jupiter auto-sets via 'auto')
+const JITO_TIP_LAMPORTS = 100_000;            // Jito bundle tip (if using bundles)
 const QUOTE_LIFETIME_MS = 15_000;             // quotes expire after 15 s
+// Safety buffer for quote staleness and execution slippage (% of input)
+const EXECUTION_SAFETY_BUFFER_BPS = 15;       // 0.15% buffer for real-world execution variance
 
 export class CyclicArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
@@ -211,20 +215,34 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
   } {
     const inputSol = Number(inputLamports) / LAMPORTS_PER_SOL;
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
+    // grossProfitSol already reflects real DEX output (fees embedded in Jupiter quote)
     const grossProfitSol = outputSol - inputSol;
 
-    // Fee breakdown (all in SOL)
-    const gasFee = (BASE_GAS_LAMPORTS * 2) / LAMPORTS_PER_SOL;  // 2 swaps
+    // Only subtract costs NOT already in the Jupiter quote:
+    // 1. Solana base transaction fees (2 swaps)
+    const gasFee = (BASE_GAS_LAMPORTS * 2) / LAMPORTS_PER_SOL;
+    // 2. Priority fee (Jupiter sets via 'auto', but we budget for it)
     const priorityFee = PRIORITY_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-    const jupiterFee = inputSol * (JUPITER_PLATFORM_FEE_BPS / 10_000) * 2;  // both legs
-    const dexFee = inputSol * (DEX_SWAP_FEE_BPS / 10_000) * 2;             // both legs
-    const slippageCost = inputSol * (this.config.slippageBps / 10_000) * 2;  // worst-case slippage both legs
+    // 3. Jito tip for atomic bundle execution
+    const jitoTip = JITO_TIP_LAMPORTS / LAMPORTS_PER_SOL;
+    // 4. Safety buffer for execution variance (quote staleness, partial slippage)
+    const safetyBuffer = inputSol * (EXECUTION_SAFETY_BUFFER_BPS / 10_000);
 
-    const totalFeeSol = gasFee + priorityFee + jupiterFee + dexFee + slippageCost;
+    const totalFeeSol = gasFee + priorityFee + jitoTip + safetyBuffer;
     const netProfitSol = grossProfitSol - totalFeeSol;
 
-    // Rough SOL price estimate (can be replaced with oracle)
-    const solPriceUsd = this.botConfig.solPriceUsd || 150;
+    // SOL price must come from live data - refuse to use stale fallback
+    const solPriceUsd = this.botConfig.solPriceUsd;
+    if (!solPriceUsd || solPriceUsd <= 0) {
+      // No valid price - report as unprofitable to prevent blind trading
+      return {
+        grossProfitSol,
+        netProfitSol: -1,
+        netProfitUsd: -1,
+        totalFeeSol,
+        feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
+      };
+    }
     const netProfitUsd = netProfitSol * solPriceUsd;
 
     return {
@@ -235,9 +253,8 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
       feeBreakdown: {
         gasFee,
         priorityFee,
-        jupiterFee,
-        dexFee,
-        slippageCost,
+        jitoTip,
+        safetyBuffer,
       },
     };
   }
