@@ -44,48 +44,16 @@ const PrivateKeyWallet: React.FC<PrivateKeyWalletProps> = ({
   const [error, setError] = useState('');
   const [isValidating, setIsValidating] = useState(false);
 
-  // Validate private key format
-  const validatePrivateKey = (key: string): { isValid: boolean; publicKey?: string; error?: string } => {
-    try {
-      // Remove whitespace and common prefixes
-      const cleanKey = key.trim().replace(/^(0x)?/, '');
-      
-      // Check if it's a valid base58 private key (Solana format)
-      if (cleanKey.length === 88) {
-        // Simulate public key derivation (in real implementation, use @solana/web3.js)
-        const mockPublicKey = `${cleanKey.slice(0, 8)}...${cleanKey.slice(-8)}PublicKey`;
-        return { isValid: true, publicKey: mockPublicKey };
-      }
-      
-      // Check if it's a hex private key (64 characters)
-      if (cleanKey.length === 64 && /^[0-9a-fA-F]+$/.test(cleanKey)) {
-        const mockPublicKey = `${cleanKey.slice(0, 8)}...${cleanKey.slice(-8)}PublicKey`;
-        return { isValid: true, publicKey: mockPublicKey };
-      }
-      
-      // Check if it's an array format [1,2,3,...]
-      if (cleanKey.startsWith('[') && cleanKey.endsWith(']')) {
-        try {
-          const keyArray = JSON.parse(cleanKey);
-          if (Array.isArray(keyArray) && keyArray.length === 64) {
-            const mockPublicKey = `Array${keyArray[0]}...${keyArray[63]}PublicKey`;
-            return { isValid: true, publicKey: mockPublicKey };
-          }
-        } catch {
-          return { isValid: false, error: 'Invalid array format' };
-        }
-      }
-      
-      return { isValid: false, error: 'Invalid private key format. Expected: 88-char base58, 64-char hex, or [1,2,3...] array' };
-      
-    } catch (error) {
-      return { isValid: false, error: 'Failed to validate private key' };
-    }
-  };
-
   const handleConnect = async () => {
     if (!privateKey.trim()) {
       setError('Please enter your private key');
+      return;
+    }
+
+    // Basic client-side length check
+    const trimmed = privateKey.trim();
+    if (trimmed.length < 32 || trimmed.length > 128) {
+      setError('Invalid private key format. Expected a bs58-encoded Solana private key (typically 88 characters).');
       return;
     }
 
@@ -94,27 +62,25 @@ const PrivateKeyWallet: React.FC<PrivateKeyWalletProps> = ({
     setError('');
 
     try {
-      // Validate the private key
-      const validation = validatePrivateKey(privateKey);
-      
-      if (!validation.isValid) {
-        throw new Error(validation.error || 'Invalid private key');
+      // Send to backend — the engine validates the key securely on the server
+      const response = await fetch('/api/wallet/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ privateKey: trimmed }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Connection failed');
       }
 
-      console.log('🔑 Connecting with private key...');
-      
-      // Simulate connection process
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Generate a realistic public key for demo
-      const publicKey = '34tC7Wd6URg5sbjvMJrStyH69L8Tcj3jzgNxH3EJ3fib';
-      
-      onWalletConnect(privateKey, publicKey);
-      
-      console.log('✅ Private key wallet connected successfully');
-      
+      // Clear the private key from component state immediately after sending
+      setPrivateKey('');
+
+      onWalletConnect(trimmed, data.publicKey);
+
     } catch (error) {
-      console.error('❌ Private key connection failed:', error);
       setError(error instanceof Error ? error.message : 'Connection failed');
     } finally {
       setIsConnecting(false);
@@ -122,11 +88,15 @@ const PrivateKeyWallet: React.FC<PrivateKeyWalletProps> = ({
     }
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
+    try {
+      await fetch('/api/wallet/disconnect', { method: 'POST' });
+    } catch {
+      // Best-effort — disconnect locally even if API fails
+    }
     setPrivateKey('');
     setError('');
     onWalletDisconnect();
-    console.log('🔌 Private key wallet disconnected');
   };
 
   const copyPublicKey = () => {
