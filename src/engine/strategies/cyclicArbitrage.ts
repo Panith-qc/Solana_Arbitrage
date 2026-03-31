@@ -13,6 +13,9 @@ import {
   TokenInfo,
   BotConfig,
   RiskProfile,
+  BASE_GAS_LAMPORTS,
+  PRIORITY_FEE_LAMPORTS,
+  JITO_TIP_LAMPORTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -21,16 +24,8 @@ import { ConnectionManager } from '../connectionManager.js';
 const CYCLIC_SYMBOLS = new Set(['JUP', 'RAY', 'ORCA', 'BONK', 'WIF', 'MEW', 'BOME', 'W', 'RENDER', 'PYTH']);
 const CYCLIC_TOKENS = SCAN_TOKENS.filter(t => CYCLIC_SYMBOLS.has(t.symbol));
 
-// ── Fee Constants ──────────────────────────────────────────────────────────────
-// IMPORTANT: Jupiter's outAmount already includes DEX swap fees, platform fees,
-// and route-level costs. We must NOT double-count them.
-// Only add costs that are NOT reflected in the Jupiter quote output:
-const BASE_GAS_LAMPORTS = 5_000;              // Solana base fee per transaction
-const PRIORITY_FEE_LAMPORTS = 50_000;         // conservative priority fee estimate (Jupiter 'auto' handles most)
-const JITO_TIP_LAMPORTS = 50_000;             // Jito bundle tip (keep low for micro-arb)
-const QUOTE_LIFETIME_MS = 15_000;             // quotes expire after 15 s
-// Safety buffer for quote staleness and execution slippage (% of input)
-const EXECUTION_SAFETY_BUFFER_BPS = 5;        // 0.05% buffer — tight for real execution
+const QUOTE_LIFETIME_MS = 15_000;
+const EXECUTION_SAFETY_BUFFER_BPS = 5;
 
 export class CyclicArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;

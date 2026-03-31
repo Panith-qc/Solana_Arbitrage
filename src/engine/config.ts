@@ -6,6 +6,17 @@ export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const LAMPORTS_PER_SOL = 1_000_000_000;
 export const USDC_DECIMALS = 6;
 
+// ── On-chain fee constants (single source of truth) ──────────────────────────
+// These are the REAL Solana protocol fees — never duplicate these values elsewhere.
+export const BASE_GAS_LAMPORTS = 5_000;        // 5000 lamports per signature (Solana protocol fixed)
+export const PRIORITY_FEE_LAMPORTS = 5_000;    // Minimal priority fee — Jito handles block inclusion
+export const JITO_TIP_LAMPORTS = 10_000;       // Minimum viable Jito tip for bundle inclusion
+
+// Derived: total cost for a single-leg swap (1 signature + priority + Jito)
+export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 20,000
+// Derived: total cost for a 2-leg arbitrage cycle (2 signatures + priority + Jito)
+export const TWO_LEG_FEE_LAMPORTS = (BASE_GAS_LAMPORTS * 2) + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 25,000
+
 // Token list for scanning
 export interface TokenInfo {
   mint: string;

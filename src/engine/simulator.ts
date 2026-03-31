@@ -8,7 +8,7 @@ import {
   SimulatedTransactionResponse,
 } from '@solana/web3.js';
 import { executionLog } from './logger.js';
-import { LAMPORTS_PER_SOL } from './config.js';
+import { LAMPORTS_PER_SOL, SINGLE_LEG_FEE_LAMPORTS } from './config.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
@@ -165,16 +165,10 @@ export async function simulateSwapProfitability(
   expectedOutputLamports: number,
   quote: Record<string, any> = {},
 ): Promise<ProfitabilityResult> {
-  // Real on-chain fee for a single Jupiter swap leg:
-  // - Base fee: 5,000 lamports (Solana protocol: 5000 per signature)
-  // - Priority fee: 5,000 lamports (minimal — Jito handles block inclusion)
-  // - Jito tip: 10,000 lamports (minimum viable tip)
   // This function checks ONE leg (Leg 2 reverse), so we only count Leg 2 costs.
   // Leg 1 costs are already sunk at this point.
-  const BASE_FEE_LAMPORTS = 5_000;
-  const PRIORITY_FEE_LAMPORTS = 5_000;
-  const JITO_TIP_LAMPORTS = 10_000;
-  const estimatedGasCostLamports = BASE_FEE_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 20k lamports
+  // Fee constants imported from config.ts (single source of truth).
+  const estimatedGasCostLamports = SINGLE_LEG_FEE_LAMPORTS; // 20k lamports
 
   const grossProfitLamports = expectedOutputLamports - inputLamports;
   const netProfitLamports = grossProfitLamports - estimatedGasCostLamports;

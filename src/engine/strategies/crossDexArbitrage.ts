@@ -19,16 +19,14 @@ import {
   BotConfig,
   RiskProfile,
   USDC_MINT,
+  BASE_GAS_LAMPORTS,
+  PRIORITY_FEE_LAMPORTS,
+  JITO_TIP_LAMPORTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
 // ALL tokens — don't filter, scan everything
 const ALL_TOKENS = SCAN_TOKENS.filter(t => t.mint !== SOL_MINT && t.mint !== USDC_MINT);
-
-// ── Real on-chain fees (verified from Solana docs) ──────────────────────────
-const BASE_GAS_LAMPORTS = 5_000;        // 5000 lamports per signature (fixed by protocol)
-const PRIORITY_FEE_LAMPORTS = 5_000;    // Minimal priority — Jito handles inclusion
-const JITO_TIP_LAMPORTS = 10_000;       // 10k lamports minimum viable Jito tip
 const QUOTE_LIFETIME_MS = 10_000;
 const EXECUTION_SAFETY_BUFFER_BPS = 1;  // 1 bps — quotes are near-instant execution
 

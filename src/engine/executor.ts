@@ -15,6 +15,8 @@ import {
   BotConfig,
   SOL_MINT,
   LAMPORTS_PER_SOL,
+  SINGLE_LEG_FEE_LAMPORTS,
+  TWO_LEG_FEE_LAMPORTS,
 } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import {
@@ -413,7 +415,7 @@ export class Executor {
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
     const grossProfitLamports = reverseOutputLamports - inputLamports;
     // Only Leg 2 fees matter here (Leg 1 costs are sunk)
-    const leg2FeeLamports = 20_000; // 5k base + 5k priority + 10k Jito
+    const leg2FeeLamports = SINGLE_LEG_FEE_LAMPORTS;
     const netCheckLamports = grossProfitLamports - leg2FeeLamports;
 
     if (netCheckLamports < -50_000) {
@@ -530,7 +532,7 @@ export class Executor {
       } catch {
         // Balance check failed — use quote-based fallback
         const grossLamports = reverseOutputLamports - inputLamports;
-        const feeLamports = 25_000; // 2×5k base + 5k priority + 10k Jito
+        const feeLamports = TWO_LEG_FEE_LAMPORTS;
         actualProfitSol = (grossLamports - feeLamports) / LAMPORTS_PER_SOL;
       }
     } else {

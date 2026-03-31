@@ -13,15 +13,11 @@ import {
   TokenInfo,
   BotConfig,
   RiskProfile,
+  BASE_GAS_LAMPORTS,
+  PRIORITY_FEE_LAMPORTS,
+  JITO_TIP_LAMPORTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
-
-// ── Fee Constants ──────────────────────────────────────────────────────────────
-// IMPORTANT: Jupiter's outAmount already includes DEX/platform fees.
-// Only add costs NOT reflected in the quote output.
-const BASE_GAS_LAMPORTS = 5_000;
-const PRIORITY_FEE_LAMPORTS = 50_000;
-const JITO_TIP_LAMPORTS = 75_000;    // slightly higher tip for 3-leg bundles
 const QUOTE_LIFETIME_MS = 12_000;    // 3-leg paths stale faster
 const EXECUTION_SAFETY_BUFFER_BPS = 10;  // tighter buffer to catch more opps
 const MAX_PAIRS_TO_CHECK = 6;        // cap to stay within API rate limits (1 RPS)
