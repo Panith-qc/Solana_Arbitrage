@@ -12,17 +12,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      
-      - name: Install pnpm
-        run: npm install -g pnpm
-      
+          node-version: '22'
+
       - name: Install dependencies
-        run: pnpm install
-      
+        run: npm ci
+
       - name: Build
-        run: pnpm run build
+        run: npm run build
