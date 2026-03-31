@@ -58,6 +58,17 @@ interface OpportunityInfo {
   metadata: Record<string, any>;
 }
 
+interface ScanLogEntry {
+  timestamp: number;
+  strategy: string;
+  token: string;
+  spreadBps: number;
+  grossProfitSol: number;
+  netProfitUsd: number;
+  fees: number;
+  profitable: boolean;
+}
+
 export default function Phase2AutoTrading() {
   const [privateKey, setPrivateKey] = useState('');
   const [selectedRisk, setSelectedRisk] = useState<RiskLevel>('BALANCED');
@@ -68,6 +79,7 @@ export default function Phase2AutoTrading() {
   const [stats, setStats] = useState<BotStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [opportunities, setOpportunities] = useState<OpportunityInfo[]>([]);
+  const [scanLogs, setScanLogs] = useState<ScanLogEntry[]>([]);
   const [activeStrategies, setActiveStrategies] = useState<string[]>([]);
 
   const profiles = getAllRiskProfiles();
@@ -103,6 +115,9 @@ export default function Phase2AutoTrading() {
       }
       if (statusRes?.recentOpportunities) {
         setOpportunities(statusRes.recentOpportunities);
+      }
+      if (statusRes?.scanLogs) {
+        setScanLogs(statusRes.scanLogs);
       }
       if (tradesRes?.trades) setTrades(tradesRes.trades);
     } catch { /* ignore */ }
@@ -548,23 +563,45 @@ export default function Phase2AutoTrading() {
                             ))}
                           </div>
                         </div>
-                      ) : (
-                        <div className="text-center py-8 bg-white rounded-lg border">
-                          <Activity className="w-16 h-16 mx-auto text-blue-400 animate-pulse mb-3" />
-                          <p className="text-base font-semibold mb-2">Monitoring Market...</p>
-                          <p className="text-sm text-muted-foreground mb-4">
-                            Bot is actively scanning {activeStrategies.length} strategies for profitable opportunities
+                      ) : null}
+
+                      {/* Live Scan Log — shows what the bot sees in real-time */}
+                      {scanLogs.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold mb-2">
+                            <Activity className="w-4 h-4 inline mr-1 text-blue-500 animate-pulse" />
+                            Live Scan Log ({scanLogs.length} scans):
                           </p>
-                          <div className="max-w-xs mx-auto space-y-1">
-                            {activeStrategies.map(s => (
-                              <div key={s} className="text-xs text-gray-600 flex items-center justify-center gap-2">
-                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                                {s}
+                          <div className="bg-gray-900 rounded-lg p-3 max-h-72 overflow-y-auto font-mono text-xs">
+                            {scanLogs.slice(0, 30).map((log, i) => (
+                              <div key={`${log.timestamp}-${i}`} className="flex items-center gap-2 py-0.5 border-b border-gray-800 last:border-0">
+                                <span className="text-gray-500 w-16 shrink-0">
+                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                </span>
+                                <span className="text-blue-400 w-20 shrink-0 truncate">{log.strategy.replace('-arbitrage', '')}</span>
+                                <span className="text-white w-28 shrink-0 truncate">{log.token}</span>
+                                <span className={`w-16 shrink-0 text-right font-bold ${log.spreadBps > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {log.spreadBps > 0 ? '+' : ''}{log.spreadBps.toFixed(1)} bps
+                                </span>
+                                <span className={`w-20 shrink-0 text-right ${log.netProfitUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  ${log.netProfitUsd.toFixed(4)}
+                                </span>
+                                {log.profitable && (
+                                  <Badge className="bg-green-600 text-white text-[10px] px-1 py-0">PROFIT</Badge>
+                                )}
                               </div>
                             ))}
                           </div>
                         </div>
-                      )}
+                      ) : isTrading ? (
+                        <div className="text-center py-8 bg-white rounded-lg border">
+                          <Activity className="w-16 h-16 mx-auto text-blue-400 animate-pulse mb-3" />
+                          <p className="text-base font-semibold mb-2">Starting scan...</p>
+                          <p className="text-sm text-muted-foreground">
+                            Waiting for first scan results (takes ~30-40 seconds)
+                          </p>
+                        </div>
+                      ) : null}
                     </CardContent>
                   </Card>
                 </>

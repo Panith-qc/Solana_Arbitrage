@@ -113,7 +113,8 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
         const profitAnalysis = this.calculateProfit(scanAmountLamports, outputLamports, token);
 
         // Log ALL spreads (including negative) for visibility
-        const spreadBps = ((Number(outputLamports) - Number(scanAmountLamports)) / Number(scanAmountLamports) * 10000).toFixed(1);
+        const spreadBpsNum = (Number(outputLamports) - Number(scanAmountLamports)) / Number(scanAmountLamports) * 10000;
+        const spreadBps = spreadBpsNum.toFixed(1);
         strategyLog.info(
           {
             token: token.symbol,
@@ -124,6 +125,17 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
           },
           `Spread: ${token.symbol} ${spreadBps}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
         );
+
+        // Push to dashboard scan log
+        this.onScanResult?.({
+          strategy: this.name,
+          token: token.symbol,
+          spreadBps: spreadBpsNum,
+          grossProfitSol: profitAnalysis.grossProfitSol,
+          netProfitUsd: profitAnalysis.netProfitUsd,
+          fees: profitAnalysis.totalFeeSol,
+          profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
+        });
 
         if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
           const now = Date.now();

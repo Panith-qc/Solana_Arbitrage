@@ -165,6 +165,18 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
         const outputLamports = BigInt(leg3.outAmount);
         const profitAnalysis = this.calculateProfit(scanAmountLamports, outputLamports);
 
+        // Push to dashboard scan log (all results)
+        const hopSpreadBps = (Number(outputLamports) - Number(scanAmountLamports)) / Number(scanAmountLamports) * 10000;
+        this.onScanResult?.({
+          strategy: this.name,
+          token: `${tokenA.symbol}→${tokenB.symbol}`,
+          spreadBps: hopSpreadBps,
+          grossProfitSol: profitAnalysis.grossProfitSol,
+          netProfitUsd: profitAnalysis.netProfitUsd,
+          fees: profitAnalysis.totalFeeSol,
+          profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
+        });
+
         if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
           const now = Date.now();
           const opportunity: Opportunity = {

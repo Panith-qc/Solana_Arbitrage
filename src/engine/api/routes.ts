@@ -237,6 +237,7 @@ export function createRoutes(deps: RouteDependencies): Router {
       const circuitBreaker = botEngine?.getCircuitBreakerStatus?.() ?? {};
 
       const recentOpportunities = botEngine?.getRecentOpportunities?.() ?? [];
+      const scanLogs = botEngine?.getScanLogs?.() ?? [];
 
       res.json({
         running,
@@ -244,6 +245,7 @@ export function createRoutes(deps: RouteDependencies): Router {
         riskStatus,
         circuitBreaker,
         recentOpportunities,
+        scanLogs,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         timestamp: Date.now(),
       });
