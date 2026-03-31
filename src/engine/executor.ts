@@ -15,13 +15,13 @@ import {
   BotConfig,
   SOL_MINT,
   LAMPORTS_PER_SOL,
+  PRIORITY_FEE_LAMPORTS,
   SINGLE_LEG_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
 } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import {
   simulateTransaction,
-  simulateSwapProfitability,
   SimulationResult,
 } from './simulator.js';
 import {
@@ -538,7 +538,7 @@ export class Executor {
     } else {
       // No pre-trade balance — use quote-based estimate
       const grossLamports = reverseOutputLamports - inputLamports;
-      const feeLamports = 25_000;
+      const feeLamports = TWO_LEG_FEE_LAMPORTS;
       actualProfitSol = (grossLamports - feeLamports) / LAMPORTS_PER_SOL;
     }
 
@@ -789,7 +789,10 @@ export class Executor {
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
         dynamicSlippage: false,
-        prioritizationFeeLamports: 'auto',
+        // CRITICAL: Set explicit priority fee matching our profit calculation.
+        // 'auto' would let Jupiter set 100k-500k lamports, eating all profit.
+        // We use Jito for block inclusion, so priority fee can be minimal.
+        prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
       };
 
       const response = await fetchWithTimeout(
