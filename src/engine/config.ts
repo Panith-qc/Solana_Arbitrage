@@ -105,7 +105,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxConcurrentTrades: 1,
     stopLossPercent: 1.0,
     slippageBps: 50,
-    minProfitUsd: 0.01,
+    minProfitUsd: 0.001,
     maxDrawdownPercent: 3,
     circuitBreakerFailures: 5,
     circuitBreakerCooldownMs: 600000, // 10 min
@@ -130,7 +130,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxConcurrentTrades: 2,
     stopLossPercent: 2.0,
     slippageBps: 75,
-    minProfitUsd: 0.01,
+    minProfitUsd: 0.001,
     maxDrawdownPercent: 8,
     circuitBreakerFailures: 8,
     circuitBreakerCooldownMs: 300000, // 5 min
@@ -155,7 +155,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
     slippageBps: 100,
-    minProfitUsd: 0.005,
+    minProfitUsd: 0.001,
     maxDrawdownPercent: 15,
     circuitBreakerFailures: 10,
     circuitBreakerCooldownMs: 120000, // 2 min
@@ -231,7 +231,7 @@ export function loadConfig(): BotConfig {
     privateKey: process.env.PRIVATE_KEY || '',
     riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'BALANCED',
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
-    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '5.0'),
+    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '10.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
     jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
