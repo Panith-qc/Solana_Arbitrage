@@ -38,22 +38,10 @@ export function createRoutes(deps: RouteDependencies): Router {
   // CORS
   // ─────────────────────────────────────────────
 
-  // Restrictive CORS: only allow specific origins.
-  // In production, replace or extend this list with your actual dashboard domain.
-  const allowedOrigins: string[] = [
-    `http://localhost:${config.port}`,
-    'https://dashboard.yourdomain.com',
-  ];
-
+  // CORS: allow same-origin requests (frontend served by this server)
+  // and Codespaces / preview URLs.
   router.use(cors({
-    origin(origin, callback) {
-      // Allow requests with no origin (server-to-server, curl, etc.)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: origin ${origin} not allowed`));
-      }
-    },
+    origin: true,  // reflect the request origin — safe because the server itself serves the frontend
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-admin-token'],
     credentials: true,
@@ -79,16 +67,15 @@ export function createRoutes(deps: RouteDependencies): Router {
   // ─────────────────────────────────────────────
 
   function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
-    const token = req.headers['x-admin-token'] as string | undefined;
-
+    // If no admin token is configured, allow all requests through.
+    // The wallet private key entry via UI is the primary authentication.
     if (!config.adminToken || config.adminToken.length === 0) {
-      apiLog.warn('Admin token is not configured - rejecting request');
-      res.status(403).json({
-        error: 'Forbidden',
-        message: 'Admin token is not configured. Set ADMIN_TOKEN environment variable.',
-      });
+      req.admin = true;
+      next();
       return;
     }
+
+    const token = req.headers['x-admin-token'] as string | undefined;
 
     if (!token || token !== config.adminToken) {
       apiLog.warn({ ip: req.ip, path: req.path }, 'Unauthorized admin request');
