@@ -92,6 +92,40 @@ export class ConnectionManager {
     return this.wallet !== null;
   }
 
+  /**
+   * Dynamically set the wallet from a bs58-encoded private key.
+   * Used when the user connects via the web UI instead of .env.
+   * Returns the public key on success.
+   */
+  setWallet(bs58PrivateKey: string): string {
+    try {
+      const keyBytes = bs58.decode(bs58PrivateKey);
+      this.wallet = Keypair.fromSecretKey(keyBytes);
+      const publicKey = this.wallet.publicKey.toString();
+      engineLog.info({ publicKey }, 'Wallet connected dynamically');
+      return publicKey;
+    } catch (err) {
+      throw new Error('Invalid private key format — expected a bs58-encoded Solana private key');
+    }
+  }
+
+  /**
+   * Disconnect the current wallet (for security — clear from memory).
+   */
+  disconnectWallet(): void {
+    if (this.wallet) {
+      engineLog.info('Wallet disconnected');
+      this.wallet = null;
+    }
+  }
+
+  /**
+   * Check if RPC is initialized (server can start without RPC, wallet connects later).
+   */
+  isInitialized(): boolean {
+    return this.activeConnection !== null;
+  }
+
   // Report a connection failure - triggers failover if threshold exceeded
   async reportFailure(): Promise<void> {
     if (this.activeConnection === this.primaryConnection) {

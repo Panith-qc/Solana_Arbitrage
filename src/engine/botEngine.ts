@@ -163,6 +163,92 @@ export class BotEngine {
       this.stats.currentBalanceSol = balance;
     }
 
+    await this.completeInitialization();
+  }
+
+  /**
+   * Lightweight init — only connect RPC, don't require wallet.
+   * Used when the user will provide their private key via the web UI.
+   * Falls back to full initialize() if RPC is configured via env.
+   */
+  async initializeDeferred(): Promise<void> {
+    engineLog.info('Initializing bot engine (deferred mode — waiting for wallet via UI)...');
+
+    // Connect RPC if configured
+    try {
+      await this.connectionManager.initialize();
+    } catch (err: any) {
+      // If RPC fails, the server can still start — user will configure via UI
+      if (err.message?.includes('No RPC connection')) {
+        engineLog.warn('No RPC configured — server will start but bot requires RPC + wallet to trade');
+        return;
+      }
+      throw err;
+    }
+
+    // If wallet was loaded from env, complete init fully
+    if (this.connectionManager.hasWallet()) {
+      const balance = await this.connectionManager.getBalance();
+      engineLog.info({ balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet balance');
+      this.stats.currentBalanceSol = balance;
+      await this.completeInitialization();
+      return;
+    }
+
+    engineLog.info('RPC connected. Waiting for wallet connection via UI...');
+  }
+
+  /**
+   * Connect a wallet dynamically (from UI) and finish engine setup.
+   * Returns wallet public key and balance.
+   */
+  async connectWallet(bs58PrivateKey: string): Promise<{ publicKey: string; balanceSol: number }> {
+    if (this.status === 'running') {
+      throw new Error('Cannot change wallet while bot is running — stop the bot first');
+    }
+
+    if (!this.connectionManager.isInitialized()) {
+      throw new Error('RPC not connected — configure HELIUS_RPC_URL first');
+    }
+
+    const publicKey = this.connectionManager.setWallet(bs58PrivateKey);
+    const balanceSol = await this.connectionManager.getBalance();
+    this.stats.currentBalanceSol = balanceSol;
+
+    // Complete initialization if strategies haven't been set up yet
+    if (this.strategies.size === 0) {
+      await this.completeInitialization();
+    }
+
+    engineLog.info({ publicKey, balanceSol }, 'Wallet connected via UI');
+    return { publicKey, balanceSol };
+  }
+
+  /**
+   * Disconnect the current wallet and stop the bot if running.
+   */
+  async disconnectWallet(): Promise<void> {
+    if (this.status === 'running') {
+      await this.stop();
+    }
+    this.connectionManager.disconnectWallet();
+    this.stats.currentBalanceSol = 0;
+    engineLog.info('Wallet disconnected via UI');
+  }
+
+  /**
+   * Get the current wallet status.
+   */
+  getWalletStatus(): { connected: boolean; publicKey: string | null; balanceSol: number; rpcConnected: boolean } {
+    return {
+      connected: this.connectionManager.hasWallet(),
+      publicKey: this.connectionManager.hasWallet() ? this.connectionManager.getPublicKey().toString() : null,
+      balanceSol: this.stats.currentBalanceSol,
+      rpcConnected: this.connectionManager.isInitialized(),
+    };
+  }
+
+  private async completeInitialization(): Promise<void> {
     // Initialize strategies based on risk profile
     this.initializeStrategies();
 

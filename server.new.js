@@ -31,10 +31,13 @@ async function main() {
   engineLog.info('╚════════════════════════════════════════════════════════╝');
 
   // 1. Create and initialize the bot engine
+  //    Uses deferred mode: server starts immediately, wallet can be connected
+  //    later via the web UI (POST /api/wallet/connect).
+  //    If PRIVATE_KEY is in .env, it will auto-connect the wallet at startup.
   const engine = new BotEngine();
 
   try {
-    await engine.initialize();
+    await engine.initializeDeferred();
   } catch (err) {
     engineLog.fatal({ err }, 'Failed to initialize bot engine');
     process.exit(1);

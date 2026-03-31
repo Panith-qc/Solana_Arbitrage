@@ -121,7 +121,7 @@ export function createRoutes(deps: RouteDependencies): Router {
       res.json({
         status: 'ok',
         uptime: Math.floor((Date.now() - startedAt) / 1000),
-        wallet: config.privateKey ? 'configured' : 'not_configured',
+        wallet: botEngine?.getWalletStatus?.()?.connected ? 'connected' : 'not_connected',
         rpcHealth,
         version: BOT_VERSION,
       });
@@ -140,6 +140,100 @@ export function createRoutes(deps: RouteDependencies): Router {
     } catch (err) {
       apiLog.error({ err }, 'Failed to collect metrics');
       res.status(500).json({ error: 'Failed to collect metrics' });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // WALLET MANAGEMENT (no admin token needed for
+  // initial setup, but secured once configured)
+  // ─────────────────────────────────────────────
+
+  // GET /api/wallet/status - Check wallet connection state
+  router.get('/api/wallet/status', async (_req: Request, res: Response) => {
+    try {
+      const walletStatus = botEngine?.getWalletStatus?.() ?? {
+        connected: false,
+        publicKey: null,
+        balanceSol: 0,
+        rpcConnected: false,
+      };
+
+      res.json({
+        ...walletStatus,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      apiLog.error({ err }, 'Failed to get wallet status');
+      res.status(500).json({ error: 'Failed to get wallet status' });
+    }
+  });
+
+  // POST /api/wallet/connect - Connect wallet with private key from UI
+  router.post('/api/wallet/connect', async (req: Request, res: Response) => {
+    try {
+      const { privateKey } = req.body as { privateKey?: string };
+
+      if (!privateKey || typeof privateKey !== 'string' || privateKey.trim().length === 0) {
+        res.status(400).json({
+          error: 'Missing private key',
+          message: 'Please provide a bs58-encoded Solana private key.',
+        });
+        return;
+      }
+
+      // Basic format validation before passing to engine
+      const trimmed = privateKey.trim();
+      if (trimmed.length < 32 || trimmed.length > 128) {
+        res.status(400).json({
+          error: 'Invalid key length',
+          message: 'Private key should be a bs58-encoded string (typically 88 characters).',
+        });
+        return;
+      }
+
+      if (!botEngine?.connectWallet) {
+        res.status(503).json({ error: 'Bot engine not available' });
+        return;
+      }
+
+      const result = await botEngine.connectWallet(trimmed);
+
+      apiLog.info({ publicKey: result.publicKey }, 'Wallet connected via UI');
+
+      res.json({
+        success: true,
+        publicKey: result.publicKey,
+        balanceSol: result.balanceSol,
+        message: 'Wallet connected successfully. You can now start the bot.',
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      apiLog.error({ err }, 'Wallet connection failed');
+      res.status(400).json({
+        error: 'Wallet connection failed',
+        message: err.message || 'Invalid private key or connection error.',
+      });
+    }
+  });
+
+  // POST /api/wallet/disconnect - Disconnect wallet and stop bot
+  router.post('/api/wallet/disconnect', async (_req: Request, res: Response) => {
+    try {
+      if (!botEngine?.disconnectWallet) {
+        res.status(503).json({ error: 'Bot engine not available' });
+        return;
+      }
+
+      await botEngine.disconnectWallet();
+
+      res.json({
+        success: true,
+        message: 'Wallet disconnected. Bot stopped.',
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      apiLog.error({ err }, 'Wallet disconnect failed');
+      res.status(500).json({ error: 'Failed to disconnect wallet' });
     }
   });
 
