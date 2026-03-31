@@ -16,6 +16,10 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
+// Focus cross-DEX scans on tokens with deep liquidity on both Jupiter and Raydium
+const CROSSDEX_SYMBOLS = new Set(['JUP', 'RAY', 'BONK', 'WIF', 'mSOL', 'jitoSOL']);
+const CROSSDEX_TOKENS = SCAN_TOKENS.filter(t => CROSSDEX_SYMBOLS.has(t.symbol));
+
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 // IMPORTANT: DEX quotes already include swap fees in outAmount. Don't double-count.
 const BASE_GAS_LAMPORTS = 5_000;
@@ -77,11 +81,11 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     const scanAmountStr = scanAmountLamports.toString();
 
     strategyLog.debug(
-      { tokens: SCAN_TOKENS.length, scanAmountSol: this.botConfig.scanAmountSol },
+      { tokens: CROSSDEX_TOKENS.length, scanAmountSol: this.botConfig.scanAmountSol },
       'Cross-DEX scan starting',
     );
 
-    for (const token of SCAN_TOKENS) {
+    for (const token of CROSSDEX_TOKENS) {
       try {
         // ── Get BUY quotes (SOL -> Token) from both DEXes ─────────────────
         await this.rateLimit();

@@ -236,11 +236,14 @@ export function createRoutes(deps: RouteDependencies): Router {
       const riskStatus = botEngine?.getRiskStatus?.() ?? {};
       const circuitBreaker = botEngine?.getCircuitBreakerStatus?.() ?? {};
 
+      const recentOpportunities = botEngine?.getRecentOpportunities?.() ?? [];
+
       res.json({
         running,
         stats,
         riskStatus,
         circuitBreaker,
+        recentOpportunities,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         timestamp: Date.now(),
       });

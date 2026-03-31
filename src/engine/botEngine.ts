@@ -96,6 +96,19 @@ export class BotEngine {
   private solPriceCacheTs: number = 0;
   private stats: BotStats;
 
+  // Recent opportunities buffer (shown on dashboard even without execution)
+  private recentOpportunities: Array<{
+    id: string;
+    strategy: string;
+    tokenPath: string[];
+    expectedProfitSol: number;
+    expectedProfitUsd: number;
+    confidence: number;
+    timestamp: number;
+    metadata: Record<string, any>;
+  }> = [];
+  private readonly MAX_RECENT_OPPORTUNITIES = 50;
+
   constructor() {
     this.config = loadConfig();
     this.riskProfile = RISK_PROFILES[this.config.riskLevel];
@@ -445,48 +458,63 @@ export class BotEngine {
         }
       }
 
-      // Run poll-based strategies CONCURRENTLY for faster opportunity detection
+      // Run poll-based strategies SEQUENTIALLY to respect API rate limits
+      // (1 RPS on Jupiter Basic plan — concurrent scans cause 429 errors)
       const allOpportunities: Opportunity[] = [];
       const EVENT_DRIVEN = new Set(['sandwich', 'frontrun', 'jit-liquidity']);
-
-      const scanPromises: Array<Promise<{ name: string; opportunities: Opportunity[] }>> = [];
 
       for (const [name, strategy] of this.strategies) {
         if (!strategy.isActive()) continue;
         if (EVENT_DRIVEN.has(name)) continue;
+        if (this.status !== 'running') break;
 
         this.stats.totalScans++;
         this.metrics.recordScan(name);
 
-        scanPromises.push(
-          strategy.scan()
-            .then((opportunities) => ({ name, opportunities }))
-            .catch((err) => {
-              engineLog.error({ err, strategy: name }, 'Strategy scan failed');
-              return { name, opportunities: [] };
-            }),
-        );
-      }
-
-      // Wait for all strategies to complete their scans
-      const scanResults = await Promise.all(scanPromises);
-
-      for (const { name, opportunities } of scanResults) {
-        if (opportunities.length > 0) {
-          engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
-          allOpportunities.push(...opportunities);
+        try {
+          const opportunities = await strategy.scan();
+          if (opportunities.length > 0) {
+            engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
+            allOpportunities.push(...opportunities);
+          }
+        } catch (err) {
+          engineLog.error({ err, strategy: name }, 'Strategy scan failed');
         }
       }
 
       // Sort all opportunities by expected profit
       allOpportunities.sort((a, b) => b.expectedProfitUsd - a.expectedProfitUsd);
 
-      // Execute best opportunities (up to concurrent trade limit)
+      // Track all opportunities for dashboard display (even without execution)
       this.stats.opportunitiesFound += allOpportunities.length;
+      for (const opp of allOpportunities) {
+        this.recentOpportunities.unshift({
+          id: opp.id,
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          expectedProfitSol: opp.expectedProfitSol,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          confidence: opp.confidence,
+          timestamp: opp.timestamp,
+          metadata: opp.metadata,
+        });
+      }
+      // Cap buffer size
+      if (this.recentOpportunities.length > this.MAX_RECENT_OPPORTUNITIES) {
+        this.recentOpportunities = this.recentOpportunities.slice(0, this.MAX_RECENT_OPPORTUNITIES);
+      }
 
+      // Execute best opportunities (only if wallet is funded)
+      const hasBalance = this.stats.currentBalanceSol > 0.01;
       for (const opp of allOpportunities) {
         if (this.status !== 'running') break;
-
+        if (!hasBalance) {
+          engineLog.info(
+            { path: opp.tokenPath.join('→'), profitUsd: opp.expectedProfitUsd.toFixed(4) },
+            'Opportunity found (scan-only mode — wallet not funded)',
+          );
+          continue;
+        }
         await this.executeOpportunity(opp);
       }
 
@@ -946,8 +974,32 @@ export class BotEngine {
 
   private async refreshSolPrice(): Promise<void> {
     const now = Date.now();
-    if (this.solPriceUsd > 0 && now - this.solPriceCacheTs < 30000) return;
+    // Cache for 60s — SOL price doesn't need sub-minute precision for profit calc
+    if (this.solPriceUsd > 0 && now - this.solPriceCacheTs < 60_000) return;
 
+    // Try CoinGecko free API first (doesn't burn Jupiter quota)
+    try {
+      const cgResp = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (cgResp.ok) {
+        const data = await cgResp.json();
+        const price = data?.solana?.usd;
+        if (price && price > 0 && price < 100000) {
+          this.solPriceUsd = price;
+          this.solPriceCacheTs = now;
+          this.stats.currentSolPriceUsd = price;
+          this.config.solPriceUsd = price;
+          engineLog.debug({ price }, 'SOL price refreshed via CoinGecko');
+          return;
+        }
+      }
+    } catch {
+      // CoinGecko failed, try Jupiter fallback
+    }
+
+    // Fallback: Jupiter quote (costs 1 API call)
     try {
       const url = new URL(`${this.config.jupiterApiUrl}/swap/v1/quote`);
       url.searchParams.set('inputMint', 'So11111111111111111111111111111111111111112');
@@ -964,12 +1016,12 @@ export class BotEngine {
         this.solPriceUsd = price;
         this.solPriceCacheTs = now;
         this.stats.currentSolPriceUsd = price;
-        // Push live price to config so all strategies can access it
         this.config.solPriceUsd = price;
+        engineLog.debug({ price }, 'SOL price refreshed via Jupiter');
       }
     } catch (err) {
-      if (this.solPriceUsd > 0 && Date.now() - this.solPriceCacheTs < 120_000) {
-        // Cache is less than 2 min old, acceptable to use
+      if (this.solPriceUsd > 0 && Date.now() - this.solPriceCacheTs < 300_000) {
+        // Cache is less than 5 min old, acceptable to use
         engineLog.warn({ err, cachedPrice: this.solPriceUsd }, 'SOL price refresh failed, using recent cache');
       } else {
         // Cache is stale or doesn't exist - clear it to halt trading
@@ -1037,12 +1089,15 @@ export class BotEngine {
   // ═══════════════════════════════════════════════════════════════
 
   private getScanInterval(): number {
+    // With serialized strategies and trimmed token lists (~10 cyclic + 6 cross-dex + 6 multi-hop pairs),
+    // each full cycle takes ~40-60s at 1 RPS. Use a short pause between cycles.
     const hour = new Date().getUTCHours();
-    // High activity: faster scanning
+    // High activity: minimal pause between cycles
     if ((hour >= 7 && hour <= 11) || (hour >= 13 && hour <= 16) || (hour >= 21 && hour <= 24)) {
-      return Math.max(5000, Math.ceil(1000 / this.config.maxRequestsPerSecond) * SCAN_TOKENS.length * 2 + 2000);
+      return 3_000;
     }
-    return Math.max(10000, Math.ceil(1000 / this.config.maxRequestsPerSecond) * SCAN_TOKENS.length * 2 + 5000);
+    // Low activity: slightly longer pause
+    return 5_000;
   }
 
   private createEmptyStats(): BotStats {
@@ -1168,6 +1223,10 @@ export class BotEngine {
       uptime: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
       currentSolPriceUsd: this.solPriceUsd,
     };
+  }
+
+  getRecentOpportunities(): typeof this.recentOpportunities {
+    return this.recentOpportunities;
   }
 
   getRiskStatus(): Record<string, any> {

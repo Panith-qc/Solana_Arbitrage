@@ -16,6 +16,11 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
+// High-volatility tokens for cyclic arb (meme + governance = wider spreads)
+// LSTs have <0.1% spread — unprofitable for SOL→Token→SOL cycles.
+const CYCLIC_SYMBOLS = new Set(['JUP', 'RAY', 'ORCA', 'BONK', 'WIF', 'MEW', 'BOME', 'W', 'RENDER', 'PYTH']);
+const CYCLIC_TOKENS = SCAN_TOKENS.filter(t => CYCLIC_SYMBOLS.has(t.symbol));
+
 // ── Fee Constants ──────────────────────────────────────────────────────────────
 // IMPORTANT: Jupiter's outAmount already includes DEX swap fees, platform fees,
 // and route-level costs. We must NOT double-count them.
@@ -66,11 +71,11 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     );
 
     strategyLog.debug(
-      { scanAmountSol: this.botConfig.scanAmountSol, tokens: SCAN_TOKENS.length },
+      { scanAmountSol: this.botConfig.scanAmountSol, tokens: CYCLIC_TOKENS.length },
       'Cyclic arbitrage scan starting',
     );
 
-    for (const token of SCAN_TOKENS) {
+    for (const token of CYCLIC_TOKENS) {
       try {
         // Rate-limit: sleep between API call pairs
         await this.rateLimit();

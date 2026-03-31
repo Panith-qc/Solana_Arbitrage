@@ -24,7 +24,7 @@ const PRIORITY_FEE_LAMPORTS = 50_000;
 const JITO_TIP_LAMPORTS = 75_000;    // slightly higher tip for 3-leg bundles
 const QUOTE_LIFETIME_MS = 12_000;    // 3-leg paths stale faster
 const EXECUTION_SAFETY_BUFFER_BPS = 10;  // tighter buffer to catch more opps
-const MAX_PAIRS_TO_CHECK = 20;       // cap to stay within rate limits
+const MAX_PAIRS_TO_CHECK = 6;        // cap to stay within API rate limits (1 RPS)
 
 // Stablecoin mints to skip pairing together (no arb between two stables)
 const STABLECOIN_MINTS = new Set([
