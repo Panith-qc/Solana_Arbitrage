@@ -123,8 +123,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
   },
   BALANCED: {
     level: 'BALANCED',
-    maxPositionSol: 1.5,
-    maxTradeAmountSol: 2.0,
+    maxPositionSol: 10.0,
+    maxTradeAmountSol: 10.0,
     maxDailyLossSol: 0.8,
     maxDailyLossPercent: 8,
     maxConcurrentTrades: 2,
@@ -148,8 +148,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
   },
   AGGRESSIVE: {
     level: 'AGGRESSIVE',
-    maxPositionSol: 3.0,
-    maxTradeAmountSol: 5.0,
+    maxPositionSol: 10.0,
+    maxTradeAmountSol: 10.0,
     maxDailyLossSol: 1.5,
     maxDailyLossPercent: 15,
     maxConcurrentTrades: 3,
