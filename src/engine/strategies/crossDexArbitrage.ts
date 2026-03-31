@@ -124,26 +124,36 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     const scanAmountStr = scanAmountLamports.toString();
 
     // ── Collect BUY quotes from all available DEXes ──
+    // Raydium direct API is used for fast price discovery (free, 300/min).
+    // ALL execution quotes come from Jupiter (with dexes param) to ensure
+    // the executor always gets a Jupiter-format quote it can send to /swap.
     const buyQuotes: DexQuote[] = [];
+    let raydiumBuyPrice: number | null = null;
 
-    // Source 1: Raydium direct API (free, 300/min, separate quota)
+    // Source 1: Raydium direct API for fast price discovery
     const raydiumBuy = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
-    if (raydiumBuy) buyQuotes.push(raydiumBuy);
+    if (raydiumBuy) raydiumBuyPrice = parseFloat(raydiumBuy.outputAmount);
 
-    // Source 2: Jupiter with DEX filter for each non-Raydium group
+    // Source 2: Jupiter with DEX filter for EVERY group (including Raydium)
+    // This ensures all quotes in `raw` are Jupiter-format for execution
     for (const dexGroup of DEX_GROUPS) {
-      if (dexGroup.name === 'raydium' && raydiumBuy) continue; // Already have it
       await this.jupiterRateLimit();
       const quote = await this.getJupiterDexQuote(
         SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps, dexGroup.dexes,
       );
       if (quote) {
         buyQuotes.push({ ...quote, source: dexGroup.name });
+      } else if (dexGroup.name === 'raydium' && raydiumBuyPrice) {
+        // Raydium direct API got a price but Jupiter didn't route through Raydium
+        // Log it but skip — we can't execute without a Jupiter quote
+        strategyLog.debug(
+          { token: token.symbol, raydiumPrice: raydiumBuyPrice },
+          'Raydium direct has price but Jupiter cannot route — skipping Raydium for this token',
+        );
       }
     }
 
     if (buyQuotes.length < 2) {
-      // Still emit for dashboard
       this.onScanResult?.({
         strategy: this.name,
         token: `${token.symbol}@${scanSol} (${buyQuotes.length} DEX)`,
@@ -183,18 +193,11 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     );
 
     // ── Collect SELL quotes from DEXes other than best buy ──
+    // All sell quotes come from Jupiter (with dexes param) for execution compatibility
     const sellQuotes: DexQuote[] = [];
 
-    // Raydium sell (if best buy wasn't raydium)
-    if (bestBuy.source !== 'raydium') {
-      const raydiumSell = await this.getRaydiumSwapQuote(token.mint, SOL_MINT, bestBuy.outputAmount);
-      if (raydiumSell) sellQuotes.push(raydiumSell);
-    }
-
-    // Jupiter sell from each non-best-buy DEX
     for (const dexGroup of DEX_GROUPS) {
-      if (dexGroup.name === bestBuy.source) continue;
-      if (dexGroup.name === 'raydium' && sellQuotes.some(q => q.source === 'raydium')) continue;
+      if (dexGroup.name === bestBuy.source) continue; // Don't sell on same DEX we buy
       await this.jupiterRateLimit();
       const quote = await this.getJupiterDexQuote(
         token.mint, SOL_MINT, bestBuy.outputAmount, this.config.slippageBps, dexGroup.dexes,
@@ -246,6 +249,22 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     );
 
     if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
+      // Verify both quotes are Jupiter-format before creating opportunity
+      if (!bestBuy.raw?.inAmount || !bestBuy.raw?.outAmount || !bestBuy.raw?.routePlan) {
+        strategyLog.error(
+          { token: token.symbol, buySource: bestBuy.source },
+          'Best buy quote is not Jupiter-format — cannot execute, skipping',
+        );
+        return null;
+      }
+      if (!bestSell.raw?.inAmount || !bestSell.raw?.outAmount || !bestSell.raw?.routePlan) {
+        strategyLog.error(
+          { token: token.symbol, sellSource: bestSell.source },
+          'Best sell quote is not Jupiter-format — cannot execute, skipping',
+        );
+        return null;
+      }
+
       const now = Date.now();
       return {
         id: crypto.randomUUID(),

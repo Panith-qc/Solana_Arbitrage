@@ -165,15 +165,16 @@ export async function simulateSwapProfitability(
   expectedOutputLamports: number,
   quote: Record<string, any> = {},
 ): Promise<ProfitabilityResult> {
-  // Realistic gas cost estimation for a single Jupiter swap:
-  // - Base fee: ~5,000 lamports (Solana base transaction fee)
-  // - Priority fee: ~100,000-200,000 lamports (Jupiter sets via 'auto')
-  // - For a 2-leg arb cycle, multiply by 2
-  // IMPORTANT: This must be a REALISTIC estimate, not an underestimate.
-  // Underestimating causes us to execute trades that lose money on fees.
+  // Real on-chain fee for a single Jupiter swap leg:
+  // - Base fee: 5,000 lamports (Solana protocol: 5000 per signature)
+  // - Priority fee: 5,000 lamports (minimal — Jito handles block inclusion)
+  // - Jito tip: 10,000 lamports (minimum viable tip)
+  // This function checks ONE leg (Leg 2 reverse), so we only count Leg 2 costs.
+  // Leg 1 costs are already sunk at this point.
   const BASE_FEE_LAMPORTS = 5_000;
-  const PRIORITY_FEE_LAMPORTS = 200_000; // Jupiter 'auto' priority fee
-  const estimatedGasCostLamports = BASE_FEE_LAMPORTS + PRIORITY_FEE_LAMPORTS; // ~205k lamports per swap
+  const PRIORITY_FEE_LAMPORTS = 5_000;
+  const JITO_TIP_LAMPORTS = 10_000;
+  const estimatedGasCostLamports = BASE_FEE_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 20k lamports
 
   const grossProfitLamports = expectedOutputLamports - inputLamports;
   const netProfitLamports = grossProfitLamports - estimatedGasCostLamports;

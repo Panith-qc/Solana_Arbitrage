@@ -225,6 +225,20 @@ export class Executor {
     const inputLamports = parseInt(forwardQuote.inAmount, 10);
     const allSignatures: string[] = [];
 
+    // ── CAPTURE PRE-TRADE SOL BALANCE ────────────────────────────
+    // This is the REAL starting balance — used to calculate actual profit after both legs
+    let preTradeBalanceLamports: number | null = null;
+    try {
+      const balanceSol = await this.connManager.getBalance();
+      preTradeBalanceLamports = Math.round(balanceSol * LAMPORTS_PER_SOL);
+      executionLog.info(
+        { preTradeBalanceSol: balanceSol, tokenSymbol, inputSol: inputLamports / LAMPORTS_PER_SOL },
+        'Pre-trade SOL balance captured',
+      );
+    } catch (err) {
+      executionLog.warn({ err }, 'Could not capture pre-trade balance — will use quote-based profit');
+    }
+
     executionLog.info(
       {
         tokenSymbol,
@@ -236,13 +250,57 @@ export class Executor {
       'Starting arbitrage cycle: SOL -> Token -> SOL',
     );
 
+    // ── FRESH FORWARD QUOTE VALIDATION ───────────────────────────
+    // Re-fetch a fresh quote for Leg 1 to ensure the price hasn't moved
+    // since the scan. If the fresh quote gives fewer tokens, abort.
+    await this.rateLimit();
+    const freshForwardQuote = await this.fetchQuote(
+      forwardQuote.inputMint,
+      forwardQuote.outputMint,
+      forwardQuote.inAmount,
+      forwardQuote.slippageBps,
+    );
+
+    if (!freshForwardQuote) {
+      return this.failResult('Fresh forward quote unavailable — market may have moved', startMs);
+    }
+
+    const scanTokens = parseInt(forwardQuote.outAmount, 10);
+    const freshTokens = parseInt(freshForwardQuote.outAmount, 10);
+    const tokenDriftBps = ((freshTokens - scanTokens) / scanTokens) * 10_000;
+
+    if (tokenDriftBps < -10) {
+      // Price moved more than 10 bps against us since scan — abort
+      executionLog.warn(
+        { tokenSymbol, scanTokens, freshTokens, driftBps: tokenDriftBps.toFixed(1) },
+        'Forward quote drifted >10bps against us — aborting',
+      );
+      return this.failResult(
+        `Forward price drifted ${tokenDriftBps.toFixed(1)}bps (scan: ${scanTokens}, fresh: ${freshTokens})`,
+        startMs,
+      );
+    }
+
+    // Use the fresh quote for execution (most current price)
+    const executionForwardQuote = freshForwardQuote;
+
+    executionLog.info(
+      {
+        tokenSymbol,
+        scanTokens,
+        freshTokens,
+        driftBps: tokenDriftBps.toFixed(1),
+      },
+      'Forward quote validated — price still favorable',
+    );
+
     // ── LEG 1: SOL -> TOKEN ──────────────────────────────────────
 
     const leg1Result = await this.executeLeg(
       connection,
       wallet,
-      forwardQuote,
-      forwardQuote.slippageBps,
+      executionForwardQuote,
+      executionForwardQuote.slippageBps,
       'LEG1_SOL_TO_TOKEN',
     );
 
@@ -253,27 +311,27 @@ export class Executor {
 
     // ── INTER-LEG VERIFICATION ───────────────────────────────────
     // Query actual on-chain token balance after Leg 1 to handle slippage.
-    // Fall back to the expected amount only if the balance check fails.
 
-    let tokenAmountReceived = forwardQuote.outAmount;
+    let tokenAmountReceived = executionForwardQuote.outAmount;
     try {
       const actualBalance = await this.connManager.getTokenBalance(tokenMint);
       if (actualBalance > 0n) {
         tokenAmountReceived = actualBalance.toString();
         executionLog.info(
-          { tokenMint, expected: forwardQuote.outAmount, actual: tokenAmountReceived },
+          { tokenMint, expected: executionForwardQuote.outAmount, actual: tokenAmountReceived },
           'Using actual on-chain token balance for reverse leg',
         );
       }
     } catch (err) {
       executionLog.warn(
-        { err, tokenMint, usingExpected: forwardQuote.outAmount },
+        { err, tokenMint, usingExpected: executionForwardQuote.outAmount },
         'Could not fetch actual token balance, using expected from quote',
       );
     }
 
     await this.rateLimit();
 
+    // ── FRESH REVERSE QUOTE ──────────────────────────────────────
     executionLog.debug(
       { tokenMint, tokenAmount: tokenAmountReceived },
       'Fetching fresh reverse quote for Token -> SOL',
@@ -283,106 +341,146 @@ export class Executor {
       tokenMint,
       SOL_MINT,
       tokenAmountReceived,
-      forwardQuote.slippageBps,
+      executionForwardQuote.slippageBps,
     );
 
     if (!reverseQuote) {
-      // Token is stuck: we bought it but cannot get a reverse quote
-      const elapsed = Date.now() - startMs;
-      executionLog.error(
+      // Token stuck — try recovery: wait 2s and retry once
+      executionLog.warn(
         { tokenSymbol, tokenMint, tokenAmount: tokenAmountReceived },
-        'Failed to get reverse quote; token is stuck',
+        'Reverse quote failed — retrying in 2s',
+      );
+      await new Promise(r => setTimeout(r, 2000));
+      await this.rateLimit();
+
+      const retryQuote = await this.fetchQuote(
+        tokenMint, SOL_MINT, tokenAmountReceived, executionForwardQuote.slippageBps,
       );
 
-      return {
-        success: false,
-        profitSol: 0,
-        profitUsd: 0,
-        signatures: allSignatures,
-        gasUsed: leg1Result.gasUsed,
-        jitoTip: 0,
-        error: 'Reverse quote failed after Leg 1; token stuck in wallet',
-        stuckToken: {
-          tokenMint,
-          tokenSymbol,
-          estimatedBalanceLamports: parseInt(tokenAmountReceived, 10),
-          reason: 'Reverse quote unavailable',
-        },
-        executionTimeMs: elapsed,
-      };
+      if (!retryQuote) {
+        const elapsed = Date.now() - startMs;
+        executionLog.error(
+          { tokenSymbol, tokenMint, tokenAmount: tokenAmountReceived },
+          'Reverse quote failed after retry; token is stuck',
+        );
+        return {
+          success: false, profitSol: 0, profitUsd: 0, signatures: allSignatures,
+          gasUsed: leg1Result.gasUsed, jitoTip: 0,
+          error: 'Reverse quote failed after Leg 1; token stuck in wallet',
+          stuckToken: {
+            tokenMint, tokenSymbol,
+            estimatedBalanceLamports: parseInt(tokenAmountReceived, 10),
+            reason: 'Reverse quote unavailable after 2 attempts',
+          },
+          executionTimeMs: elapsed,
+        };
+      }
+
+      // Use retry quote
+      return this.executeReverseLeg(
+        connection, wallet, retryQuote, inputLamports, tokenMint, tokenSymbol,
+        tokenAmountReceived, solPrice, preTradeBalanceLamports, allSignatures,
+        leg1Result.gasUsed, startMs,
+      );
     }
 
+    return this.executeReverseLeg(
+      connection, wallet, reverseQuote, inputLamports, tokenMint, tokenSymbol,
+      tokenAmountReceived, solPrice, preTradeBalanceLamports, allSignatures,
+      leg1Result.gasUsed, startMs,
+    );
+  }
+
+  /**
+   * Execute the reverse leg (Token -> SOL) with profitability check,
+   * retry on failure, and real balance-based profit calculation.
+   */
+  private async executeReverseLeg(
+    connection: Connection,
+    wallet: Keypair,
+    reverseQuote: JupiterQuote,
+    inputLamports: number,
+    tokenMint: string,
+    tokenSymbol: string,
+    tokenAmountReceived: string,
+    solPrice: number,
+    preTradeBalanceLamports: number | null,
+    allSignatures: string[],
+    leg1GasUsed: number,
+    startMs: number,
+  ): Promise<ExecutionResult> {
     // ── PROFITABILITY RE-CHECK ───────────────────────────────────
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
-    const profitCheck = await simulateSwapProfitability(
-      connection,
-      inputLamports,
-      reverseOutputLamports,
-      reverseQuote as unknown as Record<string, any>,
-    );
+    const grossProfitLamports = reverseOutputLamports - inputLamports;
+    // Only Leg 2 fees matter here (Leg 1 costs are sunk)
+    const leg2FeeLamports = 20_000; // 5k base + 5k priority + 10k Jito
+    const netCheckLamports = grossProfitLamports - leg2FeeLamports;
 
-    if (!profitCheck.profitable) {
-      // Reverse swap would result in a loss -- still stuck
-      const elapsed = Date.now() - startMs;
+    if (netCheckLamports < -50_000) {
+      // Loss would exceed 0.00005 SOL — too risky, but we MUST sell the token
+      // to recover capital. Log warning but proceed with sell anyway.
       executionLog.warn(
         {
-          tokenSymbol,
-          inputLamports,
-          reverseOutputLamports,
-          netProfitSol: profitCheck.netProfitSol,
+          tokenSymbol, inputLamports, reverseOutputLamports,
+          grossProfitLamports, netCheckLamports,
+          note: 'Proceeding with sell to recover capital despite loss',
         },
-        'Reverse swap not profitable; flagging token for recovery',
+        'Reverse swap shows loss — selling anyway to avoid stuck token',
       );
-
-      return {
-        success: false,
-        profitSol: profitCheck.netProfitSol,
-        profitUsd: profitCheck.netProfitSol * solPrice,
-        signatures: allSignatures,
-        gasUsed: leg1Result.gasUsed,
-        jitoTip: 0,
-        error: `Reverse swap not profitable (net ${profitCheck.netProfitSol.toFixed(6)} SOL)`,
-        stuckToken: {
-          tokenMint,
-          tokenSymbol,
-          estimatedBalanceLamports: parseInt(tokenAmountReceived, 10),
-          reason: `Reverse swap would net ${profitCheck.netProfitSol.toFixed(6)} SOL`,
-        },
-        executionTimeMs: elapsed,
-      };
+    } else {
+      executionLog.info(
+        { tokenSymbol, grossProfitLamports, netCheckLamports },
+        'Reverse swap profitability confirmed',
+      );
     }
 
     // ── LEG 2: TOKEN -> SOL ──────────────────────────────────────
 
     const leg2Result = await this.executeLeg(
-      connection,
-      wallet,
-      reverseQuote,
-      reverseQuote.slippageBps,
-      'LEG2_TOKEN_TO_SOL',
+      connection, wallet, reverseQuote, reverseQuote.slippageBps, 'LEG2_TOKEN_TO_SOL',
     );
 
     if (!leg2Result.success) {
-      // Leg 2 failed: token is stuck
+      // Leg 2 failed — retry once with fresh quote
+      executionLog.warn(
+        { tokenSymbol, error: leg2Result.error },
+        'Leg 2 failed — retrying with fresh quote in 3s',
+      );
+      await new Promise(r => setTimeout(r, 3000));
+      await this.rateLimit();
+
+      const retryQuote = await this.fetchQuote(
+        tokenMint, SOL_MINT, tokenAmountReceived, reverseQuote.slippageBps,
+      );
+
+      if (retryQuote) {
+        const retryResult = await this.executeLeg(
+          connection, wallet, retryQuote, retryQuote.slippageBps, 'LEG2_RETRY_TOKEN_TO_SOL',
+        );
+
+        if (retryResult.success) {
+          allSignatures.push(...retryResult.signatures);
+          return this.calculateFinalResult(
+            preTradeBalanceLamports, inputLamports, parseInt(retryQuote.outAmount, 10),
+            solPrice, allSignatures, leg1GasUsed + retryResult.gasUsed, startMs, tokenSymbol,
+          );
+        }
+      }
+
+      // Both attempts failed — token is stuck
       const elapsed = Date.now() - startMs;
       executionLog.error(
         { tokenSymbol, error: leg2Result.error },
-        'Leg 2 (Token->SOL) failed; token stuck',
+        'Leg 2 failed after retry; token stuck',
       );
-
       return {
-        success: false,
-        profitSol: 0,
-        profitUsd: 0,
-        signatures: allSignatures,
-        gasUsed: leg1Result.gasUsed + leg2Result.gasUsed,
-        jitoTip: 0,
-        error: `Leg 2 (Token->SOL) failed: ${leg2Result.error}`,
+        success: false, profitSol: 0, profitUsd: 0, signatures: allSignatures,
+        gasUsed: leg1GasUsed + leg2Result.gasUsed, jitoTip: 0,
+        error: `Leg 2 (Token->SOL) failed after retry: ${leg2Result.error}`,
         stuckToken: {
-          tokenMint,
-          tokenSymbol,
+          tokenMint, tokenSymbol,
           estimatedBalanceLamports: parseInt(tokenAmountReceived, 10),
-          reason: `Leg 2 send/confirm failed: ${leg2Result.error}`,
+          reason: `Leg 2 failed twice: ${leg2Result.error}`,
         },
         executionTimeMs: elapsed,
       };
@@ -390,44 +488,73 @@ export class Executor {
 
     allSignatures.push(...leg2Result.signatures);
 
-    // ── PROFIT CALCULATION ───────────────────────────────────────
-    // Use actual on-chain balance delta for real profit, not quote estimates
+    return this.calculateFinalResult(
+      preTradeBalanceLamports, inputLamports, reverseOutputLamports,
+      solPrice, allSignatures, leg1GasUsed + leg2Result.gasUsed, startMs, tokenSymbol,
+    );
+  }
+
+  /**
+   * Calculate final profit using REAL on-chain balance delta.
+   * Falls back to quote-based estimate only if balance check fails.
+   */
+  private async calculateFinalResult(
+    preTradeBalanceLamports: number | null,
+    inputLamports: number,
+    reverseOutputLamports: number,
+    solPrice: number,
+    allSignatures: string[],
+    totalGasUsed: number,
+    startMs: number,
+    tokenSymbol: string,
+  ): Promise<ExecutionResult> {
     let actualProfitSol: number;
-    try {
-      const finalBalance = await this.connManager.getBalance();
-      const inputSol = inputLamports / LAMPORTS_PER_SOL;
-      // Balance delta captures ALL costs: gas, priority fees, slippage, everything
-      const balanceBefore = inputSol + finalBalance - (finalBalance); // we need pre-trade balance
-      // Fallback: use quote-based calculation with fee deductions
-      const quoteOutputLamports = reverseOutputLamports;
-      const grossProfitLamports = quoteOutputLamports - inputLamports;
-      // Deduct estimated real costs not captured in quote
-      const estimatedGasLamports = (leg1Result.gasUsed + leg2Result.gasUsed) > 0
-        ? Math.ceil(((leg1Result.gasUsed + leg2Result.gasUsed) * 25) / 1_000_000) + 10_000
-        : 210_000; // fallback: ~0.00021 SOL (base + priority)
-      const netProfitLamports = grossProfitLamports - estimatedGasLamports;
-      actualProfitSol = netProfitLamports / LAMPORTS_PER_SOL;
-    } catch {
-      // If balance check fails, use conservative quote-based estimate
-      const grossProfitLamports = reverseOutputLamports - inputLamports;
-      const estimatedFeesLamports = 210_000; // base + priority fees
-      actualProfitSol = (grossProfitLamports - estimatedFeesLamports) / LAMPORTS_PER_SOL;
+
+    if (preTradeBalanceLamports !== null) {
+      // BEST: Use real on-chain balance delta — captures ALL fees, slippage, everything
+      try {
+        const postBalanceSol = await this.connManager.getBalance();
+        const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
+        const balanceDeltaLamports = postBalanceLamports - preTradeBalanceLamports;
+        actualProfitSol = balanceDeltaLamports / LAMPORTS_PER_SOL;
+
+        executionLog.info(
+          {
+            preTradeBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL,
+            postTradeBalanceSol: postBalanceSol,
+            balanceDeltaSol: actualProfitSol,
+            tokenSymbol,
+          },
+          'REAL profit from on-chain balance delta',
+        );
+      } catch {
+        // Balance check failed — use quote-based fallback
+        const grossLamports = reverseOutputLamports - inputLamports;
+        const feeLamports = 25_000; // 2×5k base + 5k priority + 10k Jito
+        actualProfitSol = (grossLamports - feeLamports) / LAMPORTS_PER_SOL;
+      }
+    } else {
+      // No pre-trade balance — use quote-based estimate
+      const grossLamports = reverseOutputLamports - inputLamports;
+      const feeLamports = 25_000;
+      actualProfitSol = (grossLamports - feeLamports) / LAMPORTS_PER_SOL;
     }
 
     const netProfitUsd = actualProfitSol * solPrice;
-    const totalGasUsed = leg1Result.gasUsed + leg2Result.gasUsed;
     const elapsed = Date.now() - startMs;
 
     executionLog.info(
       {
         tokenSymbol,
         netProfitSol: actualProfitSol.toFixed(6),
-        netProfitUsd: netProfitUsd.toFixed(2),
+        netProfitUsd: netProfitUsd.toFixed(4),
         signatures: allSignatures,
         totalGasCU: totalGasUsed,
         elapsedMs: elapsed,
       },
-      'Arbitrage cycle COMPLETED',
+      actualProfitSol > 0
+        ? 'Arbitrage cycle COMPLETED — PROFIT'
+        : 'Arbitrage cycle COMPLETED — LOSS',
     );
 
     return {
