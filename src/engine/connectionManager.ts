@@ -45,14 +45,15 @@ export class ConnectionManager {
       engineLog.info({ rpc: this.maskUrl(this.config.rpcBackupUrl) }, 'Backup RPC initialized');
     }
 
-    // Initialize wallet
-    if (this.config.privateKey) {
+    // Initialize wallet from env (optional — can be connected later via UI)
+    if (this.config.privateKey && this.config.privateKey.length > 10) {
       try {
         const keyBytes = bs58.decode(this.config.privateKey);
         this.wallet = Keypair.fromSecretKey(keyBytes);
-        engineLog.info({ publicKey: this.wallet.publicKey.toString() }, 'Wallet loaded');
+        engineLog.info({ publicKey: this.wallet.publicKey.toString() }, 'Wallet loaded from environment');
       } catch (err) {
-        engineLog.error({ err }, 'Failed to load wallet from private key');
+        engineLog.warn('PRIVATE_KEY in .env is invalid — ignoring. Connect your wallet via the dashboard instead.');
+        // Don't crash — wallet can be connected later via POST /api/wallet/connect
       }
     }
 
