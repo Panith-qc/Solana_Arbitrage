@@ -83,13 +83,13 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     this.scanCount++;
     const opportunities: Opportunity[] = [];
-    const scanAmountLamports = BigInt(
-      Math.round(this.botConfig.scanAmountSol * LAMPORTS_PER_SOL),
-    );
+    // Minimum 5 SOL for scanning — tiny amounts show no spread between pools.
+    const scanSol = Math.max(5.0, this.botConfig.scanAmountSol);
+    const scanAmountLamports = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL));
     const scanAmountStr = scanAmountLamports.toString();
 
     strategyLog.info(
-      { tokens: CROSSDEX_TOKENS.length, dexGroups: DEX_GROUPS.length, scanAmountSol: this.botConfig.scanAmountSol },
+      { tokens: CROSSDEX_TOKENS.length, dexGroups: DEX_GROUPS.length, scanAmountSol: scanSol },
       'Cross-DEX scan starting (dex-specific routing)',
     );
 
@@ -322,7 +322,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   }
 
   private async rateLimit(): Promise<void> {
-    const delayMs = Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond);
+    const delayMs = Math.max(1100, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 }

@@ -110,8 +110,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 5,
     circuitBreakerCooldownMs: 600000, // 10 min
     strategies: {
-      cyclicArbitrage: true,
-      multiHopArbitrage: true,
+      cyclicArbitrage: false,
+      multiHopArbitrage: false,
       crossDexArbitrage: true,
       sandwich: false,
       frontrun: false,
@@ -135,8 +135,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 8,
     circuitBreakerCooldownMs: 300000, // 5 min
     strategies: {
-      cyclicArbitrage: true,
-      multiHopArbitrage: true,
+      cyclicArbitrage: false,
+      multiHopArbitrage: false,
       crossDexArbitrage: true,
       sandwich: false,
       frontrun: false,
@@ -160,8 +160,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 10,
     circuitBreakerCooldownMs: 120000, // 2 min
     strategies: {
-      cyclicArbitrage: true,
-      multiHopArbitrage: true,
+      cyclicArbitrage: false,
+      multiHopArbitrage: false,
       crossDexArbitrage: true,
       sandwich: false,
       frontrun: false,
