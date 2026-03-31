@@ -29,12 +29,25 @@ export interface StrategyConfig {
   slippageBps: number;
 }
 
+export interface ScanResultEntry {
+  strategy: string;
+  token: string;
+  spreadBps: number;
+  grossProfitSol: number;
+  netProfitUsd: number;
+  fees: number;
+  profitable: boolean;
+}
+
+export type ScanResultCallback = (entry: ScanResultEntry) => void;
+
 export abstract class BaseStrategy {
   name: string;
   config: StrategyConfig;
   protected isRunning: boolean = false;
   protected scanCount: number = 0;
   protected opportunitiesFound: number = 0;
+  onScanResult: ScanResultCallback | null = null;
 
   constructor(config: StrategyConfig) {
     this.name = config.name;

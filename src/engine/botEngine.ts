@@ -109,6 +109,19 @@ export class BotEngine {
   }> = [];
   private readonly MAX_RECENT_OPPORTUNITIES = 50;
 
+  // Live scan log buffer — shows ALL scan results on dashboard (even negative spreads)
+  private scanLogs: Array<{
+    timestamp: number;
+    strategy: string;
+    token: string;
+    spreadBps: number;
+    grossProfitSol: number;
+    netProfitUsd: number;
+    fees: number;
+    profitable: boolean;
+  }> = [];
+  private readonly MAX_SCAN_LOGS = 100;
+
   constructor() {
     this.config = loadConfig();
     this.riskProfile = RISK_PROFILES[this.config.riskLevel];
@@ -819,10 +832,16 @@ export class BotEngine {
       maxPositionSol: profile.maxPositionSol,
     };
 
+    // Scan-result callback: pipes every token scan to the dashboard log buffer
+    const scanCallback = (entry: { strategy: string; token: string; spreadBps: number; grossProfitSol: number; netProfitUsd: number; fees: number; profitable: boolean }) => {
+      this.addScanLog(entry);
+    };
+
     if (profile.strategies.cyclicArbitrage) {
       const strategy = new CyclicArbitrageStrategy(
         this.connectionManager, this.config, this.riskProfile
       );
+      strategy.onScanResult = scanCallback;
       this.strategies.set('cyclic-arbitrage', strategy);
     }
 
@@ -830,6 +849,7 @@ export class BotEngine {
       const strategy = new MultiHopArbitrageStrategy(
         this.connectionManager, this.config, this.riskProfile
       );
+      strategy.onScanResult = scanCallback;
       this.strategies.set('multi-hop-arbitrage', strategy);
     }
 
@@ -837,6 +857,7 @@ export class BotEngine {
       const strategy = new CrossDexArbitrageStrategy(
         this.connectionManager, this.config, this.riskProfile
       );
+      strategy.onScanResult = scanCallback;
       this.strategies.set('cross-dex-arbitrage', strategy);
     }
 
@@ -1227,6 +1248,25 @@ export class BotEngine {
 
   getRecentOpportunities(): typeof this.recentOpportunities {
     return this.recentOpportunities;
+  }
+
+  getScanLogs(): typeof this.scanLogs {
+    return this.scanLogs;
+  }
+
+  addScanLog(entry: {
+    strategy: string;
+    token: string;
+    spreadBps: number;
+    grossProfitSol: number;
+    netProfitUsd: number;
+    fees: number;
+    profitable: boolean;
+  }): void {
+    this.scanLogs.unshift({ ...entry, timestamp: Date.now() });
+    if (this.scanLogs.length > this.MAX_SCAN_LOGS) {
+      this.scanLogs = this.scanLogs.slice(0, this.MAX_SCAN_LOGS);
+    }
   }
 
   getRiskStatus(): Record<string, any> {

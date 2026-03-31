@@ -139,6 +139,18 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
               BigInt(actualSellQuote.outputAmount),
             );
 
+            // Push to dashboard scan log (all results, including negative)
+            const crossSpreadBps = this.calculateSpreadBps(buy, actualSellQuote);
+            this.onScanResult?.({
+              strategy: this.name,
+              token: `${token.symbol} (${buy.source}→${actualSellQuote.source})`,
+              spreadBps: crossSpreadBps,
+              grossProfitSol: profitAnalysis.grossProfitSol,
+              netProfitUsd: profitAnalysis.netProfitUsd,
+              fees: profitAnalysis.totalFeeSol,
+              profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
+            });
+
             if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
               const now = Date.now();
               const opportunity: Opportunity = {
