@@ -109,7 +109,7 @@ export class BotEngine {
 
     // Risk
     this.pnlTracker = new PnLTracker(this.database);
-    this.positionTracker = new PositionTracker();
+    this.positionTracker = new PositionTracker(this.database);
     this.riskManager = new RiskManager(this.config, this.pnlTracker, this.positionTracker, this.connectionManager);
 
     // Data
@@ -406,9 +406,10 @@ export class BotEngine {
       this.riskManager.reportTradeResult(false, 0);
     }
 
-    // Schedule next scan
-    const interval = this.getScanInterval();
-    this.scanLoopTimer = setTimeout(() => this.runScanLoop(), interval);
+    // Schedule next scan with ±20% jitter to avoid predictable timing
+    const baseInterval = this.getScanInterval();
+    const jitter = baseInterval * (0.8 + Math.random() * 0.4);
+    this.scanLoopTimer = setTimeout(() => this.runScanLoop(), Math.round(jitter));
   }
 
   private async executeOpportunity(opp: Opportunity): Promise<void> {

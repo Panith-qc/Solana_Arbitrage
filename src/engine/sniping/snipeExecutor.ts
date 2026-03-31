@@ -19,7 +19,7 @@ import { BotConfig, SOL_MINT, LAMPORTS_PER_SOL } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const SNIPE_SLIPPAGE_BPS = 1500;              // 15% slippage for new tokens
+const SNIPE_SLIPPAGE_BPS = 500;               // 5% slippage for new tokens
 const PRIORITY_FEE_LAMPORTS = 1_000_000;      // 0.001 SOL priority fee
 const CONFIRM_TIMEOUT_MS = 30_000;
 const EXIT_POLL_INTERVAL_MS = 3_000;          // Check exit conditions every 3s
