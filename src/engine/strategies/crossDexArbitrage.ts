@@ -83,13 +83,15 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     this.scanCount++;
     const opportunities: Opportunity[] = [];
-    const scanAmountLamports = BigInt(
-      Math.round(this.botConfig.scanAmountSol * LAMPORTS_PER_SOL),
-    );
+    // Use minimum 5 SOL for scanning to reveal AMM curve differences between pools.
+    // Tiny amounts (0.1 SOL) show no spread because all pools price similarly at low volume.
+    // This is just for QUOTING — actual trade size is controlled by risk manager.
+    const scanSol = Math.max(5.0, this.botConfig.scanAmountSol);
+    const scanAmountLamports = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL));
     const scanAmountStr = scanAmountLamports.toString();
 
     strategyLog.info(
-      { tokens: CROSSDEX_TOKENS.length, dexGroups: DEX_GROUPS.length, scanAmountSol: this.botConfig.scanAmountSol },
+      { tokens: CROSSDEX_TOKENS.length, dexGroups: DEX_GROUPS.length, scanAmountSol: scanSol },
       'Cross-DEX scan starting (dex-specific routing)',
     );
 
@@ -322,7 +324,8 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   }
 
   private async rateLimit(): Promise<void> {
-    const delayMs = Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond);
+    // Jupiter Basic plan = 1 RPS. Use 1100ms to avoid 429 with margin.
+    const delayMs = Math.max(1100, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 }

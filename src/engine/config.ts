@@ -110,9 +110,9 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 5,
     circuitBreakerCooldownMs: 600000, // 10 min
     strategies: {
-      cyclicArbitrage: true,
-      multiHopArbitrage: true,
-      crossDexArbitrage: true,
+      cyclicArbitrage: false, // Disabled: same-aggregator round-trips always lose 0.6% in swap fees
+      multiHopArbitrage: false, // Disabled: 3 legs = 0.9% fees, needs huge spreads to profit
+      crossDexArbitrage: true, // Primary profit strategy: buy on one DEX, sell on another
       sandwich: false,
       frontrun: false,
       backrun: false,
@@ -135,9 +135,9 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 8,
     circuitBreakerCooldownMs: 300000, // 5 min
     strategies: {
-      cyclicArbitrage: true,
-      multiHopArbitrage: true,
-      crossDexArbitrage: true,
+      cyclicArbitrage: false, // Disabled: same-aggregator round-trips always lose 0.6% in swap fees
+      multiHopArbitrage: false, // Disabled: 3 legs = 0.9% fees, needs huge spreads to profit
+      crossDexArbitrage: true, // Primary profit strategy: buy on one DEX, sell on another
       sandwich: false,
       frontrun: false,
       backrun: true,
@@ -160,9 +160,9 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 10,
     circuitBreakerCooldownMs: 120000, // 2 min
     strategies: {
-      cyclicArbitrage: true,
-      multiHopArbitrage: true,
-      crossDexArbitrage: true,
+      cyclicArbitrage: false, // Disabled: same-aggregator round-trips always lose 0.6% in swap fees
+      multiHopArbitrage: false, // Disabled: 3 legs = 0.9% fees, needs huge spreads to profit
+      crossDexArbitrage: true, // Primary profit strategy: buy on one DEX, sell on another
       sandwich: false,
       frontrun: false,
       backrun: true,
