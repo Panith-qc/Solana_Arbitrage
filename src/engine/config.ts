@@ -231,7 +231,7 @@ export function loadConfig(): BotConfig {
     privateKey: process.env.PRIVATE_KEY || '',
     riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'BALANCED',
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
-    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '1.0'),
+    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '5.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
     jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
