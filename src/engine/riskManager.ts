@@ -332,6 +332,11 @@ export class RiskManager {
     if (strategy in strategies) {
       return strategies[strategy];
     }
+    // Try camelCase conversion: "cross-dex-arbitrage" → "crossDexArbitrage"
+    const camelKey = strategy.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    if (camelKey in strategies) {
+      return strategies[camelKey];
+    }
     riskLog.warn(
       { strategy, riskLevel: this.riskProfile.level },
       'Unknown strategy checked against risk profile -- denied by default',
