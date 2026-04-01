@@ -24,35 +24,24 @@ export interface TokenInfo {
   decimals: number;
 }
 
-// EXPANDED TOKEN LIST — Cast a wider net for cross-DEX spreads.
-// More tokens = more chances to find mispricing, at the cost of longer scan cycles.
-// With 18 tokens at ~2 Jupiter calls each, full scan takes ~40-50s (acceptable).
+// 10 TOKENS — sweet spot for 2 RPS Jupiter rate limit.
+// Mix of LSTs (persistent spreads) + DEX governance (own-DEX pools) + volatile memes.
 export const SCAN_TOKENS: TokenInfo[] = [
-  // ── LSTs: Persistent spreads, multiple pools across DEXes ──────────────────
+  // ── LSTs: Raydium pools often lag aggregator pricing ───────────────────────
   { mint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', symbol: 'mSOL', decimals: 9 },
   { mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', symbol: 'jitoSOL', decimals: 9 },
   { mint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', symbol: 'bSOL', decimals: 9 },
-  { mint: '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm', symbol: 'INF', decimals: 9 },
 
-  // ── DEX governance tokens: pools on their own DEX + others = spread potential
+  // ── DEX governance: pools on their OWN DEX can lag behind others ───────────
   { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
-  { mint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', symbol: 'JTO', decimals: 9 },
   { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
-  { mint: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE', symbol: 'ORCA', decimals: 6 },
+  { mint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', symbol: 'JTO', decimals: 9 },
 
-  // ── DeFi blue chips: high volume, multiple AMM pools ───────────────────────
-  { mint: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3', symbol: 'PYTH', decimals: 6 },
-  { mint: '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ', symbol: 'W', decimals: 6 },
-  { mint: 'DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7', symbol: 'DRIFT', decimals: 6 },
-  { mint: 'TNSRxcUxoT9xBG3de7PiJyTDYu7kskLqcpddxnEJAS6', symbol: 'TNSR', decimals: 9 },
-
-  // ── High-volume memes: volatile spreads during activity spikes ─────────────
+  // ── Volatile memes: spreads spike during activity ──────────────────────────
   { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK', decimals: 5 },
   { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', decimals: 6 },
-  { mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', symbol: 'POPCAT', decimals: 9 },
-  { mint: 'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5', symbol: 'MEW', decimals: 5 },
 
-  // ── Wrapped / cross-chain: fewer market makers = wider spreads ─────────────
+  // ── Cross-chain: fewer market makers = wider Raydium vs aggregator gaps ────
   { mint: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs', symbol: 'wETH', decimals: 8 },
   { mint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'wBTC', decimals: 8 },
 ];
