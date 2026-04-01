@@ -506,6 +506,21 @@ export class BotEngine {
           if (opportunities.length > 0) {
             engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
             allOpportunities.push(...opportunities);
+
+            // Execute immediately — don't wait for all strategies to finish
+            // because quotes go stale in 8-15 seconds
+            const hasBalance = this.stats.currentBalanceSol > 0.01;
+            for (const opp of opportunities) {
+              if (this.status !== 'running') break;
+              if (!hasBalance) {
+                engineLog.info(
+                  { path: opp.tokenPath.join('→'), profitUsd: opp.expectedProfitUsd.toFixed(4) },
+                  'Opportunity found (scan-only mode — wallet not funded)',
+                );
+                continue;
+              }
+              await this.executeOpportunity(opp);
+            }
           }
         } catch (err) {
           engineLog.error({ err, strategy: name }, 'Strategy scan failed');
@@ -534,19 +549,9 @@ export class BotEngine {
         this.recentOpportunities = this.recentOpportunities.slice(0, this.MAX_RECENT_OPPORTUNITIES);
       }
 
-      // Execute best opportunities (only if wallet is funded)
-      const hasBalance = this.stats.currentBalanceSol > 0.01;
-      for (const opp of allOpportunities) {
-        if (this.status !== 'running') break;
-        if (!hasBalance) {
-          engineLog.info(
-            { path: opp.tokenPath.join('→'), profitUsd: opp.expectedProfitUsd.toFixed(4) },
-            'Opportunity found (scan-only mode — wallet not funded)',
-          );
-          continue;
-        }
-        await this.executeOpportunity(opp);
-      }
+      // Opportunities are now executed inline during scanning (above)
+      // to prevent quote staleness. The allOpportunities array is still
+      // populated for dashboard tracking.
 
       // Broadcast status
       this.broadcastStatus();

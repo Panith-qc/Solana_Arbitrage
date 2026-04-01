@@ -192,49 +192,78 @@ export class PoolDetector {
 
   private parseRaydiumPoolCreation(tx: any, signature: string, slot: number): NewPoolInfo | null {
     const instructions = tx.transaction?.message?.instructions || [];
-    const innerInstructions = tx.meta?.innerInstructions || [];
 
     // Find Raydium AMM instruction
     for (const ix of instructions) {
       if (ix.programId?.toString() !== RAYDIUM_AMM_V4.toString()) continue;
 
-      // Raydium initialize2 has specific account layout:
-      // Account indices: [0]=amm, [4]=ammOpenOrders, [5]=lpMint, [6]=baseMint, [7]=quoteMint,
-      //                  [8]=baseVault, [9]=quoteVault, ...
+      // CRITICAL: Distinguish pool initialization from regular swaps.
+      // Raydium AMM V4 initialize2 instruction requires exactly 21 accounts.
+      // Regular swaps (swapBaseIn/swapBaseOut) have fewer (typically 17-18 accounts).
+      // Also check that the instruction data starts with the init discriminator.
       const accounts = ix.accounts || [];
-      if (accounts.length < 10) continue;
 
-      const poolAddress = accounts[0]?.toString();
-      const lpMint = accounts[5]?.toString() || null;
-      const baseMint = accounts[6]?.toString();
-      const quoteMint = accounts[7]?.toString();
+      // Initialize2 needs exactly 21 accounts; swaps have fewer
+      if (accounts.length < 20) continue;
+
+      // If we have raw instruction data, check the discriminator byte
+      // Raydium AMM V4: initialize2 = discriminator 1
+      if (ix.data) {
+        try {
+          const dataBytes = Buffer.from(ix.data, 'base64');
+          if (dataBytes.length > 0 && dataBytes[0] !== RAYDIUM_INIT_DISCRIMINATOR) {
+            continue; // Not an initialize instruction
+          }
+        } catch {
+          // If we can't parse data, fall through to account-based checks
+        }
+      }
+
+      // Additional validation: known program IDs should not be baseMint
+      // (prevents detecting swaps involving Serum/OpenBook as "new pools")
+      const baseMint = accounts[8]?.toString();
+      const quoteMint = accounts[9]?.toString();
+      const lpMint = accounts[7]?.toString() || null;
+      const poolAddress = accounts[4]?.toString();
 
       if (!poolAddress || !baseMint || !quoteMint) continue;
 
-      // Extract initial liquidity from balance changes
+      // Reject if baseMint is a known program ID (not a token)
+      const KNOWN_PROGRAMS = new Set([
+        'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',       // Token Program
+        '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',      // Serum DEX v3
+        'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',       // SRM token (often mistaken)
+        '11111111111111111111111111111111',                     // System Program
+        'So11111111111111111111111111111111111111112',          // Wrapped SOL
+      ]);
+      if (KNOWN_PROGRAMS.has(baseMint) || KNOWN_PROGRAMS.has(quoteMint)) continue;
+      if (KNOWN_PROGRAMS.has(poolAddress)) continue;
+
+      // Extract initial liquidity from SOL balance changes
       let initialLiquidity = 0;
-      const preBalances = tx.meta?.preBalances || [];
-      const postBalances = tx.meta?.postBalances || [];
-      // The quote vault is typically account index 9
-      if (preBalances.length > 9 && postBalances.length > 9) {
-        initialLiquidity = Math.abs(postBalances[9] - preBalances[9]);
+      const preTokenBalances = tx.meta?.preTokenBalances || [];
+      const postTokenBalances = tx.meta?.postTokenBalances || [];
+      for (const post of postTokenBalances) {
+        if (post.mint === 'So11111111111111111111111111111111111111112') {
+          const pre = preTokenBalances.find(
+            (p: any) => p.accountIndex === post.accountIndex,
+          );
+          const preAmount = pre ? parseInt(pre.uiTokenAmount?.amount || '0') : 0;
+          const postAmount = parseInt(post.uiTokenAmount?.amount || '0');
+          if (postAmount > preAmount) {
+            initialLiquidity = Math.max(initialLiquidity, postAmount - preAmount);
+          }
+        }
       }
 
-      // If we couldn't get liquidity from balances, estimate from token balance changes
+      // Fallback: use raw SOL balance changes
       if (initialLiquidity === 0) {
-        const preTokenBalances = tx.meta?.preTokenBalances || [];
-        const postTokenBalances = tx.meta?.postTokenBalances || [];
-        for (const post of postTokenBalances) {
-          if (post.mint === 'So11111111111111111111111111111111111111112') {
-            const pre = preTokenBalances.find(
-              (p: any) => p.accountIndex === post.accountIndex,
-            );
-            const preAmount = pre ? parseInt(pre.uiTokenAmount?.amount || '0') : 0;
-            const postAmount = parseInt(post.uiTokenAmount?.amount || '0');
-            if (postAmount > preAmount) {
-              initialLiquidity = Math.max(initialLiquidity, postAmount - preAmount);
-            }
-          }
+        const preBalances = tx.meta?.preBalances || [];
+        const postBalances = tx.meta?.postBalances || [];
+        // Look for the largest SOL deposit (likely the quote vault)
+        for (let i = 0; i < Math.min(preBalances.length, postBalances.length); i++) {
+          const diff = postBalances[i] - preBalances[i];
+          if (diff > initialLiquidity) initialLiquidity = diff;
         }
       }
 

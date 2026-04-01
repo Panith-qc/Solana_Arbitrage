@@ -1,39 +1,42 @@
-// GLOBAL JUPITER RATE GATE
+// GLOBAL JUPITER RATE GATE (with mutex)
 // Singleton that serializes ALL Jupiter API calls across every strategy.
-// Free-tier Jupiter lite API allows ~2 req/s. With 7 strategies scanning
-// concurrently, each with their own rate limiter, we blow past this.
-// This module provides a single queue that enforces the global limit.
+// Uses a promise-chain mutex so concurrent callers actually queue up
+// instead of racing on a shared timestamp.
 
 import { engineLog } from './logger.js';
 
-const MIN_DELAY_MS = 600; // ~1.6 req/s — conservative to avoid 429s
-let lastCallMs = 0;
+const MIN_DELAY_MS = 700; // ~1.4 req/s — safe margin below 2 RPS free tier
 let totalCalls = 0;
 let total429s = 0;
 
+// Promise-chain mutex: each caller waits for the previous one to finish + delay
+let chain: Promise<void> = Promise.resolve();
+
 /**
  * Wait for the global Jupiter rate gate before making a call.
- * Call this BEFORE every Jupiter API request from any strategy.
+ * Concurrent callers are serialized through a promise chain — no races.
  */
-export async function jupiterGate(): Promise<void> {
-  const now = Date.now();
-  const elapsed = now - lastCallMs;
-  if (elapsed < MIN_DELAY_MS) {
-    await new Promise(r => setTimeout(r, MIN_DELAY_MS - elapsed));
-  }
-  lastCallMs = Date.now();
-  totalCalls++;
+export function jupiterGate(): Promise<void> {
+  const next = chain.then(() => {
+    totalCalls++;
+    return new Promise<void>(resolve => setTimeout(resolve, MIN_DELAY_MS));
+  });
+  chain = next;
+  return next;
 }
 
 /**
  * Record a 429 and back off globally.
- * Call this when a Jupiter 429 response is received.
+ * All queued calls will wait behind this 4s pause.
  */
-export async function jupiterBackoff(): Promise<void> {
+export function jupiterBackoff(): Promise<void> {
   total429s++;
-  engineLog.warn({ total429s, totalCalls }, 'Jupiter 429 — global 3s backoff');
-  lastCallMs = Date.now() + 3000; // block all strategies for 3s
-  await new Promise(r => setTimeout(r, 3000));
+  engineLog.warn({ total429s, totalCalls }, 'Jupiter 429 — global 4s backoff');
+  const backoff = chain.then(() => {
+    return new Promise<void>(resolve => setTimeout(resolve, 4000));
+  });
+  chain = backoff;
+  return backoff;
 }
 
 /** Stats for dashboard / logging */
