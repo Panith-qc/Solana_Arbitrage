@@ -156,10 +156,10 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
     slippageBps: 100,
-    minProfitUsd: 0.001,
+    minProfitUsd: 0,           // ANY positive profit triggers execution
     maxDrawdownPercent: 15,
-    circuitBreakerFailures: 10,
-    circuitBreakerCooldownMs: 120000, // 2 min
+    circuitBreakerFailures: 15,
+    circuitBreakerCooldownMs: 60000, // 1 min
     strategies: {
       cyclicArbitrage: false,
       multiHopArbitrage: false,
@@ -230,7 +230,7 @@ export function loadConfig(): BotConfig {
     rpcBackupUrl: process.env.QUICKNODE_RPC_URL || '',
     rpcCommitment: (process.env.RPC_COMMITMENT as any) || 'confirmed',
     privateKey: process.env.PRIVATE_KEY || '',
-    riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'BALANCED',
+    riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'AGGRESSIVE',
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
     scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '10.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
@@ -250,7 +250,7 @@ export function loadConfig(): BotConfig {
     telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
     snipingEnabled: process.env.SNIPING_ENABLED !== 'false',
-    snipeAmountSol: parseFloat(process.env.SNIPE_AMOUNT_SOL || '0.1'),
+    snipeAmountSol: parseFloat(process.env.SNIPE_AMOUNT_SOL || '0.5'),
     solPriceUsd: 0,
   };
 }

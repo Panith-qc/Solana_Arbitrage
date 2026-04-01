@@ -38,8 +38,8 @@ const EXECUTION_SAFETY_BUFFER_BPS = 0;
 const RAYDIUM_BATCH_SIZE = 5;
 const RAYDIUM_BATCH_DELAY_MS = 200;
 
-// Scan amount — 10 SOL matches our capital
-const SCAN_AMOUNTS_SOL = [10];
+// Multiple scan amounts — different CLMM tick ranges give different pricing
+const SCAN_AMOUNTS_SOL = [5, 10];
 
 // How many top Raydium candidates get a Jupiter sell quote (saves Jupiter quota)
 const MAX_JUPITER_CANDIDATES = 8;
