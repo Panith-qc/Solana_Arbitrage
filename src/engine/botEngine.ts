@@ -482,14 +482,11 @@ export class BotEngine {
       // Recover stuck tokens first
       await this.recoverStuckTokens();
 
-      // Update balance
+      // Update balance in background — don't block scanning with RPC latency
       if (this.connectionManager.hasWallet()) {
-        try {
-          this.stats.currentBalanceSol = await this.connectionManager.getBalance();
-          this.metrics.updateBalance(this.stats.currentBalanceSol);
-        } catch {
-          // Non-fatal
-        }
+        this.connectionManager.getBalance()
+          .then(bal => { this.stats.currentBalanceSol = bal; this.metrics.updateBalance(bal); })
+          .catch(() => { /* Non-fatal */ });
       }
 
       // Run poll-based strategies SEQUENTIALLY to respect API rate limits

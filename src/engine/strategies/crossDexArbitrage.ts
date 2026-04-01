@@ -31,7 +31,7 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 const ALL_TOKENS = SCAN_TOKENS.filter(t => t.mint !== SOL_MINT && t.mint !== USDC_MINT);
-const QUOTE_LIFETIME_MS = 8_000;  // quotes stale after ~8s on free tier
+const QUOTE_LIFETIME_MS = 12_000;  // increased from 8s — must exceed executor's 10s staleness check
 const EXECUTION_SAFETY_BUFFER_BPS = 0;
 
 // Raydium API — free tier, 300 req/min, completely separate from Jupiter quota
@@ -124,15 +124,19 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
       // ── STEP 2: Rank by Raydium round-trip to find best candidates ───────
       // Get Raydium sell quotes too (FREE) to estimate which tokens have spreads
+      // PARALLEL: Raydium is free (300/min) — fetch all sell quotes at once instead of sequential
       const ranked: { token: TokenInfo; buyQuote: DexQuote; raydiumRoundTripBps: number }[] = [];
 
-      for (const token of ALL_TOKENS) {
-        const buyQuote = raydiumBuys.get(token.mint);
-        if (!buyQuote) continue;
+      const tokensWithBuys = ALL_TOKENS.filter(t => raydiumBuys.has(t.mint));
+      const sellResults = await Promise.all(
+        tokensWithBuys.map(async (token) => {
+          const buyQuote = raydiumBuys.get(token.mint)!;
+          const sellQuote = await this.getRaydiumSwapQuote(token.mint, SOL_MINT, buyQuote.outputAmount);
+          return { token, buyQuote, sellQuote };
+        }),
+      );
 
-        // Quick Raydium sell for ranking (FREE)
-        const sellQuote = await this.getRaydiumSwapQuote(token.mint, SOL_MINT, buyQuote.outputAmount);
-
+      for (const { token, buyQuote, sellQuote } of sellResults) {
         let roundTripBps = -100;
         if (sellQuote) {
           const outputLamports = parseFloat(sellQuote.outputAmount);
@@ -364,33 +368,24 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             `🚀 HOT TOKEN PROFITABLE: ${hot.token.symbol} — fetching swap TXs`,
           );
 
-          // Get Jupiter buy quote
+          // Get Jupiter buy quote (1 call) — skip re-verify sell (saves ~1s)
+          // The executor's profitability sanity check protects against stale quotes
           await this.jupiterRateLimit();
           const jupBuy = await this.getJupiterQuote(
             SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
           );
           if (!jupBuy?.raw?.routePlan) continue;
 
-          // Re-verify sell with buy output
-          await this.jupiterRateLimit();
-          const sell2 = await this.getJupiterQuote(
-            hot.token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
-          );
-          if (!sell2) continue;
-
-          const p2 = this.calculateProfit(scanAmountLamports, BigInt(sell2.outputAmount));
-          if (p2.netProfitUsd <= 0) continue;
-
-          // Pre-fetch swap TXs for fast execution
-          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, sell2.raw);
+          // Pre-fetch swap TXs using jupBuy + existing jupSell (skip re-verify)
+          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
           const opp = this.buildOpportunity(
-            hot.token, scanSol, scanAmountLamports, jupBuy, sell2, p2, spreadBps, Date.now(),
+            hot.token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, Date.now(),
           );
           if (swapTxs) {
             opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
             opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
             opp.metadata.forwardQuote = jupBuy.raw;
-            opp.metadata.reverseQuote = sell2.raw;
+            opp.metadata.reverseQuote = jupSell.raw;
             opp.metadata.scanTimestamp = Date.now();
           }
           opportunities.push(opp);

@@ -918,11 +918,10 @@ export class Executor {
     );
 
     // ── CAPTURE PRE-TRADE BALANCE ───────────────────────────────
+    // Skip RPC getBalance() here — the caller (botEngine) already caches the
+    // balance and the ~500ms RPC call eats into our quote freshness window.
+    // We'll measure post-trade balance after bundle lands for real profit calc.
     let preTradeBalanceLamports: number | null = null;
-    try {
-      const balanceSol = await this.connManager.getBalance();
-      preTradeBalanceLamports = Math.round(balanceSol * LAMPORTS_PER_SOL);
-    } catch { /* non-fatal */ }
 
     // ── BUILD + SIGN TXS ────────────────────────────────────────
     const forwardTx = buildSwapTransaction(forwardSwapTx, wallet);

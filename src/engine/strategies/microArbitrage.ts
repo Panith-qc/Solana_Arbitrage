@@ -22,7 +22,7 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
-const QUOTE_LIFETIME_MS = 8_000;
+const QUOTE_LIFETIME_MS = 12_000;  // increased from 8s — must exceed executor's 10s staleness check
 
 // Micro trades: small amounts cycle fast
 const MICRO_AMOUNTS_SOL = [0.5, 1];
