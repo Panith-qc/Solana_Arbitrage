@@ -57,8 +57,45 @@ export class PositionTracker {
     if (db) {
       this.db = db;
       this.loadFromDatabase();
+      this.expireStalePositions();
     }
     riskLog.info({ restoredPositions: this.openPositions.size }, 'PositionTracker initialized');
+  }
+
+  /**
+   * On startup, force-close any positions older than 5 minutes.
+   * These are orphaned from previous runs where trades failed
+   * without calling closePosition().
+   */
+  private expireStalePositions(): void {
+    const MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+    const now = Date.now();
+    const stale: string[] = [];
+
+    for (const [tradeId, pos] of this.openPositions) {
+      if (now - pos.entryTimestamp > MAX_AGE_MS) {
+        stale.push(tradeId);
+      }
+    }
+
+    for (const tradeId of stale) {
+      const pos = this.openPositions.get(tradeId)!;
+      riskLog.warn(
+        { tradeId, token: pos.tokenSymbol, ageMs: now - pos.entryTimestamp },
+        'Force-closing stale position from previous run',
+      );
+      this.openPositions.delete(tradeId);
+      if (this.db) {
+        this.db.closePositionRecord(tradeId);
+      }
+    }
+
+    if (stale.length > 0) {
+      riskLog.info(
+        { closed: stale.length, remaining: this.openPositions.size },
+        'Stale positions cleaned up on startup',
+      );
+    }
   }
 
   private loadFromDatabase(): void {
