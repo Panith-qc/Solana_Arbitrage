@@ -128,13 +128,13 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
   },
   BALANCED: {
     level: 'BALANCED',
-    maxPositionSol: 10.0,
-    maxTradeAmountSol: 10.0,
+    maxPositionSol: 3.0,
+    maxTradeAmountSol: 2.0,
     maxDailyLossSol: 0.8,
     maxDailyLossPercent: 8,
     maxConcurrentTrades: 2,
     stopLossPercent: 2.0,
-    slippageBps: 75,
+    slippageBps: 15,
     minProfitUsd: 0.001,
     maxDrawdownPercent: 8,
     circuitBreakerFailures: 8,
@@ -155,13 +155,13 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
   },
   AGGRESSIVE: {
     level: 'AGGRESSIVE',
-    maxPositionSol: 10.0,
-    maxTradeAmountSol: 10.0,
+    maxPositionSol: 3.0,       // Never risk more than ~30% of 10 SOL wallet
+    maxTradeAmountSol: 2.0,    // Match scan amounts where profits were found (0.5-2 SOL)
     maxDailyLossSol: 1.5,
     maxDailyLossPercent: 15,
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
-    slippageBps: 100,
+    slippageBps: 10,           // 10 bps max — profits are 1-5 bps, 100 bps slippage would eat them
     minProfitUsd: 0,           // ANY positive profit triggers execution
     maxDrawdownPercent: 15,
     circuitBreakerFailures: 15,
@@ -176,7 +176,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       liquidation: false,         // stub only
       jitLiquidity: false,        // needs Geyser
       sniping: true,              // new pool detection + execution
-      longTailArbitrage: true,    // mid-cap tokens via Raydium→Jupiter
+      longTailArbitrage: false,   // DISABLED: consistently -25 to -970 bps, wastes 10 Jupiter calls/cycle
       microArbitrage: true,       // small rapid trades across many tokens
     },
   },
@@ -240,7 +240,7 @@ export function loadConfig(): BotConfig {
     privateKey: process.env.PRIVATE_KEY || '',
     riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'AGGRESSIVE',
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
-    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '10.0'),
+    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '1.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
     jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',

@@ -31,15 +31,16 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 const ALL_TOKENS = SCAN_TOKENS.filter(t => t.mint !== SOL_MINT && t.mint !== USDC_MINT);
-const QUOTE_LIFETIME_MS = 10_000;
+const QUOTE_LIFETIME_MS = 8_000;  // quotes stale after ~8s on free tier
 const EXECUTION_SAFETY_BUFFER_BPS = 0;
 
 // Raydium API — free tier, 300 req/min, completely separate from Jupiter quota
 const RAYDIUM_BATCH_SIZE = 5;
 const RAYDIUM_BATCH_DELAY_MS = 200;
 
-// Multiple scan amounts — different CLMM tick ranges give different pricing
-const SCAN_AMOUNTS_SOL = [5, 10];
+// Multiple scan amounts — smaller sizes see less price impact and find micro-spreads
+// Profits were found at 0.5 SOL; 5-10 SOL competed with pro bots on deeper liquidity
+const SCAN_AMOUNTS_SOL = [0.5, 1, 2];
 
 // How many top Raydium candidates get a Jupiter sell quote (saves Jupiter quota)
 const MAX_JUPITER_CANDIDATES = 8;

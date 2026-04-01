@@ -22,7 +22,7 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
-const QUOTE_LIFETIME_MS = 10_000;
+const QUOTE_LIFETIME_MS = 8_000;
 const EXECUTION_SAFETY_BUFFER_BPS = 0;
 
 // Long-tail tokens — mid-cap, fewer arb bots, wider spreads
