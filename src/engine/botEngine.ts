@@ -1046,6 +1046,10 @@ export class BotEngine {
         this.metrics.recordTrade(opp.strategy, 'failed', 0, latencyMs);
         this.tradeJournal.failTrade(opp.id, result.error || 'Unknown error', result.signatures);
 
+        // Close position on failure — no tokens were swapped (simulation failed),
+        // so the position slot must be freed for the next trade
+        this.positionTracker.closePosition(opp.id, tradeAmountLamports, this.solPriceUsd);
+
         // Persistent trade log
         logTrade({
           tradeId: opp.id,
@@ -1083,6 +1087,7 @@ export class BotEngine {
       this.riskManager.reportTradeResult(false, 0);
       this.metrics.recordTrade(opp.strategy, 'failed', 0, latencyMs);
       this.tradeJournal.failTrade(opp.id, (err as Error).message);
+      this.positionTracker.closePosition(opp.id, tradeAmountLamports, this.solPriceUsd);
       log.error({ err }, 'Trade execution error');
     }
   }

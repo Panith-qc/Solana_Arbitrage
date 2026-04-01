@@ -188,7 +188,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxDailyLossPercent: 15,
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
-    slippageBps: 10,           // 10 bps max — profits are 1-5 bps, 100 bps slippage would eat them
+    slippageBps: 50,           // 50 bps — atomic bundles revert entirely if unprofitable, so slippage tolerance is safe
     minProfitUsd: 0,           // ANY positive profit triggers execution
     maxDrawdownPercent: 15,
     circuitBreakerFailures: 15,
