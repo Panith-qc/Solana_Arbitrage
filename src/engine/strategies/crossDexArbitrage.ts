@@ -31,7 +31,9 @@ import { ConnectionManager } from '../connectionManager.js';
 
 const ALL_TOKENS = SCAN_TOKENS.filter(t => t.mint !== SOL_MINT && t.mint !== USDC_MINT);
 const QUOTE_LIFETIME_MS = 10_000;
-const EXECUTION_SAFETY_BUFFER_BPS = 1;
+// Zero safety buffer — atomic Jito bundles eliminate inter-leg risk.
+// Every basis point of buffer is profit we're throwing away.
+const EXECUTION_SAFETY_BUFFER_BPS = 0;
 
 // DEX groups for Phase 2 deep scan — only the 3 biggest with real liquidity
 const DEX_GROUPS = [
@@ -40,7 +42,9 @@ const DEX_GROUPS = [
   { name: 'meteora', dexes: 'Meteora,Meteora DLMM' },
 ];
 
-const SCAN_AMOUNTS_SOL = [5, 10];
+// Single scan amount = half the API calls = twice as fast.
+// 10 SOL matches our capital; smaller amounts have proportionally worse fee ratios.
+const SCAN_AMOUNTS_SOL = [10];
 
 // Phase 1 filter: skip tokens with worse than this round-trip loss
 const PHASE1_ROUND_TRIP_THRESHOLD_BPS = -5;
@@ -63,11 +67,27 @@ interface DexQuote {
   raw: any;
 }
 
+// Hot tokens — near-profitable tokens from the last full scan.
+// These get re-checked in a tight loop between full scans.
+interface HotToken {
+  token: TokenInfo;
+  lastSpreadBps: number;
+  lastCheckedMs: number;
+}
+
+// How close to profitable a token must be to become "hot" (bps)
+const HOT_TOKEN_THRESHOLD_BPS = -3;
+// Max hot tokens to track
+const MAX_HOT_TOKENS = 3;
+// How often to re-check hot tokens (ms) — much faster than full scan
+const HOT_TOKEN_RECHECK_MS = 3_000;
+
 export class CrossDexArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
   private botConfig: BotConfig;
   private riskProfile: RiskProfile;
   private lastJupiterCallMs: number = 0;
+  private hotTokens: HotToken[] = [];
 
   constructor(connectionManager: ConnectionManager, config: BotConfig, riskProfile: RiskProfile) {
     const strategyConfig: StrategyConfig = {
@@ -172,6 +192,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
       candidates.sort((a, b) => b.roundTripBps - a.roundTripBps);
 
+      // Update hot token list — tokens close to breakeven get fast re-checked
+      this.updateHotTokens(candidates);
+
       strategyLog.info(
         {
           scanSol,
@@ -197,12 +220,140 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     opportunities.sort((a, b) => b.expectedProfitUsd - a.expectedProfitUsd);
 
+    // If no opportunities found, do a hot-token fast re-scan.
+    // Hot tokens are near-profitable tokens that might flip profitable
+    // with a small price movement (within -3 bps of breakeven).
+    if (opportunities.length === 0 && this.hotTokens.length > 0) {
+      strategyLog.info(
+        { hotTokens: this.hotTokens.map(h => `${h.token.symbol}(${h.lastSpreadBps.toFixed(1)}bps)`).join(', ') },
+        `No opps from full scan — fast re-checking ${this.hotTokens.length} hot tokens`,
+      );
+      const hotOpps = await this.scanHotTokens();
+      opportunities.push(...hotOpps);
+    }
+
     strategyLog.info(
-      { found: opportunities.length, scanCount: this.scanCount },
+      { found: opportunities.length, scanCount: this.scanCount, hotTokens: this.hotTokens.length },
       `Scan complete — ${opportunities.length} profitable`,
     );
 
     return opportunities;
+  }
+
+  /**
+   * Fast re-scan of "hot" tokens — near-profitable from the last full scan.
+   * Only 2 Jupiter calls per token (aggregator buy + sell) instead of full 3-phase.
+   */
+  private async scanHotTokens(): Promise<Opportunity[]> {
+    const opportunities: Opportunity[] = [];
+    const scanSol = SCAN_AMOUNTS_SOL[0];
+    const scanAmountStr = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL)).toString();
+    const scanAmountLamports = BigInt(scanAmountStr);
+
+    for (const hot of this.hotTokens) {
+      const now = Date.now();
+      if (now - hot.lastCheckedMs < HOT_TOKEN_RECHECK_MS) continue;
+      hot.lastCheckedMs = now;
+
+      try {
+        // Quick aggregator round-trip (2 calls)
+        await this.jupiterRateLimit();
+        const buyQuote = await this.getJupiterQuote(SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps);
+        if (!buyQuote) continue;
+
+        await this.jupiterRateLimit();
+        const sellQuote = await this.getJupiterQuote(hot.token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps);
+        if (!sellQuote) continue;
+
+        const inputLamports = parseFloat(scanAmountStr);
+        const outputLamports = parseFloat(sellQuote.outputAmount);
+        const spreadBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
+        hot.lastSpreadBps = spreadBps;
+
+        const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(sellQuote.outputAmount));
+
+        this.onScanResult?.({
+          strategy: this.name,
+          token: `${hot.token.symbol}@${scanSol} (HOT)`,
+          spreadBps,
+          grossProfitSol: profitAnalysis.grossProfitSol,
+          netProfitUsd: profitAnalysis.netProfitUsd,
+          fees: profitAnalysis.totalFeeSol,
+          profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
+        });
+
+        strategyLog.info(
+          { token: hot.token.symbol, spreadBps: spreadBps.toFixed(1), netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
+          `HOT re-check: ${hot.token.symbol} ${spreadBps.toFixed(1)}bps`,
+        );
+
+        if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
+          // Verify buy quote is Jupiter-format
+          if (!buyQuote.raw?.inAmount || !buyQuote.raw?.outAmount || !buyQuote.raw?.routePlan) continue;
+
+          const ts = Date.now();
+          opportunities.push({
+            id: crypto.randomUUID(),
+            strategy: this.name,
+            tokenPath: ['SOL', hot.token.symbol, 'SOL'],
+            mintPath: [SOL_MINT, hot.token.mint, SOL_MINT],
+            inputAmountLamports: scanAmountLamports,
+            expectedOutputLamports: BigInt(sellQuote.outputAmount),
+            expectedProfitSol: profitAnalysis.netProfitSol,
+            expectedProfitUsd: profitAnalysis.netProfitUsd,
+            confidence: this.estimateConfidence(profitAnalysis),
+            quotes: [buyQuote.raw, sellQuote.raw],
+            metadata: {
+              token: hot.token.symbol,
+              scanAmountSol: scanSol,
+              buySource: 'aggregator',
+              sellSource: 'aggregator',
+              buyAmount: buyQuote.outputAmount,
+              sellAmount: sellQuote.outputAmount,
+              spreadBps,
+              feeBreakdown: profitAnalysis.feeBreakdown,
+              isHotToken: true,
+            },
+            timestamp: ts,
+            expiresAt: ts + QUOTE_LIFETIME_MS,
+          });
+
+          strategyLog.warn(
+            { token: hot.token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
+            `HOT TOKEN OPPORTUNITY: ${hot.token.symbol}`,
+          );
+        }
+      } catch (err) {
+        strategyLog.debug({ err, token: hot.token.symbol }, 'Hot token re-check error');
+      }
+    }
+
+    return opportunities;
+  }
+
+  /**
+   * Update the hot token list from Phase 1 candidates.
+   * Called after Phase 1 with all tokens that were scanned.
+   */
+  private updateHotTokens(candidates: { token: TokenInfo; roundTripBps: number }[]): void {
+    // Tokens close to profitable become hot
+    const nearProfitable = candidates
+      .filter(c => c.roundTripBps > HOT_TOKEN_THRESHOLD_BPS && c.roundTripBps < 0)
+      .sort((a, b) => b.roundTripBps - a.roundTripBps)
+      .slice(0, MAX_HOT_TOKENS);
+
+    this.hotTokens = nearProfitable.map(c => ({
+      token: c.token,
+      lastSpreadBps: c.roundTripBps,
+      lastCheckedMs: Date.now(),
+    }));
+
+    if (this.hotTokens.length > 0) {
+      strategyLog.info(
+        { hotTokens: this.hotTokens.map(h => `${h.token.symbol}(${h.lastSpreadBps.toFixed(1)}bps)`).join(', ') },
+        `Updated hot token list: ${this.hotTokens.length} tokens near breakeven`,
+      );
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -619,11 +770,12 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return parseFloat(Math.min(0.90, Math.max(0.05, p.netProfitSol / p.totalFeeSol / 3)).toFixed(4));
   }
 
-  // Enforce 1.5s minimum between Jupiter calls to avoid 429s
+  // Enforce 1s between Jupiter calls — aggressive but manageable on free tier.
+  // If we get 429s, the handler backs off 5s automatically per call.
   private async jupiterRateLimit(): Promise<void> {
     const now = Date.now();
     const elapsed = now - this.lastJupiterCallMs;
-    const minDelay = Math.max(1500, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
+    const minDelay = Math.max(1000, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
     if (elapsed < minDelay) {
       await new Promise(r => setTimeout(r, minDelay - elapsed));
     }
