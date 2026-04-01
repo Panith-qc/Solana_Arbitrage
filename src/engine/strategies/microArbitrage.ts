@@ -27,14 +27,11 @@ const QUOTE_LIFETIME_MS = 8_000;
 // Micro trades: small amounts cycle fast
 const MICRO_AMOUNTS_SOL = [0.5, 1];
 
-// Extra tokens specifically for micro arb — high-volume tokens with tight spreads
-// that can still show micro-inefficiencies at small sizes
+// Removed MEW (-50bps), BOME (never showed), W (-36bps) — too far negative
+// Only keep ORCA and PYTH which showed tighter spreads
 const MICRO_EXTRA_TOKENS = [
   { mint: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE', symbol: 'ORCA', decimals: 6 },
   { mint: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3', symbol: 'PYTH', decimals: 6 },
-  { mint: 'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5', symbol: 'MEW', decimals: 5 },
-  { mint: 'ukHH6c7mMyiWCf6b9w7Q1KhBPJnPo7UbGGfBsnQ5KRR', symbol: 'BOME', decimals: 6 },
-  { mint: '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ', symbol: 'W', decimals: 6 },
 ];
 
 // Combine SCAN_TOKENS + extra for wider coverage

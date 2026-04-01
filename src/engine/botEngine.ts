@@ -704,13 +704,9 @@ export class BotEngine {
 
     const startTime = Date.now();
 
-    // Capture pre-trade balance for actual profit verification
-    let preTradeBalanceSol = 0;
-    try {
-      preTradeBalanceSol = await this.connectionManager.getBalance();
-    } catch {
-      // Non-fatal, we'll use quote-based profit
-    }
+    // Use cached balance instead of fresh RPC call — saves ~500ms latency
+    // which is critical on free tier where every second counts
+    const preTradeBalanceSol = this.stats.currentBalanceSol;
 
     try {
       // Execute the trade

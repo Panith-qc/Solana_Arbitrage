@@ -40,11 +40,12 @@ const RAYDIUM_BATCH_DELAY_MS = 200;
 
 // Multiple scan amounts — smaller sizes see less price impact and find micro-spreads
 // Profits were found at 0.5 SOL; 5-10 SOL competed with pro bots on deeper liquidity
-const SCAN_AMOUNTS_SOL = [0.5, 1, 2];
+// Only scan amounts where profits were actually found (RAY@0.5 and RAY@2)
+// Fewer amounts = faster cycle = fresher quotes when profitable
+const SCAN_AMOUNTS_SOL = [0.5, 1];
 
-// How many top Raydium candidates get a Jupiter sell quote (saves Jupiter quota)
-// Reduced from 8 to 4 — bottom 4 candidates rarely showed positive spreads
-const MAX_JUPITER_CANDIDATES = 4;
+// Reduced to 3 — only the best candidates get Jupiter calls, saves ~500ms per scan
+const MAX_JUPITER_CANDIDATES = 3;
 
 // Phase 0 filter: skip tokens worse than this on Raydium round-trip
 const RAYDIUM_PREFILTER_BPS = -15;
@@ -212,39 +213,30 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         // Track for hot tokens
         hotCandidates.push({ token, spreadBps, raydiumBuyAmount: buyQuote.outputAmount });
 
-        // PROFITABLE? Get swap TXs immediately (quotes are freshest NOW)
+        // PROFITABLE? Use the quotes we already have — NO re-verify (saves ~1s)
+        // The executor's profitability sanity check protects against stale quotes
         if (profitAnalysis.netProfitUsd > 0) {
           strategyLog.warn(
             { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
             `🚀 PROFITABLE: ${token.symbol} ray→jup — fetching swap TXs NOW`,
           );
 
-          // We already have jupSell (the sell quote). Now get a Jupiter buy quote.
+          // Use the existing Raydium buy quote as forward, Jupiter sell as reverse
+          // Skip the re-quote+re-verify cycle (was 2 extra Jupiter calls = ~1s wasted)
+          // We already have: buyQuote (Raydium) and jupSell (Jupiter)
+          // Need Jupiter buy quote for the swap TX (1 call)
           await this.jupiterRateLimit();
           const jupBuy = await this.getJupiterQuote(
             SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
           );
           if (!jupBuy?.raw?.routePlan) continue;
 
-          // Re-verify sell with the buy output amount (may differ slightly)
-          await this.jupiterRateLimit();
-          const jupSell2 = await this.getJupiterQuote(
-            token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
-          );
-          if (!jupSell2) continue;
-
-          const verifiedProfit = this.calculateProfit(scanAmountLamports, BigInt(jupSell2.outputAmount));
-          if (verifiedProfit.netProfitUsd <= 0) {
-            strategyLog.info({ token: token.symbol }, 'Profit gone after re-verify, skipping');
-            continue;
-          }
-
-          // FAST PATH: Fetch swap TXs right now while quotes are fresh
-          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell2.raw);
+          // Fetch swap TXs using jupBuy + existing jupSell (skip re-verify sell)
+          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
 
           const now = Date.now();
           const opp = this.buildOpportunity(
-            token, scanSol, scanAmountLamports, jupBuy, jupSell2, verifiedProfit, spreadBps, now,
+            token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, now,
           );
 
           // Attach pre-fetched swap TXs so executor skips the re-quote cycle
@@ -252,7 +244,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
             opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
             opp.metadata.forwardQuote = jupBuy.raw;
-            opp.metadata.reverseQuote = jupSell2.raw;
+            opp.metadata.reverseQuote = jupSell.raw;
             opp.metadata.scanTimestamp = now;
             strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
           }

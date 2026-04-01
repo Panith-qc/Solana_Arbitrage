@@ -24,26 +24,20 @@ export interface TokenInfo {
   decimals: number;
 }
 
-// 10 TOKENS — sweet spot for 2 RPS Jupiter rate limit.
-// Mix of LSTs (persistent spreads) + DEX governance (own-DEX pools) + volatile memes.
+// FOCUSED: Only 6 tokens that showed profitable or near-profitable spreads in live scans.
+// Removed: JTO (-207bps), BONK (-107bps), WIF (-50bps), wETH (-54bps) — too far negative.
+// 6 tokens instead of 10 = 40% faster scan = fresher quotes when opportunity hits.
 export const SCAN_TOKENS: TokenInfo[] = [
-  // ── LSTs: Raydium pools often lag aggregator pricing ───────────────────────
+  // Profitable: RAY showed +1.5 to +7.9 bps cross-dex spreads
+  { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
+  // Near-profitable: wBTC showed micro-spreads in micro-arbitrage
+  { mint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'wBTC', decimals: 8 },
+  // Near-profitable: JUP showed small spreads occasionally
+  { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
+  // LSTs: tightest spreads (-0.8bps), closest to breakeven
   { mint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', symbol: 'mSOL', decimals: 9 },
   { mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', symbol: 'jitoSOL', decimals: 9 },
   { mint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', symbol: 'bSOL', decimals: 9 },
-
-  // ── DEX governance: pools on their OWN DEX can lag behind others ───────────
-  { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
-  { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
-  { mint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', symbol: 'JTO', decimals: 9 },
-
-  // ── Volatile memes: spreads spike during activity ──────────────────────────
-  { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK', decimals: 5 },
-  { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', decimals: 6 },
-
-  // ── Cross-chain: fewer market makers = wider Raydium vs aggregator gaps ────
-  { mint: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs', symbol: 'wETH', decimals: 8 },
-  { mint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'wBTC', decimals: 8 },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
