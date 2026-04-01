@@ -11,6 +11,7 @@
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
 import { strategyLog } from '../logger.js';
+import { jupiterGate, jupiterBackoff } from '../jupiterGate.js';
 import {
   SOL_MINT,
   LAMPORTS_PER_SOL,
@@ -59,7 +60,7 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
   private botConfig: BotConfig;
   private riskProfile: RiskProfile;
-  private lastJupiterCallMs: number = 0;
+
 
   constructor(connectionManager: ConnectionManager, config: BotConfig, riskProfile: RiskProfile) {
     const strategyConfig: StrategyConfig = {
@@ -103,7 +104,7 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
       const buyQuote = raydiumBuys.get(token.mint);
       if (!buyQuote) continue;
 
-      await this.jupiterRateLimit();
+      await jupiterGate();
       const jupSell = await this.getJupiterQuote(
         token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
       );
@@ -136,13 +137,13 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
 
       if (profitAnalysis.netProfitUsd > 0) {
         // Get Jupiter buy quote for execution
-        await this.jupiterRateLimit();
+        await jupiterGate();
         const jupBuy = await this.getJupiterQuote(
           SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
         );
         if (!jupBuy?.raw?.routePlan) continue;
 
-        await this.jupiterRateLimit();
+        await jupiterGate();
         const jupSell2 = await this.getJupiterQuote(
           token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
         );
@@ -244,7 +245,7 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
     try {
       const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
       if (!response.ok) {
-        if (response.status === 429) await new Promise(r => setTimeout(r, 5000));
+        if (response.status === 429) await jupiterBackoff();
         return null;
       }
       const data = await response.json();
@@ -281,11 +282,4 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
     return parseFloat(Math.min(0.90, Math.max(0.05, p.netProfitSol / p.totalFeeSol / 3)).toFixed(4));
   }
 
-  private async jupiterRateLimit(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastJupiterCallMs;
-    const minDelay = Math.max(1000, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
-    if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
-    this.lastJupiterCallMs = Date.now();
-  }
 }

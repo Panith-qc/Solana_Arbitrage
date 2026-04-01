@@ -6,6 +6,7 @@
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
 import { strategyLog } from '../logger.js';
+import { jupiterGate } from '../jupiterGate.js';
 import {
   SOL_MINT,
   LAMPORTS_PER_SOL,
@@ -47,7 +48,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'multi-hop-arbitrage',
       enabled: riskProfile.strategies.multiHopArbitrage,
-      scanIntervalMs: 5_000,
+      scanIntervalMs: 15_000,
       minProfitUsd: riskProfile.minProfitUsd,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
@@ -128,7 +129,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
     for (const [tokenA, tokenB] of this.tokenPairs) {
       try {
         // Leg 1: SOL -> Token A
-        await this.rateLimit();
+        await jupiterGate();
         const leg1 = await this.getQuote(
           SOL_MINT,
           tokenA.mint,
@@ -138,7 +139,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
         if (!leg1?.outAmount) continue;
 
         // Leg 2: Token A -> Token B
-        await this.rateLimit();
+        await jupiterGate();
         const leg2 = await this.getQuote(
           tokenA.mint,
           tokenB.mint,
@@ -148,7 +149,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
         if (!leg2?.outAmount) continue;
 
         // Leg 3: Token B -> SOL
-        await this.rateLimit();
+        await jupiterGate();
         const leg3 = await this.getQuote(
           tokenB.mint,
           SOL_MINT,
@@ -320,12 +321,4 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
     return parseFloat(confidence.toFixed(4));
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // RATE LIMITER
-  // ────────────────────────────────────────────────────────────────────────────
-
-  private async rateLimit(): Promise<void> {
-    const delayMs = Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond);
-    await new Promise(resolve => setTimeout(resolve, delayMs));
-  }
 }

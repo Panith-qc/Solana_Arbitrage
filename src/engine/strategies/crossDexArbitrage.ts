@@ -16,6 +16,7 @@
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
 import { strategyLog } from '../logger.js';
+import { jupiterGate, jupiterBackoff } from '../jupiterGate.js';
 import {
   SOL_MINT,
   LAMPORTS_PER_SOL,
@@ -72,14 +73,14 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
   private botConfig: BotConfig;
   private riskProfile: RiskProfile;
-  private lastJupiterCallMs: number = 0;
+
   private hotTokens: HotToken[] = [];
 
   constructor(connectionManager: ConnectionManager, config: BotConfig, riskProfile: RiskProfile) {
     const strategyConfig: StrategyConfig = {
       name: 'cross-dex-arbitrage',
       enabled: riskProfile.strategies.crossDexArbitrage,
-      scanIntervalMs: 3_000,
+      scanIntervalMs: 12_000,
       minProfitUsd: 0,  // ANY positive net profit triggers execution (Jito atomic = safe)
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
@@ -170,7 +171,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       for (const candidate of ranked.slice(0, MAX_JUPITER_CANDIDATES)) {
         const { token, buyQuote } = candidate;
 
-        await this.jupiterRateLimit();
+        await jupiterGate();
         const jupSell = await this.getJupiterQuote(
           token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
         );
@@ -214,7 +215,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         if (profitAnalysis.netProfitUsd > 0) {
           // Get Jupiter buy quote for execution (need Jupiter-format TX)
           // Force Raydium routing since that's where the cheap buy is
-          await this.jupiterRateLimit();
+          await jupiterGate();
           const jupBuy = await this.getJupiterDexQuote(
             SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
             'Raydium,Raydium CLMM',
@@ -222,14 +223,14 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
           if (!jupBuy?.raw?.routePlan) {
             // Fallback: get unrestricted Jupiter buy
-            await this.jupiterRateLimit();
+            await jupiterGate();
             const fallbackBuy = await this.getJupiterQuote(
               SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
             );
             if (!fallbackBuy?.raw?.routePlan) continue;
 
             // Re-get sell for the fallback buy amount
-            await this.jupiterRateLimit();
+            await jupiterGate();
             const fallbackSell = await this.getJupiterQuote(
               token.mint, SOL_MINT, fallbackBuy.outputAmount, this.config.slippageBps,
             );
@@ -244,7 +245,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             ));
           } else {
             // Re-get sell for Jupiter-routed buy amount (might differ from Raydium)
-            await this.jupiterRateLimit();
+            await jupiterGate();
             const jupSell2 = await this.getJupiterQuote(
               token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
             );
@@ -343,7 +344,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         if (!rayBuy) continue;
 
         // Jupiter sell (1 call)
-        await this.jupiterRateLimit();
+        await jupiterGate();
         const jupSell = await this.getJupiterQuote(
           hot.token.mint, SOL_MINT, rayBuy.outputAmount, this.config.slippageBps,
         );
@@ -373,20 +374,20 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
         if (profitAnalysis.netProfitUsd > 0) {
           // Get Jupiter buy (Raydium-routed) for execution
-          await this.jupiterRateLimit();
+          await jupiterGate();
           const jupBuy = await this.getJupiterDexQuote(
             SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
             'Raydium,Raydium CLMM',
           );
 
           if (!jupBuy?.raw?.routePlan) {
-            await this.jupiterRateLimit();
+            await jupiterGate();
             const fallbackBuy = await this.getJupiterQuote(
               SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
             );
             if (!fallbackBuy?.raw?.routePlan) continue;
 
-            await this.jupiterRateLimit();
+            await jupiterGate();
             const sell2 = await this.getJupiterQuote(
               hot.token.mint, SOL_MINT, fallbackBuy.outputAmount, this.config.slippageBps,
             );
@@ -399,7 +400,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
               hot.token, scanSol, scanAmountLamports, fallbackBuy, sell2, p2, spreadBps, Date.now(),
             ));
           } else {
-            await this.jupiterRateLimit();
+            await jupiterGate();
             const sell2 = await this.getJupiterQuote(
               hot.token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
             );
@@ -496,8 +497,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
       if (!response.ok) {
         if (response.status === 429) {
-          strategyLog.warn('Jupiter 429 — 5s backoff');
-          await new Promise(r => setTimeout(r, 5000));
+          await jupiterBackoff();
         }
         return null;
       }
@@ -532,8 +532,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
       if (!response.ok) {
         if (response.status === 429) {
-          strategyLog.warn({ dexes }, 'Jupiter 429 — 5s backoff');
-          await new Promise(r => setTimeout(r, 5000));
+          await jupiterBackoff();
         }
         return null;
       }
@@ -631,13 +630,4 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return parseFloat(Math.min(0.90, Math.max(0.05, p.netProfitSol / p.totalFeeSol / 3)).toFixed(4));
   }
 
-  private async jupiterRateLimit(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastJupiterCallMs;
-    const minDelay = Math.max(1000, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
-    if (elapsed < minDelay) {
-      await new Promise(r => setTimeout(r, minDelay - elapsed));
-    }
-    this.lastJupiterCallMs = Date.now();
-  }
 }

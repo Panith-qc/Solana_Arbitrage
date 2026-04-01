@@ -6,6 +6,7 @@
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
 import { strategyLog } from '../logger.js';
+import { jupiterGate } from '../jupiterGate.js';
 import {
   SOL_MINT,
   LAMPORTS_PER_SOL,
@@ -36,7 +37,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'cyclic-arbitrage',
       enabled: riskProfile.strategies.cyclicArbitrage,
-      scanIntervalMs: 2_000,
+      scanIntervalMs: 10_000,
       minProfitUsd: riskProfile.minProfitUsd,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
@@ -73,7 +74,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     for (const token of CYCLIC_TOKENS) {
       try {
         // Rate-limit: sleep between API call pairs
-        await this.rateLimit();
+        await jupiterGate();
 
         // Leg 1: SOL -> Token
         const leg1Quote = await this.getQuote(
@@ -88,7 +89,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
           continue;
         }
 
-        await this.rateLimit();
+        await jupiterGate();
 
         // Leg 2: Token -> SOL
         const leg2Quote = await this.getQuote(
@@ -305,12 +306,4 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     return parseFloat(confidence.toFixed(4));
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // RATE LIMITER
-  // ────────────────────────────────────────────────────────────────────────────
-
-  private async rateLimit(): Promise<void> {
-    const delayMs = Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond);
-    await new Promise(resolve => setTimeout(resolve, delayMs));
-  }
 }
