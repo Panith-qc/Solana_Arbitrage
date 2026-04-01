@@ -63,7 +63,7 @@ const STATUS_POLL_INTERVAL_MS = 2_000;
  * Submit a bundle of base64-encoded signed transactions to a Jito block engine.
  * Tries each configured block engine in order until one accepts the bundle.
  *
- * @param transactions   Array of base64-encoded serialized VersionedTransactions
+ * @param transactions   Array of base58-encoded serialized VersionedTransactions
  * @param tipLamports    The tip amount embedded in the last transaction (for logging)
  * @returns              JitoBundleResult with the bundle ID and submission status
  */
@@ -320,7 +320,7 @@ export async function submitSandwichBundle(
  * Submit an arbitrage bundle: one or more transactions that must execute atomically.
  * Commonly used for cyclic arb (SOL -> Token -> SOL) or cross-DEX arb.
  *
- * @param transactions  Array of base64-encoded signed transactions
+ * @param transactions  Array of base58-encoded signed transactions
  * @param tipLamports   Jito tip embedded in the last transaction
  * @returns             JitoBundleResult
  */

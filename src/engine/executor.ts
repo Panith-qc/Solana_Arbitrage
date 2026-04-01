@@ -733,10 +733,10 @@ export class Executor {
     executionLog.info('ATOMIC: Skipping simulation — submitting directly to Jito atomic bundle');
 
     // ── STEP 6: SUBMIT AS ATOMIC JITO BUNDLE ────────────────────
-    const forwardB64 = serializeTransaction(forwardTx);
-    const reverseB64 = serializeTransaction(reverseTx);
+    const forwardB58 = serializeTransaction(forwardTx);
+    const reverseB58 = serializeTransaction(reverseTx);
 
-    const bundleResult = await submitArbitrageBundle([forwardB64, reverseB64], tipLamports);
+    const bundleResult = await submitArbitrageBundle([forwardB58, reverseB58], tipLamports);
 
     if (!bundleResult.bundleId) {
       return this.failResult(`ATOMIC: Bundle rejected: ${bundleResult.error}`, startMs);
@@ -929,9 +929,9 @@ export class Executor {
     );
 
     // ── SUBMIT JITO BUNDLE ──────────────────────────────────────
-    const forwardB64 = serializeTransaction(forwardTx);
-    const reverseB64 = serializeTransaction(reverseTx);
-    const bundleResult = await submitArbitrageBundle([forwardB64, reverseB64], tipLamports);
+    const forwardB58 = serializeTransaction(forwardTx);
+    const reverseB58 = serializeTransaction(reverseTx);
+    const bundleResult = await submitArbitrageBundle([forwardB58, reverseB58], tipLamports);
 
     if (!bundleResult.bundleId) {
       return this.failResult(`FAST: Bundle rejected: ${bundleResult.error}`, startMs);

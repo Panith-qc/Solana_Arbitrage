@@ -13,6 +13,7 @@ import {
   AddressLookupTableAccount,
   Connection,
 } from '@solana/web3.js';
+import bs58 from 'bs58';
 import { executionLog } from './logger.js';
 import { JITO_TIP_ACCOUNTS } from './config.js';
 
@@ -309,10 +310,10 @@ export async function buildTipTransaction(
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * Serialize a signed VersionedTransaction to a base64 string suitable for
- * Jito bundle submission (the /api/v1/bundles endpoint expects base64 strings).
+ * Serialize a signed VersionedTransaction to a base58 string for
+ * Jito bundle submission (the /api/v1/bundles sendBundle expects base58).
  */
 export function serializeTransaction(transaction: VersionedTransaction): string {
   const serialized = transaction.serialize();
-  return Buffer.from(serialized).toString('base64');
+  return bs58.encode(serialized);
 }
