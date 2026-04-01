@@ -41,6 +41,9 @@ export interface ScanResultEntry {
 
 export type ScanResultCallback = (entry: ScanResultEntry) => void;
 
+/** Callback to execute an opportunity immediately when found (don't wait for scan to finish) */
+export type ImmediateExecuteCallback = (opp: Opportunity) => void;
+
 export abstract class BaseStrategy {
   name: string;
   config: StrategyConfig;
@@ -48,6 +51,7 @@ export abstract class BaseStrategy {
   protected scanCount: number = 0;
   protected opportunitiesFound: number = 0;
   onScanResult: ScanResultCallback | null = null;
+  onImmediateExecute: ImmediateExecuteCallback | null = null;
 
   constructor(config: StrategyConfig) {
     this.name = config.name;

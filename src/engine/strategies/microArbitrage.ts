@@ -177,6 +177,13 @@ export class MicroArbitrageStrategy extends BaseStrategy {
               strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
             }
 
+            // IMMEDIATE EXECUTE: Don't wait for scan to finish — quotes expire
+            // while other tokens are still being scanned. Fire callback NOW.
+            if (this.onImmediateExecute) {
+              strategyLog.info({ token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
+                `⚡ IMMEDIATE: Executing ${token.symbol} NOW (not waiting for scan to finish)`);
+              this.onImmediateExecute(opp);
+            }
             opportunities.push(opp);
           }
         } catch (err) {

@@ -456,6 +456,9 @@ export class BotEngine {
   private wsTriggeredScans = 0;
   private wsConnected = false;
 
+  /** Track opportunity IDs already executed via onImmediateExecute to avoid double-execution */
+  private immediatelyExecutedIds: Set<string> = new Set();
+
   /**
    * Start monitoring Raydium pools via Helius WebSocket.
    * When a pool's reserves change significantly (>1%), triggers an immediate
@@ -677,6 +680,15 @@ export class BotEngine {
             const hasBalance = this.stats.currentBalanceSol > 0.01;
             for (const opp of opportunities) {
               if (this.status !== 'running') break;
+
+              // Skip if already executed via onImmediateExecute callback
+              if (this.immediatelyExecutedIds.has(opp.id)) {
+                engineLog.info(
+                  { id: opp.id, token: opp.tokenPath.join('→') },
+                  'Skipping — already executed via immediate callback',
+                );
+                continue;
+              }
 
               // Log the opportunity found
               logOpportunity({
@@ -1143,11 +1155,50 @@ export class BotEngine {
       this.strategies.set('multi-hop-arbitrage', strategy);
     }
 
+    // Immediate execution callback: executes opportunity the instant it's found
+    // instead of waiting for the full scan to finish (prevents quote expiry)
+    const immediateCallback = async (opp: Opportunity) => {
+      if (this.status !== 'running') return;
+      if (this.immediatelyExecutedIds.has(opp.id)) return;
+      this.immediatelyExecutedIds.add(opp.id);
+
+      const hasBalance = this.stats.currentBalanceSol > 0.01;
+      logOpportunity({
+        strategy: opp.strategy,
+        tokenPath: opp.tokenPath,
+        inputSol: Number(opp.inputAmountLamports) / 1e9,
+        expectedProfitSol: opp.expectedProfitSol,
+        expectedProfitUsd: opp.expectedProfitUsd,
+        confidence: opp.confidence,
+        spreadBps: opp.metadata?.spreadBps,
+        metadata: { ...opp.metadata, immediateExec: true },
+        executed: hasBalance,
+        executionResult: hasBalance ? undefined : 'skipped',
+      });
+
+      if (hasBalance) {
+        engineLog.info(
+          { strategy: opp.strategy, token: opp.tokenPath.join('→'), netUsd: opp.expectedProfitUsd.toFixed(4) },
+          '⚡ IMMEDIATE EXECUTE: firing before scan completes',
+        );
+        await this.executeOpportunity(opp);
+      }
+
+      // Prune old IDs to prevent memory leak (keep last 500)
+      if (this.immediatelyExecutedIds.size > 500) {
+        const ids = Array.from(this.immediatelyExecutedIds);
+        for (let i = 0; i < ids.length - 200; i++) {
+          this.immediatelyExecutedIds.delete(ids[i]);
+        }
+      }
+    };
+
     if (profile.strategies.crossDexArbitrage) {
       const strategy = new CrossDexArbitrageStrategy(
         this.connectionManager, this.config, this.riskProfile
       );
       strategy.onScanResult = scanCallback;
+      strategy.onImmediateExecute = immediateCallback;
       this.strategies.set('cross-dex-arbitrage', strategy);
     }
 
@@ -1204,6 +1255,7 @@ export class BotEngine {
         this.connectionManager, this.config, this.riskProfile
       );
       strategy.onScanResult = scanCallback;
+      strategy.onImmediateExecute = immediateCallback;
       this.strategies.set('micro-arbitrage', strategy);
     }
 

@@ -253,6 +253,12 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
           }
 
+          // IMMEDIATE EXECUTE: Don't wait for scan to finish — quotes expire
+          if (this.onImmediateExecute) {
+            strategyLog.info({ token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
+              `⚡ IMMEDIATE: Executing ${token.symbol} NOW`);
+            this.onImmediateExecute(opp);
+          }
           opportunities.push(opp);
         }
       }
@@ -362,6 +368,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           strategyLog.info({ token: token.symbol }, '⚡ WS FAST PATH: Swap TXs pre-fetched');
         }
 
+        if (this.onImmediateExecute) {
+          this.onImmediateExecute(opp);
+        }
         opportunities.push(opp);
       }
     }
@@ -477,6 +486,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             opp.metadata.forwardQuote = jupBuy.raw;
             opp.metadata.reverseQuote = jupSell.raw;
             opp.metadata.scanTimestamp = Date.now();
+          }
+          if (this.onImmediateExecute) {
+            this.onImmediateExecute(opp);
           }
           opportunities.push(opp);
         }
