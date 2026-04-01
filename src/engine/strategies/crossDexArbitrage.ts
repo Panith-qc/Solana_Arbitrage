@@ -43,7 +43,8 @@ const RAYDIUM_BATCH_DELAY_MS = 200;
 const SCAN_AMOUNTS_SOL = [0.5, 1, 2];
 
 // How many top Raydium candidates get a Jupiter sell quote (saves Jupiter quota)
-const MAX_JUPITER_CANDIDATES = 8;
+// Reduced from 8 to 4 — bottom 4 candidates rarely showed positive spreads
+const MAX_JUPITER_CANDIDATES = 4;
 
 // Phase 0 filter: skip tokens worse than this on Raydium round-trip
 const RAYDIUM_PREFILTER_BPS = -15;
@@ -211,59 +212,52 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         // Track for hot tokens
         hotCandidates.push({ token, spreadBps, raydiumBuyAmount: buyQuote.outputAmount });
 
-        // PROFITABLE? Execute!
+        // PROFITABLE? Get swap TXs immediately (quotes are freshest NOW)
         if (profitAnalysis.netProfitUsd > 0) {
-          // Get Jupiter buy quote for execution (need Jupiter-format TX)
-          // Force Raydium routing since that's where the cheap buy is
-          await this.jupiterRateLimit();
-          const jupBuy = await this.getJupiterDexQuote(
-            SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
-            'Raydium,Raydium CLMM',
-          );
-
-          if (!jupBuy?.raw?.routePlan) {
-            // Fallback: get unrestricted Jupiter buy
-            await this.jupiterRateLimit();
-            const fallbackBuy = await this.getJupiterQuote(
-              SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
-            );
-            if (!fallbackBuy?.raw?.routePlan) continue;
-
-            // Re-get sell for the fallback buy amount
-            await this.jupiterRateLimit();
-            const fallbackSell = await this.getJupiterQuote(
-              token.mint, SOL_MINT, fallbackBuy.outputAmount, this.config.slippageBps,
-            );
-            if (!fallbackSell) continue;
-
-            const fbProfit = this.calculateProfit(scanAmountLamports, BigInt(fallbackSell.outputAmount));
-            if (fbProfit.netProfitUsd <= 0) continue;
-
-            const now = Date.now();
-            opportunities.push(this.buildOpportunity(
-              token, scanSol, scanAmountLamports, fallbackBuy, fallbackSell, fbProfit, spreadBps, now,
-            ));
-          } else {
-            // Re-get sell for Jupiter-routed buy amount (might differ from Raydium)
-            await this.jupiterRateLimit();
-            const jupSell2 = await this.getJupiterQuote(
-              token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
-            );
-            if (!jupSell2) continue;
-
-            const jupProfit = this.calculateProfit(scanAmountLamports, BigInt(jupSell2.outputAmount));
-            if (jupProfit.netProfitUsd <= 0) continue;
-
-            const now = Date.now();
-            opportunities.push(this.buildOpportunity(
-              token, scanSol, scanAmountLamports, jupBuy, jupSell2, jupProfit, spreadBps, now,
-            ));
-          }
-
           strategyLog.warn(
             { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
-            `🚀 OPPORTUNITY FOUND: ${token.symbol} ray→jup`,
+            `🚀 PROFITABLE: ${token.symbol} ray→jup — fetching swap TXs NOW`,
           );
+
+          // We already have jupSell (the sell quote). Now get a Jupiter buy quote.
+          await this.jupiterRateLimit();
+          const jupBuy = await this.getJupiterQuote(
+            SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
+          );
+          if (!jupBuy?.raw?.routePlan) continue;
+
+          // Re-verify sell with the buy output amount (may differ slightly)
+          await this.jupiterRateLimit();
+          const jupSell2 = await this.getJupiterQuote(
+            token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
+          );
+          if (!jupSell2) continue;
+
+          const verifiedProfit = this.calculateProfit(scanAmountLamports, BigInt(jupSell2.outputAmount));
+          if (verifiedProfit.netProfitUsd <= 0) {
+            strategyLog.info({ token: token.symbol }, 'Profit gone after re-verify, skipping');
+            continue;
+          }
+
+          // FAST PATH: Fetch swap TXs right now while quotes are fresh
+          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell2.raw);
+
+          const now = Date.now();
+          const opp = this.buildOpportunity(
+            token, scanSol, scanAmountLamports, jupBuy, jupSell2, verifiedProfit, spreadBps, now,
+          );
+
+          // Attach pre-fetched swap TXs so executor skips the re-quote cycle
+          if (swapTxs) {
+            opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+            opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+            opp.metadata.forwardQuote = jupBuy.raw;
+            opp.metadata.reverseQuote = jupSell2.raw;
+            opp.metadata.scanTimestamp = now;
+            strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
+          }
+
+          opportunities.push(opp);
         }
       }
 
@@ -373,51 +367,41 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         );
 
         if (profitAnalysis.netProfitUsd > 0) {
-          // Get Jupiter buy (Raydium-routed) for execution
-          await this.jupiterRateLimit();
-          const jupBuy = await this.getJupiterDexQuote(
-            SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
-            'Raydium,Raydium CLMM',
-          );
-
-          if (!jupBuy?.raw?.routePlan) {
-            await this.jupiterRateLimit();
-            const fallbackBuy = await this.getJupiterQuote(
-              SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
-            );
-            if (!fallbackBuy?.raw?.routePlan) continue;
-
-            await this.jupiterRateLimit();
-            const sell2 = await this.getJupiterQuote(
-              hot.token.mint, SOL_MINT, fallbackBuy.outputAmount, this.config.slippageBps,
-            );
-            if (!sell2) continue;
-
-            const p2 = this.calculateProfit(scanAmountLamports, BigInt(sell2.outputAmount));
-            if (p2.netProfitUsd <= 0) continue;
-
-            opportunities.push(this.buildOpportunity(
-              hot.token, scanSol, scanAmountLamports, fallbackBuy, sell2, p2, spreadBps, Date.now(),
-            ));
-          } else {
-            await this.jupiterRateLimit();
-            const sell2 = await this.getJupiterQuote(
-              hot.token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
-            );
-            if (!sell2) continue;
-
-            const p2 = this.calculateProfit(scanAmountLamports, BigInt(sell2.outputAmount));
-            if (p2.netProfitUsd <= 0) continue;
-
-            opportunities.push(this.buildOpportunity(
-              hot.token, scanSol, scanAmountLamports, jupBuy, sell2, p2, spreadBps, Date.now(),
-            ));
-          }
-
           strategyLog.warn(
             { token: hot.token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
-            `🚀 HOT TOKEN OPPORTUNITY: ${hot.token.symbol}`,
+            `🚀 HOT TOKEN PROFITABLE: ${hot.token.symbol} — fetching swap TXs`,
           );
+
+          // Get Jupiter buy quote
+          await this.jupiterRateLimit();
+          const jupBuy = await this.getJupiterQuote(
+            SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
+          );
+          if (!jupBuy?.raw?.routePlan) continue;
+
+          // Re-verify sell with buy output
+          await this.jupiterRateLimit();
+          const sell2 = await this.getJupiterQuote(
+            hot.token.mint, SOL_MINT, jupBuy.outputAmount, this.config.slippageBps,
+          );
+          if (!sell2) continue;
+
+          const p2 = this.calculateProfit(scanAmountLamports, BigInt(sell2.outputAmount));
+          if (p2.netProfitUsd <= 0) continue;
+
+          // Pre-fetch swap TXs for fast execution
+          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, sell2.raw);
+          const opp = this.buildOpportunity(
+            hot.token, scanSol, scanAmountLamports, jupBuy, sell2, p2, spreadBps, Date.now(),
+          );
+          if (swapTxs) {
+            opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+            opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+            opp.metadata.forwardQuote = jupBuy.raw;
+            opp.metadata.reverseQuote = sell2.raw;
+            opp.metadata.scanTimestamp = Date.now();
+          }
+          opportunities.push(opp);
         }
       } catch (err) {
         strategyLog.debug({ err, token: hot.token.symbol }, 'Hot token re-check error');
@@ -586,6 +570,65 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       }
     }
     return null;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // SWAP TX PRE-FETCH (for fast execution path)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  private async fetchSwapTxPair(
+    forwardQuote: any, reverseQuote: any,
+  ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
+    try {
+      const walletPubkey = this.connectionManager.getPublicKey().toString();
+      const swapUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+
+      const makeBody = (quote: any) => ({
+        quoteResponse: quote,
+        userPublicKey: walletPubkey,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: false,
+        prioritizationFeeLamports: 5000, // matches PRIORITY_FEE_LAMPORTS
+      });
+
+      // Fetch both swap TXs — sequential to respect rate limit
+      await this.jupiterRateLimit();
+      const fwdResp = await fetch(swapUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeBody(forwardQuote)),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!fwdResp.ok) {
+        strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
+        return null;
+      }
+      const fwdData = await fwdResp.json();
+
+      await this.jupiterRateLimit();
+      const revResp = await fetch(swapUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeBody(reverseQuote)),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!revResp.ok) {
+        strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
+        return null;
+      }
+      const revData = await revResp.json();
+
+      if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
+
+      return {
+        forwardSwapTx: fwdData.swapTransaction,
+        reverseSwapTx: revData.swapTransaction,
+      };
+    } catch (err) {
+      strategyLog.warn({ err }, 'Failed to pre-fetch swap TX pair');
+      return null;
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────────────

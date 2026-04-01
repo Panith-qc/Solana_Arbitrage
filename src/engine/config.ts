@@ -167,9 +167,9 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 15,
     circuitBreakerCooldownMs: 60000, // 1 min
     strategies: {
-      cyclicArbitrage: true,      // SOL→Token→SOL via Jupiter aggregator
-      multiHopArbitrage: true,    // SOL→TokenA→TokenB→SOL triangular arb
-      crossDexArbitrage: true,    // Raydium buy → Jupiter sell
+      cyclicArbitrage: false,     // DISABLED: duplicates cross-dex with 2x more Jupiter calls; never found profits
+      multiHopArbitrage: false,   // DISABLED: 3-leg paths burn 6 Jupiter calls, never found profits
+      crossDexArbitrage: true,    // PRIMARY: Raydium buy (FREE) → Jupiter sell (1 call)
       sandwich: false,            // needs Geyser
       frontrun: false,            // needs Geyser
       backrun: true,              // poll-based confirmed TX scanning

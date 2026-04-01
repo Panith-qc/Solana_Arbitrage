@@ -140,8 +140,16 @@ export class MicroArbitrageStrategy extends BaseStrategy {
           );
 
           if (profitAnalysis.netProfitUsd > 0) {
+            strategyLog.warn(
+              { token: token.symbol, amountSol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
+              `MICRO OPPORTUNITY: ${token.symbol}@${amountSol} — fetching swap TXs`,
+            );
+
+            // FAST PATH: pre-fetch swap TXs while quotes are fresh
+            const swapTxs = await this.fetchSwapTxPair(leg1.raw, leg2.raw);
+
             const now = Date.now();
-            opportunities.push({
+            const opp: Opportunity = {
               id: crypto.randomUUID(),
               strategy: this.name,
               tokenPath: ['SOL', token.symbol, 'SOL'],
@@ -160,12 +168,19 @@ export class MicroArbitrageStrategy extends BaseStrategy {
               },
               timestamp: now,
               expiresAt: now + QUOTE_LIFETIME_MS,
-            });
+            };
 
-            strategyLog.warn(
-              { token: token.symbol, amountSol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
-              `MICRO OPPORTUNITY: ${token.symbol}@${amountSol}`,
-            );
+            // Attach pre-fetched swap TXs for fast execution
+            if (swapTxs) {
+              opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+              opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+              opp.metadata.forwardQuote = leg1.raw;
+              opp.metadata.reverseQuote = leg2.raw;
+              opp.metadata.scanTimestamp = now;
+              strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
+            }
+
+            opportunities.push(opp);
           }
         } catch (err) {
           strategyLog.error({ err, token: token.symbol }, 'Micro arb scan error');
@@ -204,6 +219,49 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         raw: data,
       };
     } catch { return null; }
+  }
+
+  private async fetchSwapTxPair(
+    forwardQuote: any, reverseQuote: any,
+  ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
+    try {
+      const walletPubkey = this.connectionManager.getPublicKey().toString();
+      const swapUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+
+      const makeBody = (quote: any) => ({
+        quoteResponse: quote,
+        userPublicKey: walletPubkey,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: false,
+        prioritizationFeeLamports: 5000,
+      });
+
+      await this.jupiterRateLimit();
+      const fwdResp = await fetch(swapUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeBody(forwardQuote)),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!fwdResp.ok) return null;
+      const fwdData = await fwdResp.json();
+
+      await this.jupiterRateLimit();
+      const revResp = await fetch(swapUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeBody(reverseQuote)),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!revResp.ok) return null;
+      const revData = await revResp.json();
+
+      if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
+      return { forwardSwapTx: fwdData.swapTransaction, reverseSwapTx: revData.swapTransaction };
+    } catch {
+      return null;
+    }
   }
 
   private calculateProfit(inputLamports: bigint, outputLamports: bigint) {

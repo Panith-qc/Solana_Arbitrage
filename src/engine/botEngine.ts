@@ -718,8 +718,22 @@ export class BotEngine {
 
       if (opp.quotes.length === 2) {
         // Standard 2-leg arbitrage: SOL → Token → SOL
-        if (this.config.jitoEnabled) {
-          // ATOMIC: Both legs in a single Jito bundle — no inter-leg price risk
+        if (this.config.jitoEnabled && opp.metadata?.forwardSwapTx && opp.metadata?.reverseSwapTx) {
+          // FAST PATH: Swap TXs were pre-fetched during scan — skip re-quote
+          log.info('Using FAST execution path (pre-fetched swap TXs)');
+          result = await this.executor.executeFastAtomicArbitrage(
+            opp.metadata.forwardSwapTx,
+            opp.metadata.reverseSwapTx,
+            opp.metadata.forwardQuote,
+            opp.metadata.reverseQuote,
+            opp.mintPath[1],
+            opp.tokenPath[1],
+            this.solPriceUsd,
+            this.config.jitoTipLamports,
+            opp.metadata.scanTimestamp || opp.timestamp,
+          );
+        } else if (this.config.jitoEnabled) {
+          // SLOW PATH: No pre-fetched TXs — full re-quote cycle
           result = await this.executor.executeAtomicArbitrage(
             opp.quotes[0],
             opp.mintPath[1],

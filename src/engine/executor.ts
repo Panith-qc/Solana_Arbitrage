@@ -842,6 +842,174 @@ export class Executor {
   }
 
   // ═════════════════════════════════════════════════════════════════
+  // PUBLIC: FAST ATOMIC ARBITRAGE (pre-fetched swap TXs from scan)
+  // ═════════════════════════════════════════════════════════════════
+
+  /**
+   * Execute a 2-leg arbitrage using swap TXs that were already fetched during
+   * the scan phase. This skips the 4-second re-quote cycle that kills micro-spreads.
+   *
+   * Safety:
+   * - Swap TXs are signed fresh from Jupiter /swap (not just quotes)
+   * - Both legs go into a single atomic Jito bundle (no stuck tokens)
+   * - Pre-trade + post-trade balance delta verifies real profit
+   * - If scan quote is older than maxAgeMs, falls back to full re-quote path
+   *
+   * @param forwardSwapTx  Base64-encoded swap TX from Jupiter /swap (SOL→Token)
+   * @param reverseSwapTx  Base64-encoded swap TX from Jupiter /swap (Token→SOL)
+   * @param forwardQuote   The Jupiter quote used to get forwardSwapTx
+   * @param reverseQuote   The Jupiter quote used to get reverseSwapTx
+   * @param tokenMint      Intermediate token mint
+   * @param tokenSymbol    Human-readable symbol
+   * @param solPrice       Current SOL/USD price
+   * @param tipLamports    Jito tip to embed
+   * @param scanTimestamp  When the scan quotes were obtained (for staleness check)
+   */
+  async executeFastAtomicArbitrage(
+    forwardSwapTx: string,
+    reverseSwapTx: string,
+    forwardQuote: JupiterQuote,
+    reverseQuote: JupiterQuote,
+    tokenMint: string,
+    tokenSymbol: string,
+    solPrice: number,
+    tipLamports: number,
+    scanTimestamp: number,
+  ): Promise<ExecutionResult> {
+    const startMs = Date.now();
+    const connection = this.connManager.getConnection();
+    const wallet = this.connManager.getWallet();
+    const inputLamports = parseInt(forwardQuote.inAmount, 10);
+
+    // ── STALENESS CHECK ─────────────────────────────────────────
+    const ageMs = Date.now() - scanTimestamp;
+    if (ageMs > 6000) {
+      executionLog.warn(
+        { tokenSymbol, ageMs },
+        'FAST: Scan quotes too old (>6s), falling back to full re-quote',
+      );
+      return this.executeAtomicArbitrage(forwardQuote, tokenMint, tokenSymbol, solPrice, tipLamports);
+    }
+
+    // ── PROFITABILITY SANITY CHECK ──────────────────────────────
+    const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
+    const grossProfitLamports = reverseOutputLamports - inputLamports;
+    const extraTipLamports = Math.max(0, tipLamports - JITO_TIP_LAMPORTS);
+    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + extraTipLamports;
+    const netProfitLamports = grossProfitLamports - totalFeeLamports;
+
+    if (netProfitLamports < 0) {
+      return this.failResult(
+        `FAST: Net loss ${(netProfitLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`,
+        startMs,
+      );
+    }
+
+    executionLog.info(
+      {
+        tokenSymbol, ageMs,
+        grossProfitLamports, netProfitLamports,
+        tipLamports,
+      },
+      'FAST: Using pre-fetched swap TXs — skipping re-quote',
+    );
+
+    // ── CAPTURE PRE-TRADE BALANCE ───────────────────────────────
+    let preTradeBalanceLamports: number | null = null;
+    try {
+      const balanceSol = await this.connManager.getBalance();
+      preTradeBalanceLamports = Math.round(balanceSol * LAMPORTS_PER_SOL);
+    } catch { /* non-fatal */ }
+
+    // ── BUILD + SIGN TXS ────────────────────────────────────────
+    const forwardTx = buildSwapTransaction(forwardSwapTx, wallet);
+    let reverseTx = buildSwapTransaction(reverseSwapTx, wallet);
+
+    // Add Jito tip to the last TX
+    const tipAccount = getRandomTipAccount();
+    reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
+
+    // ── SIMULATE BOTH ───────────────────────────────────────────
+    const [forwardSim, reverseSim] = await Promise.all([
+      simulateTransaction(connection, forwardTx),
+      simulateTransaction(connection, reverseTx),
+    ]);
+
+    if (!forwardSim.success) {
+      return this.failResult(`FAST: Forward sim failed: ${forwardSim.error}`, startMs);
+    }
+    if (!reverseSim.success) {
+      return this.failResult(`FAST: Reverse sim failed: ${reverseSim.error}`, startMs);
+    }
+
+    executionLog.info(
+      { forwardCU: forwardSim.unitsConsumed, reverseCU: reverseSim.unitsConsumed },
+      'FAST: Both legs simulated OK',
+    );
+
+    // ── SUBMIT JITO BUNDLE ──────────────────────────────────────
+    const forwardB64 = serializeTransaction(forwardTx);
+    const reverseB64 = serializeTransaction(reverseTx);
+    const bundleResult = await submitArbitrageBundle([forwardB64, reverseB64], tipLamports);
+
+    if (!bundleResult.bundleId) {
+      return this.failResult(`FAST: Bundle rejected: ${bundleResult.error}`, startMs);
+    }
+
+    executionLog.info(
+      { bundleId: bundleResult.bundleId, submissionLatencyMs: bundleResult.submissionLatencyMs },
+      'FAST: Bundle submitted — waiting for landing',
+    );
+
+    // ── WAIT FOR LANDING ────────────────────────────────────────
+    const finalStatus = await waitForBundleLanding(
+      bundleResult.bundleId,
+      bundleResult.endpoint || undefined,
+    );
+
+    const elapsed = Date.now() - startMs;
+
+    if (finalStatus.status !== 'landed') {
+      return {
+        success: false, profitSol: 0, profitUsd: 0, signatures: [],
+        gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+        jitoTip: tipLamports / LAMPORTS_PER_SOL,
+        error: `FAST: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
+        stuckToken: null, executionTimeMs: elapsed,
+      };
+    }
+
+    // ── MEASURE REAL PROFIT ─────────────────────────────────────
+    let actualProfitSol: number;
+    if (preTradeBalanceLamports !== null) {
+      try {
+        await sleep(1500);
+        const postBalanceSol = await this.connManager.getBalance();
+        const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
+        actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
+        executionLog.info(
+          { preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL, postBalanceSol, actualProfitSol, bundleId: bundleResult.bundleId },
+          'FAST: REAL profit from balance delta',
+        );
+      } catch {
+        actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+      }
+    } else {
+      actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+    }
+
+    return {
+      success: true,
+      profitSol: actualProfitSol,
+      profitUsd: actualProfitSol * solPrice,
+      signatures: [],
+      gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+      jitoTip: tipLamports / LAMPORTS_PER_SOL,
+      error: null, stuckToken: null, executionTimeMs: elapsed,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════════
   // PUBLIC: EXECUTE VIA JITO BUNDLE (pre-built TXs)
   // ═════════════════════════════════════════════════════════════════
 
@@ -1045,7 +1213,8 @@ export class Executor {
     wallet: Keypair,
   ): Promise<JupiterSwapResponse | null> {
     try {
-      await this.rateLimit();
+      // NOTE: caller is responsible for rate limiting before calling this method.
+      // Previously this had its own rateLimit() causing double-waits.
 
       const body = {
         quoteResponse: quote,
