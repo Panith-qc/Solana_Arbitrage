@@ -19,13 +19,14 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
-// High-volatility tokens for cyclic arb (meme + governance = wider spreads)
-// LSTs have <0.1% spread — unprofitable for SOL→Token→SOL cycles.
-const CYCLIC_SYMBOLS = new Set(['JUP', 'RAY', 'ORCA', 'BONK', 'WIF', 'MEW', 'BOME', 'W', 'RENDER', 'PYTH']);
+// Only volatile tokens for cyclic — cross-dex already covers all 10 tokens
+// via Raydium (FREE) → Jupiter. Cyclic uses 2 Jupiter calls/token so keep list small.
+// Pick 4 from SCAN_TOKENS: 2 memes (volatile spreads) + 2 cross-chain (fewer MMs).
+const CYCLIC_SYMBOLS = new Set(['BONK', 'WIF', 'wETH', 'wBTC']);
 const CYCLIC_TOKENS = SCAN_TOKENS.filter(t => CYCLIC_SYMBOLS.has(t.symbol));
 
-const QUOTE_LIFETIME_MS = 15_000;
-const EXECUTION_SAFETY_BUFFER_BPS = 5;
+const QUOTE_LIFETIME_MS = 8_000;  // quotes stale after ~8s on free tier
+const EXECUTION_SAFETY_BUFFER_BPS = 0; // Jito atomic bundles = no inter-leg risk
 
 export class CyclicArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;

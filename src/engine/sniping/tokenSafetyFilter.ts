@@ -105,14 +105,14 @@ export class TokenSafetyFilter {
       }
 
       // 2. Check initial liquidity (from input, no RPC needed)
-      if (result.details.initialLiquiditySol < 2.0) {
-        result.rejectReason = `Initial liquidity too low: ${result.details.initialLiquiditySol.toFixed(2)} SOL (min 2.0)`;
+      if (result.details.initialLiquiditySol < 0.5) {
+        result.rejectReason = `Initial liquidity too low: ${result.details.initialLiquiditySol.toFixed(2)} SOL (min 0.5)`;
         return result;
       }
 
-      // 3. Check pool age
-      if (result.details.poolAgeSeconds < 60) {
-        result.rejectReason = `Pool too new: ${result.details.poolAgeSeconds.toFixed(0)}s (min 60s)`;
+      // 3. Check pool age — only skip if literally just created (likely incomplete tx)
+      if (result.details.poolAgeSeconds < 5) {
+        result.rejectReason = `Pool too new: ${result.details.poolAgeSeconds.toFixed(0)}s (min 5s)`;
         return result;
       }
 
@@ -128,30 +128,31 @@ export class TokenSafetyFilter {
         result.details.top10HolderPercent = (top10Amount / result.details.totalSupply) * 100;
       }
 
-      if (result.details.top10HolderPercent > 30) {
-        result.rejectReason = `Top 10 wallets hold ${result.details.top10HolderPercent.toFixed(1)}% (max 30%)`;
+      if (result.details.top10HolderPercent > 80) {
+        result.rejectReason = `Top 10 wallets hold ${result.details.top10HolderPercent.toFixed(1)}% (max 80%)`;
         return result;
       }
 
       // ── SCORING ────────────────────────────────────────────────
 
-      // Liquidity score (0-25)
+      // Liquidity score (0-25) — adjusted for aggressive sniping
       const liqSol = result.details.initialLiquiditySol;
       if (liqSol >= 50) result.details.liquidityScore = 25;
-      else if (liqSol >= 20) result.details.liquidityScore = 20;
-      else if (liqSol >= 10) result.details.liquidityScore = 15;
-      else if (liqSol >= 5) result.details.liquidityScore = 10;
-      else result.details.liquidityScore = 5;
+      else if (liqSol >= 20) result.details.liquidityScore = 22;
+      else if (liqSol >= 10) result.details.liquidityScore = 18;
+      else if (liqSol >= 5) result.details.liquidityScore = 15;
+      else if (liqSol >= 1) result.details.liquidityScore = 12;
+      else result.details.liquidityScore = 8;
 
       // Holder distribution score (0-25)
-      // Lower concentration = better
+      // New tokens naturally have concentrated holders — be lenient
       const top10Pct = result.details.top10HolderPercent;
-      if (top10Pct <= 5) result.details.holderScore = 25;
-      else if (top10Pct <= 10) result.details.holderScore = 20;
-      else if (top10Pct <= 15) result.details.holderScore = 15;
-      else if (top10Pct <= 20) result.details.holderScore = 10;
-      else if (top10Pct <= 25) result.details.holderScore = 5;
-      else result.details.holderScore = 2;
+      if (top10Pct <= 10) result.details.holderScore = 25;
+      else if (top10Pct <= 25) result.details.holderScore = 20;
+      else if (top10Pct <= 40) result.details.holderScore = 15;
+      else if (top10Pct <= 60) result.details.holderScore = 10;
+      else if (top10Pct <= 75) result.details.holderScore = 7;
+      else result.details.holderScore = 4;
 
       // Lock score (0-25) - check if LP tokens are burned or locked
       // (1 RPC call if lpMint provided)
@@ -233,11 +234,12 @@ export class TokenSafetyFilter {
         + result.details.lockScore
         + result.details.metadataScore;
 
-      // Pass if score > 60
-      if (result.score > 60) {
+      // Pass if score > 30 — aggressive threshold for sniping
+      // Mint+freeze authority checks (hard rejects above) are the real safety net
+      if (result.score > 30) {
         result.passed = true;
       } else {
-        result.rejectReason = `Safety score too low: ${result.score}/100 (min 60)`;
+        result.rejectReason = `Safety score too low: ${result.score}/100 (min 30)`;
       }
 
       const elapsed = Date.now() - startMs;

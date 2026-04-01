@@ -78,6 +78,39 @@ const ProductionTradingDashboard: React.FC = () => {
   const [totalProfit, setTotalProfit] = useState(0);
   const [successRate, setSuccessRate] = useState(0);
 
+  // Backend scan data
+  interface BackendScanLog {
+    timestamp: number;
+    strategy: string;
+    token: string;
+    spreadBps: number;
+    grossProfitSol: number;
+    netProfitUsd: number;
+    fees: number;
+    profitable: boolean;
+  }
+  interface BackendStats {
+    totalScans: number;
+    opportunitiesFound: number;
+    tradesExecuted: number;
+    tradesSuccessful: number;
+    tradesFailed: number;
+    totalProfitSol: number;
+    totalProfitUsd: number;
+    currentBalanceSol: number;
+    currentSolPriceUsd: number;
+    activeStrategies: string[];
+    status: string;
+  }
+  type LogFileEntry = string;
+  const [backendScanLogs, setBackendScanLogs] = useState<BackendScanLog[]>([]);
+  const [backendStats, setBackendStats] = useState<BackendStats | null>(null);
+  const [backendRunning, setBackendRunning] = useState(false);
+  const [logFiles, setLogFiles] = useState<LogFileEntry[]>([]);
+  const [selectedLogContent, setSelectedLogContent] = useState<string[]>([]);
+  const [selectedLogName, setSelectedLogName] = useState('');
+  const [showLogViewer, setShowLogViewer] = useState(false);
+
   // Wallet state - starts as connected for testing
   const [walletState, setWalletState] = useState({
     isConnected: true,
@@ -195,6 +228,42 @@ const ProductionTradingDashboard: React.FC = () => {
     const interval = setInterval(updateMetrics, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // ── Poll REAL backend data ──────────────────────────────
+  useEffect(() => {
+    const pollBackend = async () => {
+      try {
+        const res = await fetch('/api/status').then(r => r.ok ? r.json() : null).catch(() => null);
+        if (res) {
+          if (res.scanLogs) setBackendScanLogs(res.scanLogs);
+          if (res.stats) setBackendStats(res.stats);
+          if (res.running !== undefined) setBackendRunning(res.running);
+        }
+      } catch { /* ignore */ }
+    };
+    pollBackend();
+    const interval = setInterval(pollBackend, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ── Fetch log files list ──────────────────────────────
+  const fetchLogFiles = async () => {
+    try {
+      const res = await fetch('/api/analytics/files').then(r => r.ok ? r.json() : null).catch(() => null);
+      if (res?.files) setLogFiles(res.files);
+    } catch { /* ignore */ }
+  };
+
+  const fetchLogContent = async (prefix: string) => {
+    try {
+      const res = await fetch(`/api/analytics/logs/${prefix}?tail=100`).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (res?.entries) {
+        setSelectedLogContent(res.entries.map((e: Record<string, unknown>) => JSON.stringify(e)));
+        setSelectedLogName(prefix);
+        setShowLogViewer(true);
+      }
+    } catch { /* ignore */ }
+  };
 
   // Wallet connection handlers
   const handleWalletConnect = async (walletType: string, privateKey?: string) => {
@@ -790,6 +859,158 @@ const ProductionTradingDashboard: React.FC = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* ═══ LIVE BACKEND SCAN LOG ═══ */}
+        <Card className="bg-black/20 border-blue-500/30">
+          <CardHeader>
+            <CardTitle className="text-blue-400 flex items-center justify-between">
+              <div className="flex items-center">
+                <Activity className="w-5 h-5 mr-2" />
+                Live Scan Log
+                {backendRunning && (
+                  <Badge className="ml-2 bg-green-500/20 text-green-400 border-green-500/50">
+                    <Activity className="w-3 h-3 mr-1 animate-spin" />
+                    LIVE
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-4 text-sm font-normal">
+                {backendStats && (
+                  <>
+                    <span className="text-gray-400">Scans: <span className="text-white">{backendStats.totalScans}</span></span>
+                    <span className="text-gray-400">Opps: <span className="text-green-400">{backendStats.opportunitiesFound}</span></span>
+                    <span className="text-gray-400">Trades: <span className="text-purple-400">{backendStats.tradesExecuted}</span></span>
+                    <span className="text-gray-400">Balance: <span className="text-amber-400">{backendStats.currentBalanceSol?.toFixed(4)} SOL</span></span>
+                    <span className="text-gray-400">SOL: <span className="text-white">${backendStats.currentSolPriceUsd?.toFixed(2)}</span></span>
+                  </>
+                )}
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {backendStats?.activeStrategies && backendStats.activeStrategies.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {backendStats.activeStrategies.map((s: string) => (
+                  <Badge key={s} className="bg-green-500/20 text-green-400 border-green-500/50 text-xs">
+                    {s}
+                  </Badge>
+                ))}
+              </div>
+            )}
+            {backendScanLogs.length > 0 ? (
+              <div className="bg-black/40 rounded-lg p-3 max-h-96 overflow-y-auto font-mono text-xs">
+                {backendScanLogs.slice(0, 50).map((log, i) => (
+                  <div key={`${log.timestamp}-${i}`} className="flex items-center gap-2 py-0.5 border-b border-gray-800 last:border-0">
+                    <span className="text-gray-500 w-20 shrink-0">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className="text-blue-400 w-24 shrink-0 truncate">{log.strategy.replace('-arbitrage', '')}</span>
+                    <span className="text-white w-32 shrink-0 truncate">{log.token}</span>
+                    <span className={`w-20 shrink-0 text-right font-bold ${log.spreadBps > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {log.spreadBps > 0 ? '+' : ''}{log.spreadBps.toFixed(1)} bps
+                    </span>
+                    <span className={`w-24 shrink-0 text-right ${log.netProfitUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ${log.netProfitUsd.toFixed(4)}
+                    </span>
+                    <span className="text-gray-500 w-20 shrink-0 text-right">
+                      {log.fees > 0 ? `${(log.fees * 1000).toFixed(2)}m fee` : ''}
+                    </span>
+                    {log.profitable && (
+                      <Badge className="bg-green-600 text-white text-[10px] px-1 py-0">PROFIT</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-gray-400">
+                {backendRunning ? 'Waiting for first scan results...' : 'Bot not running — connect wallet and start strategies'}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ═══ LOG FILES VIEWER ═══ */}
+        <Card className="bg-black/20 border-yellow-500/30">
+          <CardHeader>
+            <CardTitle className="text-yellow-400 flex items-center justify-between">
+              <div className="flex items-center">
+                <Layers className="w-5 h-5 mr-2" />
+                Log Files (JSONL)
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={fetchLogFiles}
+                className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/20"
+              >
+                Refresh
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {logFiles.length > 0 ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {logFiles.map((fileName) => (
+                    <Button
+                      key={fileName}
+                      size="sm"
+                      variant={selectedLogName === fileName.replace('.jsonl', '').split('_').slice(0, -1).join('_') ? 'default' : 'outline'}
+                      onClick={() => {
+                        const prefix = fileName.replace('.jsonl', '').split('_').slice(0, -1).join('_');
+                        fetchLogContent(prefix);
+                      }}
+                      className="text-xs justify-start border-gray-600 text-gray-300 hover:bg-gray-700"
+                    >
+                      {fileName}
+                    </Button>
+                  ))}
+                </div>
+                {showLogViewer && selectedLogContent.length > 0 && (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-gray-400">Showing last {selectedLogContent.length} entries from {selectedLogName}</span>
+                      <Button size="sm" variant="ghost" onClick={() => setShowLogViewer(false)} className="text-gray-400 hover:text-white">
+                        Close
+                      </Button>
+                    </div>
+                    <div className="bg-black/40 rounded-lg p-3 max-h-72 overflow-y-auto font-mono text-xs">
+                      {selectedLogContent.map((line, i) => {
+                        try {
+                          const entry = JSON.parse(line);
+                          return (
+                            <div key={i} className="py-0.5 border-b border-gray-800 last:border-0 text-gray-300">
+                              <span className="text-gray-500">{entry.ts ? new Date(entry.ts).toLocaleTimeString() : ''} </span>
+                              <span className="text-blue-400">{entry.strategy || ''} </span>
+                              <span className="text-white">{entry.token || ''} </span>
+                              <span className={entry.profitable ? 'text-green-400' : 'text-red-400'}>
+                                {entry.spreadBps !== undefined ? `${entry.spreadBps.toFixed(1)}bps` : ''}
+                              </span>
+                              {entry.netProfitUsd !== undefined && (
+                                <span className={entry.netProfitUsd >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                  {' '}${entry.netProfitUsd.toFixed(4)}
+                                </span>
+                              )}
+                              {entry.type && <span className="text-purple-400"> [{entry.type}]</span>}
+                              {entry.error && <span className="text-red-400"> {entry.error}</span>}
+                            </div>
+                          );
+                        } catch {
+                          return <div key={i} className="py-0.5 text-gray-500">{line}</div>;
+                        }
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-gray-400 mb-2">Click "Refresh" to load log files</p>
+                <p className="text-xs text-gray-500">Logs are stored in /logs/ as daily JSONL files</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Footer */}
         <div className="text-center text-sm text-purple-300 space-y-2">

@@ -239,6 +239,8 @@ export function createRoutes(deps: RouteDependencies): Router {
       const recentOpportunities = botEngine?.getRecentOpportunities?.() ?? [];
       const scanLogs = botEngine?.getScanLogs?.() ?? [];
 
+      const wsStatus = botEngine?.getWebSocketStatus?.() ?? { connected: false, monitoredPools: 0, triggeredScans: 0 };
+
       res.json({
         running,
         stats,
@@ -246,6 +248,7 @@ export function createRoutes(deps: RouteDependencies): Router {
         circuitBreaker,
         recentOpportunities,
         scanLogs,
+        wsStatus,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         timestamp: Date.now(),
       });
@@ -569,6 +572,47 @@ export function createRoutes(deps: RouteDependencies): Router {
     } catch (err) {
       apiLog.error({ err }, 'Failed to fetch Jupiter quote');
       res.status(500).json({ error: 'Failed to fetch quote' });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // ANALYTICS LOG ENDPOINTS
+  // ─────────────────────────────────────────────
+
+  // Daily summary — token/strategy breakdown, best spreads, 429 counts
+  router.get('/api/analytics/summary', async (req: Request, res: Response) => {
+    try {
+      const date = req.query.date as string | undefined;
+      const summary = botEngine.getAnalyticsSummary(date);
+      res.json(summary);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to generate summary' });
+    }
+  });
+
+  // List all log files
+  router.get('/api/analytics/files', async (_req: Request, res: Response) => {
+    try {
+      const files = botEngine.getAnalyticsLogFiles();
+      res.json({ files });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to list log files' });
+    }
+  });
+
+  // Read specific log file (scans, opportunities, cycles, loops, api_errors, trades)
+  router.get('/api/analytics/logs/:prefix', async (req: Request, res: Response) => {
+    try {
+      const { prefix } = req.params;
+      const date = req.query.date as string | undefined;
+      const tail = parseInt(req.query.tail as string || '200', 10);
+      const lines = botEngine.getAnalyticsLog(prefix, date, tail);
+      const parsed = lines.map((line: string) => {
+        try { return JSON.parse(line); } catch { return { raw: line }; }
+      });
+      res.json({ count: parsed.length, entries: parsed });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to read log' });
     }
   });
 

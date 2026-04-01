@@ -18,13 +18,13 @@ import { TokenSafetyFilter, SafetyResult, TokenCheckInput } from './tokenSafetyF
 import { SnipeExecutor, SnipePosition, SnipeResult } from './snipeExecutor.js';
 
 // ── Capital Rule Constants ────────────────────────────────────────────────────
-const MAX_SNIPE_WALLET_SOL = 2.0;          // Hard cap for sniping capital
-const DAILY_HALT_THRESHOLD_SOL = 1.5;      // Stop sniping if wallet drops below this
-const DAILY_HALT_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
-const MAX_SNIPES_PER_HOUR = 5;
-const MAX_CONCURRENT_SNIPES = 3;
-const CONSECUTIVE_SL_LIMIT = 3;
-const CONSECUTIVE_SL_PAUSE_MS = 60 * 60 * 1000; // 1 hour pause after 3 SL
+const MAX_SNIPE_WALLET_SOL = 5.0;          // More capital for sniping
+const DAILY_HALT_THRESHOLD_SOL = 1.0;      // Only halt if critically low
+const DAILY_HALT_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours (not 24)
+const MAX_SNIPES_PER_HOUR = 10;            // More attempts per hour
+const MAX_CONCURRENT_SNIPES = 5;           // More concurrent positions
+const CONSECUTIVE_SL_LIMIT = 5;            // More tolerance before pause
+const CONSECUTIVE_SL_PAUSE_MS = 15 * 60 * 1000; // 15 min pause (not 1 hour)
 
 export interface SnipingStats {
   poolsDetected: number;
@@ -52,6 +52,8 @@ export class SnipingStrategy extends BaseStrategy {
 
   // Pool queue: pools detected since last scan() call
   private poolQueue: NewPoolInfo[] = [];
+  // Deduplicate: only evaluate each base token once
+  private evaluatedMints: Set<string> = new Set();
 
   // Capital rules state
   private snipeAmountSol: number;
@@ -164,6 +166,10 @@ export class SnipingStrategy extends BaseStrategy {
     // Prune old data periodically
     if (this.scanCount % 100 === 0) {
       this.poolDetector.pruneSeenSignatures();
+      // Allow re-evaluation of mints after some time
+      if (this.evaluatedMints.size > 500) {
+        this.evaluatedMints.clear();
+      }
     }
 
     // ── Capital rule checks ─────────────────────────────────────
@@ -245,6 +251,24 @@ export class SnipingStrategy extends BaseStrategy {
         strategyLog.debug({ quote: pool.quoteMint }, 'Skipping non-SOL pool');
         continue;
       }
+
+      // Deduplicate: skip if we already evaluated this base token
+      if (this.evaluatedMints.has(pool.baseMint)) {
+        continue;
+      }
+      this.evaluatedMints.add(pool.baseMint);
+
+      // Pre-filter: skip dust pools (< 0.5 SOL) before spending RPC on safety checks
+      const liqSol = pool.initialLiquidityLamports / LAMPORTS_PER_SOL;
+      if (liqSol < 0.5) {
+        strategyLog.debug({ base: pool.baseMint.slice(0, 8), liq: liqSol.toFixed(2) }, 'Skipping dust pool');
+        continue;
+      }
+
+      strategyLog.info(
+        { base: pool.baseMint.slice(0, 8), liq: liqSol.toFixed(2), source: pool.source },
+        'Evaluating pool with real liquidity',
+      );
 
       // ── Safety filter ──────────────────────────────────────
       this.snipingStats.tokensEvaluated++;

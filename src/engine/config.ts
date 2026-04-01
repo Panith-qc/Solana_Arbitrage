@@ -24,20 +24,53 @@ export interface TokenInfo {
   decimals: number;
 }
 
-// FOCUSED TOKEN LIST — Only tokens with real cross-DEX spread potential.
-// LSTs have persistent mispricings (Raydium vs Orca pools diverge on large swaps).
-// High-volume memes have volatile spreads during activity spikes.
-// Fewer tokens = faster scan cycle = catch opportunities before they vanish.
+// FOCUSED: Only 6 tokens that showed profitable or near-profitable spreads in live scans.
+// Removed: JTO (-207bps), BONK (-107bps), WIF (-50bps), wETH (-54bps) — too far negative.
+// 6 tokens instead of 10 = 40% faster scan = fresher quotes when opportunity hits.
 export const SCAN_TOKENS: TokenInfo[] = [
-  // ── LSTs: Best persistent spreads, multiple pools across DEXes ─────────────
+  // Profitable: RAY showed +1.5 to +7.9 bps cross-dex spreads
+  { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
+  // Near-profitable: wBTC showed micro-spreads in micro-arbitrage
+  { mint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'wBTC', decimals: 8 },
+  // Near-profitable: JUP showed small spreads occasionally
+  { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
+  // LSTs: tightest spreads (-0.8bps), closest to breakeven
   { mint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', symbol: 'mSOL', decimals: 9 },
   { mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', symbol: 'jitoSOL', decimals: 9 },
   { mint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', symbol: 'bSOL', decimals: 9 },
-  { mint: '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm', symbol: 'INF', decimals: 9 },
+];
 
-  // ── High-volume volatile tokens: spreads appear during activity spikes ─────
-  { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK', decimals: 5 },
-  { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', decimals: 6 },
+// ── Raydium pool addresses for WebSocket monitoring ─────────────────────────
+// These are the highest-liquidity Raydium pools for each scan token paired with SOL.
+// Used by PoolMonitor to subscribe via Helius WebSocket for instant price change detection.
+// Both AMM V4 (standard) and CLMM (concentrated) pools included for broader coverage.
+export interface PoolRegistryEntry {
+  poolAddress: string;
+  tokenMint: string;
+  tokenSymbol: string;
+  poolType: 'amm-v4' | 'clmm';
+  label: string;
+}
+
+export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
+  // RAY/SOL — AMM V4 ($2.69M TVL)
+  { poolAddress: 'AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'amm-v4', label: 'RAY/SOL AMM' },
+  // RAY/SOL — CLMM ($1.2M TVL)
+  { poolAddress: '2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'clmm', label: 'RAY/SOL CLMM' },
+  // mSOL/SOL — CLMM ($1.07M TVL)
+  { poolAddress: '8EzbUfvcRT1Q6RL462ekGkgqbxsPmwC5FMLQZhSPMjJ3', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'clmm', label: 'mSOL/SOL CLMM' },
+  // mSOL/SOL — AMM V4 ($93K TVL)
+  { poolAddress: 'EGyhb2uLAsRUbRx9dNFBjMVYnFaASWMvD6RE1aEf2LxL', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'amm-v4', label: 'mSOL/SOL AMM' },
+  // jitoSOL/SOL — CLMM ($1.77M TVL)
+  { poolAddress: '2uoKbPEidR7KAMYtY4x7xdkHXWqYib5k4CutJauSL3Mc', tokenMint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', tokenSymbol: 'jitoSOL', poolType: 'clmm', label: 'jitoSOL/SOL CLMM' },
+  // JUP/SOL — CLMM ($37K TVL)
+  { poolAddress: 'EZVkeboWeXygtq8LMyENHyXdF5wpYrtExRNH9UwB1qYw', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'clmm', label: 'JUP/SOL CLMM' },
+  // JUP/SOL — AMM V4 ($6.3K TVL)
+  { poolAddress: 'EYErUp5muPYEEkeaUCY22JibeZX7E9UuMcJFZkmNAN7c', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'amm-v4', label: 'JUP/SOL AMM' },
+  // wBTC/SOL — AMM V4 ($1.7K TVL)
+  { poolAddress: '9Kf7NXFvkwcRoqNw7GWwUL3fuRCmTrbA2oyGcZCVfoDf', tokenMint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', tokenSymbol: 'wBTC', poolType: 'amm-v4', label: 'wBTC/SOL AMM' },
+  // bSOL/SOL — AMM V4 ($112 TVL — low, but only Raydium pool available)
+  { poolAddress: '7jQLGDGb3fjELEBM6BCvnqjxUGLkeAVUgh3ZimtkDs6Q', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'amm-v4', label: 'bSOL/SOL AMM' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
@@ -87,6 +120,8 @@ export interface RiskProfile {
     liquidation: boolean;
     jitLiquidity: boolean;
     sniping: boolean;
+    longTailArbitrage: boolean;
+    microArbitrage: boolean;
   };
 }
 
@@ -114,17 +149,19 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       liquidation: false,
       jitLiquidity: false,
       sniping: false,
+      longTailArbitrage: false,
+      microArbitrage: false,
     },
   },
   BALANCED: {
     level: 'BALANCED',
-    maxPositionSol: 10.0,
-    maxTradeAmountSol: 10.0,
+    maxPositionSol: 3.0,
+    maxTradeAmountSol: 2.0,
     maxDailyLossSol: 0.8,
     maxDailyLossPercent: 8,
     maxConcurrentTrades: 2,
     stopLossPercent: 2.0,
-    slippageBps: 75,
+    slippageBps: 15,
     minProfitUsd: 0.001,
     maxDrawdownPercent: 8,
     circuitBreakerFailures: 8,
@@ -139,31 +176,35 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       liquidation: false,
       jitLiquidity: false,
       sniping: true,
+      longTailArbitrage: false,
+      microArbitrage: false,
     },
   },
   AGGRESSIVE: {
     level: 'AGGRESSIVE',
-    maxPositionSol: 10.0,
-    maxTradeAmountSol: 10.0,
+    maxPositionSol: 3.0,       // Never risk more than ~30% of 10 SOL wallet
+    maxTradeAmountSol: 2.0,    // Match scan amounts where profits were found (0.5-2 SOL)
     maxDailyLossSol: 1.5,
     maxDailyLossPercent: 15,
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
-    slippageBps: 100,
-    minProfitUsd: 0.001,
+    slippageBps: 10,           // 10 bps max — profits are 1-5 bps, 100 bps slippage would eat them
+    minProfitUsd: 0,           // ANY positive profit triggers execution
     maxDrawdownPercent: 15,
-    circuitBreakerFailures: 10,
-    circuitBreakerCooldownMs: 120000, // 2 min
+    circuitBreakerFailures: 15,
+    circuitBreakerCooldownMs: 60000, // 1 min
     strategies: {
-      cyclicArbitrage: false,
-      multiHopArbitrage: false,
-      crossDexArbitrage: true,
-      sandwich: false,
-      frontrun: false,
-      backrun: true,
-      liquidation: false,
-      jitLiquidity: false,
-      sniping: true,
+      cyclicArbitrage: false,     // DISABLED: duplicates cross-dex with 2x more Jupiter calls; never found profits
+      multiHopArbitrage: false,   // DISABLED: 3-leg paths burn 6 Jupiter calls, never found profits
+      crossDexArbitrage: true,    // PRIMARY: Raydium buy (FREE) → Jupiter sell (1 call)
+      sandwich: false,            // needs Geyser
+      frontrun: false,            // needs Geyser
+      backrun: true,              // poll-based confirmed TX scanning
+      liquidation: false,         // stub only
+      jitLiquidity: false,        // needs Geyser
+      sniping: true,              // new pool detection + execution
+      longTailArbitrage: false,   // DISABLED: consistently -25 to -970 bps, wastes 10 Jupiter calls/cycle
+      microArbitrage: true,       // small rapid trades across many tokens
     },
   },
 };
@@ -224,9 +265,9 @@ export function loadConfig(): BotConfig {
     rpcBackupUrl: process.env.QUICKNODE_RPC_URL || '',
     rpcCommitment: (process.env.RPC_COMMITMENT as any) || 'confirmed',
     privateKey: process.env.PRIVATE_KEY || '',
-    riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'BALANCED',
+    riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'AGGRESSIVE',
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
-    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '10.0'),
+    scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '1.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
     jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
@@ -244,7 +285,7 @@ export function loadConfig(): BotConfig {
     telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
     snipingEnabled: process.env.SNIPING_ENABLED !== 'false',
-    snipeAmountSol: parseFloat(process.env.SNIPE_AMOUNT_SOL || '0.1'),
+    snipeAmountSol: parseFloat(process.env.SNIPE_AMOUNT_SOL || '0.5'),
     solPriceUsd: 0,
   };
 }

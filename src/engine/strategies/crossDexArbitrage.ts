@@ -1,16 +1,17 @@
-// CROSS-DEX ARBITRAGE — Two-Phase Smart Scanner
+// CROSS-DEX ARBITRAGE — Raydium-First Scanner
 //
-// Phase 1 (Quick): Aggregator round-trip check per token (2 API calls each).
-//   Buy via aggregator, sell via aggregator. If round-trip loss > 3 bps, skip.
-//   This eliminates 80%+ of tokens in ~40 seconds.
+// Strategy: Buy on Raydium (FREE API, 300/min) → Sell via Jupiter aggregator.
+// This is TRUE cross-DEX arbitrage: Raydium pool price vs aggregator best-route.
 //
-// Phase 2 (Deep): For surviving tokens, get DEX-specific BUY quotes to find
-//   a cheaper entry point than the aggregator. Sell via aggregator (best exit).
-//   If DEX-specific buy + aggregator sell > input SOL, we have profit.
+// Scan flow (per cycle, ~15-20s):
+//   1. Raydium buy quotes for ALL tokens (FREE, parallel) → get token amounts
+//   2. Jupiter sell quotes for top candidates (1 call each) → get SOL back
+//   3. If Raydium-buy + Jupiter-sell > input SOL + fees → EXECUTE
 //
-// Key insight: The sell side should ALWAYS use the aggregator (no dexes
-// restriction) because the aggregator finds multi-hop routes that give
-// more SOL back than any single-DEX route.
+// Why this works: Raydium pools can lag behind aggregator pricing.
+// When Raydium gives you MORE tokens per SOL than the market average,
+// selling those tokens through Jupiter (which finds the best exit route)
+// captures the spread.
 
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
@@ -30,32 +31,35 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 const ALL_TOKENS = SCAN_TOKENS.filter(t => t.mint !== SOL_MINT && t.mint !== USDC_MINT);
-const QUOTE_LIFETIME_MS = 10_000;
-// Zero safety buffer — atomic Jito bundles eliminate inter-leg risk.
-// Every basis point of buffer is profit we're throwing away.
+const QUOTE_LIFETIME_MS = 12_000;  // increased from 8s — must exceed executor's 10s staleness check
 const EXECUTION_SAFETY_BUFFER_BPS = 0;
 
-// DEX groups for Phase 2 deep scan — only the 3 biggest with real liquidity
-const DEX_GROUPS = [
-  { name: 'raydium', dexes: 'Raydium,Raydium CLMM' },
-  { name: 'orca', dexes: 'Orca,Whirlpool' },
-  { name: 'meteora', dexes: 'Meteora,Meteora DLMM' },
-];
-
-// Single scan amount = half the API calls = twice as fast.
-// 10 SOL matches our capital; smaller amounts have proportionally worse fee ratios.
-const SCAN_AMOUNTS_SOL = [10];
-
-// Phase 1 filter: skip tokens with worse than this round-trip loss
-const PHASE1_ROUND_TRIP_THRESHOLD_BPS = -5;
-
 // Raydium API — free tier, 300 req/min, completely separate from Jupiter quota
-const RAYDIUM_API_URLS = [
-  'https://transaction-v1.raydium.io',
-  'https://api-v3.raydium.io',
-];
-const RAYDIUM_BATCH_SIZE = 4; // parallel Raydium requests per batch
-const RAYDIUM_BATCH_DELAY_MS = 250; // small delay between batches
+const RAYDIUM_BATCH_SIZE = 5;
+const RAYDIUM_BATCH_DELAY_MS = 200;
+
+// Multiple scan amounts — smaller sizes see less price impact and find micro-spreads
+// Profits were found at 0.5 SOL; 5-10 SOL competed with pro bots on deeper liquidity
+// Only scan amounts where profits were actually found (RAY@0.5 and RAY@2)
+// Fewer amounts = faster cycle = fresher quotes when profitable
+const SCAN_AMOUNTS_SOL = [0.5, 1];
+
+// Reduced to 3 — only the best candidates get Jupiter calls, saves ~500ms per scan
+const MAX_JUPITER_CANDIDATES = 3;
+
+// Phase 0 filter: skip tokens worse than this on Raydium round-trip
+const RAYDIUM_PREFILTER_BPS = -15;
+
+// Hot tokens — near-profitable tokens from the last scan
+interface HotToken {
+  token: TokenInfo;
+  lastSpreadBps: number;
+  raydiumBuyAmount: string;
+  lastCheckedMs: number;
+}
+const HOT_TOKEN_THRESHOLD_BPS = -5;
+const MAX_HOT_TOKENS = 5;
+const HOT_TOKEN_RECHECK_MS = 3_000;
 
 interface DexQuote {
   source: string;
@@ -66,21 +70,6 @@ interface DexQuote {
   pricePerToken: number;
   raw: any;
 }
-
-// Hot tokens — near-profitable tokens from the last full scan.
-// These get re-checked in a tight loop between full scans.
-interface HotToken {
-  token: TokenInfo;
-  lastSpreadBps: number;
-  lastCheckedMs: number;
-}
-
-// How close to profitable a token must be to become "hot" (bps)
-const HOT_TOKEN_THRESHOLD_BPS = -3;
-// Max hot tokens to track
-const MAX_HOT_TOKENS = 3;
-// How often to re-check hot tokens (ms) — much faster than full scan
-const HOT_TOKEN_RECHECK_MS = 3_000;
 
 export class CrossDexArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;
@@ -94,7 +83,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       name: 'cross-dex-arbitrage',
       enabled: riskProfile.strategies.crossDexArbitrage,
       scanIntervalMs: 3_000,
-      minProfitUsd: 0.001,
+      minProfitUsd: 0,  // ANY positive net profit triggers execution (Jito atomic = safe)
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
     };
@@ -117,116 +106,166 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     strategyLog.info(
       { tokens: ALL_TOKENS.length, amounts: SCAN_AMOUNTS_SOL, scan: this.scanCount },
-      'Three-phase scan starting (Raydium bulk → Jupiter filter → DEX deep)',
+      'Raydium-first scan starting',
     );
 
     for (const scanSol of SCAN_AMOUNTS_SOL) {
       const scanAmountStr = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL)).toString();
+      const scanAmountLamports = BigInt(scanAmountStr);
+      const inputLamports = parseFloat(scanAmountStr);
 
-      // ── PHASE 0: Raydium bulk scan (FREE, parallel, 300/min) ──
-      // Get Raydium buy+sell prices for ALL tokens without touching Jupiter quota.
-      // This pre-filters tokens before we spend precious Jupiter API calls.
-      const raydiumResults = await this.phase0RaydiumBulkScan(scanSol, scanAmountStr);
+      // ── STEP 1: Raydium buy ALL tokens (FREE, parallel) ──────────────────
+      const raydiumBuys = await this.raydiumBulkBuy(scanAmountStr);
 
-      // Tokens that survive Phase 0 (round-trip > -10bps on Raydium)
-      // PLUS tokens that Raydium couldn't price (might have Orca/Meteora liquidity)
-      const phase0Survivors: TokenInfo[] = [];
-      const raydiumBuyQuotes = new Map<string, DexQuote>();
+      strategyLog.info(
+        { scanSol, total: ALL_TOKENS.length, priced: raydiumBuys.size },
+        `Raydium buy quotes: ${raydiumBuys.size}/${ALL_TOKENS.length} tokens`,
+      );
 
-      for (const token of ALL_TOKENS) {
-        const result = raydiumResults.get(token.mint);
-        if (!result) {
-          // Raydium has no pool — still worth checking on Jupiter
-          phase0Survivors.push(token);
-          continue;
+      // ── STEP 2: Rank by Raydium round-trip to find best candidates ───────
+      // Get Raydium sell quotes too (FREE) to estimate which tokens have spreads
+      // PARALLEL: Raydium is free (300/min) — fetch all sell quotes at once instead of sequential
+      const ranked: { token: TokenInfo; buyQuote: DexQuote; raydiumRoundTripBps: number }[] = [];
+
+      const tokensWithBuys = ALL_TOKENS.filter(t => raydiumBuys.has(t.mint));
+      const sellResults = await Promise.all(
+        tokensWithBuys.map(async (token) => {
+          const buyQuote = raydiumBuys.get(token.mint)!;
+          const sellQuote = await this.getRaydiumSwapQuote(token.mint, SOL_MINT, buyQuote.outputAmount);
+          return { token, buyQuote, sellQuote };
+        }),
+      );
+
+      for (const { token, buyQuote, sellQuote } of sellResults) {
+        let roundTripBps = -100;
+        if (sellQuote) {
+          const outputLamports = parseFloat(sellQuote.outputAmount);
+          roundTripBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
         }
-        if (result.roundTripBps > -10) {
-          phase0Survivors.push(token);
-          if (result.buyQuote) {
-            raydiumBuyQuotes.set(token.mint, result.buyQuote);
-          }
-        }
-        // Report all Raydium results to dashboard
+
         this.onScanResult?.({
           strategy: this.name,
           token: `${token.symbol}@${scanSol} (ray)`,
-          spreadBps: result.roundTripBps,
-          grossProfitSol: result.grossProfitSol,
+          spreadBps: roundTripBps,
+          grossProfitSol: sellQuote ? (parseFloat(sellQuote.outputAmount) - inputLamports) / LAMPORTS_PER_SOL : 0,
           netProfitUsd: 0,
           fees: 0,
           profitable: false,
         });
+
+        if (roundTripBps > RAYDIUM_PREFILTER_BPS) {
+          ranked.push({ token, buyQuote, raydiumRoundTripBps: roundTripBps });
+        }
       }
+
+      // Sort best first
+      ranked.sort((a, b) => b.raydiumRoundTripBps - a.raydiumRoundTripBps);
 
       strategyLog.info(
         {
           scanSol,
-          totalTokens: ALL_TOKENS.length,
-          raydiumPriced: raydiumResults.size,
-          survivors: phase0Survivors.length,
+          candidates: ranked.slice(0, MAX_JUPITER_CANDIDATES)
+            .map(r => `${r.token.symbol}(ray:${r.raydiumRoundTripBps.toFixed(1)}bps)`).join(', '),
         },
-        `Phase 0: Raydium bulk scan done — ${phase0Survivors.length}/${ALL_TOKENS.length} tokens survive`,
+        `Top candidates for Jupiter sell: ${Math.min(ranked.length, MAX_JUPITER_CANDIDATES)}`,
       );
 
-      // ── PHASE 1: Jupiter aggregator round-trip for survivors ──
-      const candidates: { token: TokenInfo; buyQuote: DexQuote; roundTripBps: number }[] = [];
+      // ── STEP 3: Jupiter sell for top candidates (1 call each) ────────────
+      // This is the KEY cross-DEX check: Raydium buy price vs Jupiter sell price
+      const hotCandidates: { token: TokenInfo; spreadBps: number; raydiumBuyAmount: string }[] = [];
 
-      for (const token of phase0Survivors) {
-        try {
-          const result = await this.phase1QuickCheck(token, scanSol, scanAmountStr);
-          if (result) {
-            candidates.push(result);
-          }
-        } catch (err) {
-          strategyLog.debug({ err, token: token.symbol }, 'Phase 1 error');
-        }
-      }
+      for (const candidate of ranked.slice(0, MAX_JUPITER_CANDIDATES)) {
+        const { token, buyQuote } = candidate;
 
-      if (candidates.length === 0) {
-        strategyLog.info(
-          { scanSol, tokensChecked: phase0Survivors.length },
-          'Phase 1: no candidates passed Jupiter round-trip filter',
+        await this.jupiterRateLimit();
+        const jupSell = await this.getJupiterQuote(
+          token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
         );
-        continue;
-      }
 
-      candidates.sort((a, b) => b.roundTripBps - a.roundTripBps);
+        if (!jupSell) {
+          strategyLog.debug({ token: token.symbol }, 'No Jupiter sell quote');
+          continue;
+        }
 
-      // Update hot token list — tokens close to breakeven get fast re-checked
-      this.updateHotTokens(candidates);
+        // Cross-DEX spread: Raydium buy + Jupiter sell
+        const outputLamports = parseFloat(jupSell.outputAmount);
+        const spreadBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
+        const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(jupSell.outputAmount));
 
-      strategyLog.info(
-        {
-          scanSol,
-          candidates: candidates.map(c => `${c.token.symbol}(${c.roundTripBps.toFixed(1)}bps)`).join(', '),
-        },
-        `Phase 1: ${candidates.length} candidates for deep scan`,
-      );
+        this.onScanResult?.({
+          strategy: this.name,
+          token: `${token.symbol}@${scanSol} (ray→jup)`,
+          spreadBps,
+          grossProfitSol: profitAnalysis.grossProfitSol,
+          netProfitUsd: profitAnalysis.netProfitUsd,
+          fees: profitAnalysis.totalFeeSol,
+          profitable: profitAnalysis.netProfitUsd > 0,
+        });
 
-      // ── PHASE 2: DEX-specific buy + aggregator sell ──
-      for (const candidate of candidates) {
-        try {
-          // Pass Raydium buy quote if we have one — avoids an extra API call in Phase 2
-          const raydiumBuy = raydiumBuyQuotes.get(candidate.token.mint);
-          const opp = await this.phase2DeepScan(candidate.token, scanSol, scanAmountStr, candidate.buyQuote, raydiumBuy);
-          if (opp) {
-            opportunities.push(opp);
+        const emoji = profitAnalysis.grossProfitSol > 0 ? '🟢' : '🔴';
+        strategyLog.info(
+          {
+            token: token.symbol, sol: scanSol,
+            spreadBps: spreadBps.toFixed(1),
+            grossSol: profitAnalysis.grossProfitSol.toFixed(6),
+            netUsd: profitAnalysis.netProfitUsd.toFixed(4),
+            fees: profitAnalysis.totalFeeSol.toFixed(6),
+          },
+          `${emoji} ${token.symbol}@${scanSol} ray→jup ${spreadBps.toFixed(1)}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
+        );
+
+        // Track for hot tokens
+        hotCandidates.push({ token, spreadBps, raydiumBuyAmount: buyQuote.outputAmount });
+
+        // PROFITABLE? Use the quotes we already have — NO re-verify (saves ~1s)
+        // The executor's profitability sanity check protects against stale quotes
+        if (profitAnalysis.netProfitUsd > 0) {
+          strategyLog.warn(
+            { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
+            `🚀 PROFITABLE: ${token.symbol} ray→jup — fetching swap TXs NOW`,
+          );
+
+          // Use the existing Raydium buy quote as forward, Jupiter sell as reverse
+          // Skip the re-quote+re-verify cycle (was 2 extra Jupiter calls = ~1s wasted)
+          // We already have: buyQuote (Raydium) and jupSell (Jupiter)
+          // Need Jupiter buy quote for the swap TX (1 call)
+          await this.jupiterRateLimit();
+          const jupBuy = await this.getJupiterQuote(
+            SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
+          );
+          if (!jupBuy?.raw?.routePlan) continue;
+
+          // Fetch swap TXs using jupBuy + existing jupSell (skip re-verify sell)
+          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+
+          const now = Date.now();
+          const opp = this.buildOpportunity(
+            token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, now,
+          );
+
+          // Attach pre-fetched swap TXs so executor skips the re-quote cycle
+          if (swapTxs) {
+            opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+            opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+            opp.metadata.forwardQuote = jupBuy.raw;
+            opp.metadata.reverseQuote = jupSell.raw;
+            opp.metadata.scanTimestamp = now;
+            strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
           }
-        } catch (err) {
-          strategyLog.debug({ err, token: candidate.token.symbol }, 'Phase 2 error');
+
+          opportunities.push(opp);
         }
       }
+
+      // Update hot tokens
+      this.updateHotTokens(hotCandidates);
     }
 
-    opportunities.sort((a, b) => b.expectedProfitUsd - a.expectedProfitUsd);
-
-    // If no opportunities found, do a hot-token fast re-scan.
-    // Hot tokens are near-profitable tokens that might flip profitable
-    // with a small price movement (within -3 bps of breakeven).
+    // ── HOT TOKEN FAST RE-CHECK ──────────────────────────────────────────
     if (opportunities.length === 0 && this.hotTokens.length > 0) {
       strategyLog.info(
         { hotTokens: this.hotTokens.map(h => `${h.token.symbol}(${h.lastSpreadBps.toFixed(1)}bps)`).join(', ') },
-        `No opps from full scan — fast re-checking ${this.hotTokens.length} hot tokens`,
+        `Fast re-checking ${this.hotTokens.length} hot tokens`,
       );
       const hotOpps = await this.scanHotTokens();
       opportunities.push(...hotOpps);
@@ -240,15 +279,139 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return opportunities;
   }
 
-  /**
-   * Fast re-scan of "hot" tokens — near-profitable from the last full scan.
-   * Only 2 Jupiter calls per token (aggregator buy + sell) instead of full 3-phase.
-   */
+  // ────────────────────────────────────────────────────────────────────────────
+  // TARGETED SINGLE-TOKEN SCAN (called by WebSocket pool change handler)
+  // Scans only 1 token instead of all — runs in ~1-2s instead of ~8-10s
+  // ────────────────────────────────────────────────────────────────────────────
+
+  async scanSingleToken(token: TokenInfo): Promise<Opportunity[]> {
+    if (!this.isActive()) return [];
+
+    const opportunities: Opportunity[] = [];
+
+    strategyLog.info(
+      { token: token.symbol, trigger: 'websocket' },
+      `⚡ WebSocket-triggered scan for ${token.symbol}`,
+    );
+
+    for (const scanSol of SCAN_AMOUNTS_SOL) {
+      const scanAmountStr = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL)).toString();
+      const scanAmountLamports = BigInt(scanAmountStr);
+      const inputLamports = parseFloat(scanAmountStr);
+
+      // Raydium buy quote (FREE)
+      const buyQuote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
+      if (!buyQuote) continue;
+
+      // Jupiter sell quote (1 call)
+      await this.jupiterRateLimit();
+      const jupSell = await this.getJupiterQuote(
+        token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
+      );
+      if (!jupSell) continue;
+
+      const outputLamports = parseFloat(jupSell.outputAmount);
+      const spreadBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
+      const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(jupSell.outputAmount));
+
+      this.onScanResult?.({
+        strategy: this.name,
+        token: `${token.symbol}@${scanSol} (ws→ray→jup)`,
+        spreadBps,
+        grossProfitSol: profitAnalysis.grossProfitSol,
+        netProfitUsd: profitAnalysis.netProfitUsd,
+        fees: profitAnalysis.totalFeeSol,
+        profitable: profitAnalysis.netProfitUsd > 0,
+      });
+
+      strategyLog.info(
+        {
+          token: token.symbol, sol: scanSol, spreadBps: spreadBps.toFixed(1),
+          netUsd: profitAnalysis.netProfitUsd.toFixed(4), trigger: 'websocket',
+        },
+        `⚡ WS ${token.symbol}@${scanSol} ray→jup ${spreadBps.toFixed(1)}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
+      );
+
+      if (profitAnalysis.netProfitUsd > 0) {
+        strategyLog.warn(
+          { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
+          `⚡ WS PROFITABLE: ${token.symbol} — fetching swap TXs NOW`,
+        );
+
+        // Jupiter buy quote for swap TX (1 call)
+        await this.jupiterRateLimit();
+        const jupBuy = await this.getJupiterQuote(
+          SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
+        );
+        if (!jupBuy?.raw?.routePlan) continue;
+
+        // Pre-fetch swap TXs
+        const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+        const now = Date.now();
+        const opp = this.buildOpportunity(
+          token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, now,
+        );
+
+        if (swapTxs) {
+          opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+          opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+          opp.metadata.forwardQuote = jupBuy.raw;
+          opp.metadata.reverseQuote = jupSell.raw;
+          opp.metadata.scanTimestamp = now;
+          opp.metadata.wsTriggered = true;
+          strategyLog.info({ token: token.symbol }, '⚡ WS FAST PATH: Swap TXs pre-fetched');
+        }
+
+        opportunities.push(opp);
+      }
+    }
+
+    return opportunities;
+  }
+
+  private buildOpportunity(
+    token: TokenInfo, scanSol: number, scanAmountLamports: bigint,
+    buyQuote: DexQuote, sellQuote: DexQuote,
+    profitAnalysis: ReturnType<typeof this.calculateProfit>,
+    spreadBps: number, now: number,
+  ): Opportunity {
+    return {
+      id: crypto.randomUUID(),
+      strategy: this.name,
+      tokenPath: ['SOL', token.symbol, 'SOL'],
+      mintPath: [SOL_MINT, token.mint, SOL_MINT],
+      inputAmountLamports: scanAmountLamports,
+      expectedOutputLamports: BigInt(sellQuote.outputAmount),
+      expectedProfitSol: profitAnalysis.netProfitSol,
+      expectedProfitUsd: profitAnalysis.netProfitUsd,
+      confidence: this.estimateConfidence(profitAnalysis),
+      quotes: [buyQuote.raw, sellQuote.raw],
+      metadata: {
+        token: token.symbol,
+        scanAmountSol: scanSol,
+        buySource: buyQuote.source,
+        sellSource: 'aggregator',
+        buyAmount: buyQuote.outputAmount,
+        sellAmount: sellQuote.outputAmount,
+        spreadBps,
+        feeBreakdown: profitAnalysis.feeBreakdown,
+      },
+      timestamp: now,
+      expiresAt: now + QUOTE_LIFETIME_MS,
+    };
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // HOT TOKEN FAST RE-CHECK (only 1 Jupiter call per token)
+  // Buy on Raydium (FREE), sell on Jupiter (1 call)
+  // ────────────────────────────────────────────────────────────────────────────
+
   private async scanHotTokens(): Promise<Opportunity[]> {
     const opportunities: Opportunity[] = [];
     const scanSol = SCAN_AMOUNTS_SOL[0];
     const scanAmountStr = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL)).toString();
     const scanAmountLamports = BigInt(scanAmountStr);
+    const inputLamports = parseFloat(scanAmountStr);
 
     for (const hot of this.hotTokens) {
       const now = Date.now();
@@ -256,21 +419,23 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       hot.lastCheckedMs = now;
 
       try {
-        // Quick aggregator round-trip (2 calls)
-        await this.jupiterRateLimit();
-        const buyQuote = await this.getJupiterQuote(SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps);
-        if (!buyQuote) continue;
+        // Fresh Raydium buy (FREE)
+        const rayBuy = await this.getRaydiumSwapQuote(SOL_MINT, hot.token.mint, scanAmountStr);
+        if (!rayBuy) continue;
 
+        // Jupiter sell (1 call)
         await this.jupiterRateLimit();
-        const sellQuote = await this.getJupiterQuote(hot.token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps);
-        if (!sellQuote) continue;
+        const jupSell = await this.getJupiterQuote(
+          hot.token.mint, SOL_MINT, rayBuy.outputAmount, this.config.slippageBps,
+        );
+        if (!jupSell) continue;
 
-        const inputLamports = parseFloat(scanAmountStr);
-        const outputLamports = parseFloat(sellQuote.outputAmount);
+        const outputLamports = parseFloat(jupSell.outputAmount);
         const spreadBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
         hot.lastSpreadBps = spreadBps;
+        hot.raydiumBuyAmount = rayBuy.outputAmount;
 
-        const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(sellQuote.outputAmount));
+        const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(jupSell.outputAmount));
 
         this.onScanResult?.({
           strategy: this.name,
@@ -279,7 +444,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           grossProfitSol: profitAnalysis.grossProfitSol,
           netProfitUsd: profitAnalysis.netProfitUsd,
           fees: profitAnalysis.totalFeeSol,
-          profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
+          profitable: profitAnalysis.netProfitUsd > 0,
         });
 
         strategyLog.info(
@@ -287,41 +452,33 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           `HOT re-check: ${hot.token.symbol} ${spreadBps.toFixed(1)}bps`,
         );
 
-        if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
-          // Verify buy quote is Jupiter-format
-          if (!buyQuote.raw?.inAmount || !buyQuote.raw?.outAmount || !buyQuote.raw?.routePlan) continue;
-
-          const ts = Date.now();
-          opportunities.push({
-            id: crypto.randomUUID(),
-            strategy: this.name,
-            tokenPath: ['SOL', hot.token.symbol, 'SOL'],
-            mintPath: [SOL_MINT, hot.token.mint, SOL_MINT],
-            inputAmountLamports: scanAmountLamports,
-            expectedOutputLamports: BigInt(sellQuote.outputAmount),
-            expectedProfitSol: profitAnalysis.netProfitSol,
-            expectedProfitUsd: profitAnalysis.netProfitUsd,
-            confidence: this.estimateConfidence(profitAnalysis),
-            quotes: [buyQuote.raw, sellQuote.raw],
-            metadata: {
-              token: hot.token.symbol,
-              scanAmountSol: scanSol,
-              buySource: 'aggregator',
-              sellSource: 'aggregator',
-              buyAmount: buyQuote.outputAmount,
-              sellAmount: sellQuote.outputAmount,
-              spreadBps,
-              feeBreakdown: profitAnalysis.feeBreakdown,
-              isHotToken: true,
-            },
-            timestamp: ts,
-            expiresAt: ts + QUOTE_LIFETIME_MS,
-          });
-
+        if (profitAnalysis.netProfitUsd > 0) {
           strategyLog.warn(
             { token: hot.token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
-            `HOT TOKEN OPPORTUNITY: ${hot.token.symbol}`,
+            `🚀 HOT TOKEN PROFITABLE: ${hot.token.symbol} — fetching swap TXs`,
           );
+
+          // Get Jupiter buy quote (1 call) — skip re-verify sell (saves ~1s)
+          // The executor's profitability sanity check protects against stale quotes
+          await this.jupiterRateLimit();
+          const jupBuy = await this.getJupiterQuote(
+            SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
+          );
+          if (!jupBuy?.raw?.routePlan) continue;
+
+          // Pre-fetch swap TXs using jupBuy + existing jupSell (skip re-verify)
+          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+          const opp = this.buildOpportunity(
+            hot.token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, Date.now(),
+          );
+          if (swapTxs) {
+            opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+            opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+            opp.metadata.forwardQuote = jupBuy.raw;
+            opp.metadata.reverseQuote = jupSell.raw;
+            opp.metadata.scanTimestamp = Date.now();
+          }
+          opportunities.push(opp);
         }
       } catch (err) {
         strategyLog.debug({ err, token: hot.token.symbol }, 'Hot token re-check error');
@@ -331,20 +488,16 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return opportunities;
   }
 
-  /**
-   * Update the hot token list from Phase 1 candidates.
-   * Called after Phase 1 with all tokens that were scanned.
-   */
-  private updateHotTokens(candidates: { token: TokenInfo; roundTripBps: number }[]): void {
-    // Tokens close to profitable become hot
+  private updateHotTokens(candidates: { token: TokenInfo; spreadBps: number; raydiumBuyAmount: string }[]): void {
     const nearProfitable = candidates
-      .filter(c => c.roundTripBps > HOT_TOKEN_THRESHOLD_BPS && c.roundTripBps < 0)
-      .sort((a, b) => b.roundTripBps - a.roundTripBps)
+      .filter(c => c.spreadBps > HOT_TOKEN_THRESHOLD_BPS && c.spreadBps < 0)
+      .sort((a, b) => b.spreadBps - a.spreadBps)
       .slice(0, MAX_HOT_TOKENS);
 
     this.hotTokens = nearProfitable.map(c => ({
       token: c.token,
-      lastSpreadBps: c.roundTripBps,
+      lastSpreadBps: c.spreadBps,
+      raydiumBuyAmount: c.raydiumBuyAmount,
       lastCheckedMs: Date.now(),
     }));
 
@@ -357,53 +510,28 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // PHASE 0: Raydium bulk scan (FREE API, parallel, no Jupiter quota used)
+  // RAYDIUM BULK BUY (FREE, parallel — 300/min)
   // ────────────────────────────────────────────────────────────────────────────
 
-  private async phase0RaydiumBulkScan(
-    scanSol: number,
-    scanAmountStr: string,
-  ): Promise<Map<string, { roundTripBps: number; grossProfitSol: number; buyQuote: DexQuote | null }>> {
-    const results = new Map<string, { roundTripBps: number; grossProfitSol: number; buyQuote: DexQuote | null }>();
-    const inputLamports = parseFloat(scanAmountStr);
+  private async raydiumBulkBuy(scanAmountStr: string): Promise<Map<string, DexQuote>> {
+    const results = new Map<string, DexQuote>();
 
-    // Process tokens in parallel batches (Raydium allows 300/min = 5/sec)
     for (let i = 0; i < ALL_TOKENS.length; i += RAYDIUM_BATCH_SIZE) {
       const batch = ALL_TOKENS.slice(i, i + RAYDIUM_BATCH_SIZE);
 
       const promises = batch.map(async (token) => {
         try {
-          // Buy: SOL -> Token via Raydium
-          const buyQuote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
-          if (!buyQuote) return;
-
-          // Sell: Token -> SOL via Raydium
-          const sellQuote = await this.getRaydiumSwapQuote(token.mint, SOL_MINT, buyQuote.outputAmount);
-          if (!sellQuote) {
-            // Have buy but no sell — still useful data
-            results.set(token.mint, { roundTripBps: -100, grossProfitSol: 0, buyQuote });
-            return;
+          const quote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
+          if (quote) {
+            results.set(token.mint, quote);
           }
-
-          const outputLamports = parseFloat(sellQuote.outputAmount);
-          const roundTripBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
-          const grossProfitSol = (outputLamports - inputLamports) / LAMPORTS_PER_SOL;
-
-          results.set(token.mint, { roundTripBps, grossProfitSol, buyQuote });
-
-          strategyLog.debug(
-            { token: token.symbol, roundTripBps: roundTripBps.toFixed(1), scanSol },
-            `Raydium: ${token.symbol} round-trip ${roundTripBps.toFixed(1)}bps`,
-          );
         } catch (err) {
-          // Raydium failures are non-fatal — token falls through to Jupiter
-          strategyLog.debug({ err, token: token.symbol }, 'Raydium scan error');
+          strategyLog.debug({ err, token: token.symbol }, 'Raydium buy error');
         }
       });
 
       await Promise.all(promises);
 
-      // Small delay between batches to stay within rate limits
       if (i + RAYDIUM_BATCH_SIZE < ALL_TOKENS.length) {
         await new Promise(r => setTimeout(r, RAYDIUM_BATCH_DELAY_MS));
       }
@@ -413,212 +541,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // PHASE 1: Quick aggregator round-trip (2 API calls per token)
-  // ────────────────────────────────────────────────────────────────────────────
-
-  private async phase1QuickCheck(
-    token: TokenInfo, scanSol: number, scanAmountStr: string,
-  ): Promise<{ token: TokenInfo; buyQuote: DexQuote; roundTripBps: number } | null> {
-    // Get aggregator buy quote (best route across ALL DEXes)
-    await this.jupiterRateLimit();
-    const buyQuote = await this.getJupiterQuote(SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps);
-
-    if (!buyQuote) {
-      this.onScanResult?.({
-        strategy: this.name,
-        token: `${token.symbol}@${scanSol} (no buy)`,
-        spreadBps: 0, grossProfitSol: 0, netProfitUsd: 0, fees: 0, profitable: false,
-      });
-      return null;
-    }
-
-    // Get aggregator sell quote (best route to convert tokens back to SOL)
-    await this.jupiterRateLimit();
-    const sellQuote = await this.getJupiterQuote(token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps);
-
-    if (!sellQuote) {
-      this.onScanResult?.({
-        strategy: this.name,
-        token: `${token.symbol}@${scanSol} (no sell)`,
-        spreadBps: 0, grossProfitSol: 0, netProfitUsd: 0, fees: 0, profitable: false,
-      });
-      return null;
-    }
-
-    // Round-trip: how many bps do we lose/gain on buy+sell via aggregator?
-    const inputLamports = parseFloat(scanAmountStr);
-    const outputLamports = parseFloat(sellQuote.outputAmount);
-    const roundTripBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
-
-    this.onScanResult?.({
-      strategy: this.name,
-      token: `${token.symbol}@${scanSol} (agg)`,
-      spreadBps: roundTripBps,
-      grossProfitSol: (outputLamports - inputLamports) / LAMPORTS_PER_SOL,
-      netProfitUsd: 0,
-      fees: 0,
-      profitable: false,
-    });
-
-    strategyLog.info(
-      {
-        token: token.symbol, scanSol,
-        roundTripBps: roundTripBps.toFixed(1),
-        buyRoute: buyQuote.raw?.routePlan?.[0]?.swapInfo?.label || 'unknown',
-        sellRoute: sellQuote.raw?.routePlan?.[0]?.swapInfo?.label || 'unknown',
-      },
-      `Phase1: ${token.symbol}@${scanSol} aggregator round-trip ${roundTripBps.toFixed(1)}bps`,
-    );
-
-    // Filter: if round-trip is too bad, no DEX-specific route will help
-    if (roundTripBps < PHASE1_ROUND_TRIP_THRESHOLD_BPS) {
-      return null;
-    }
-
-    return { token, buyQuote, roundTripBps };
-  }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // PHASE 2: DEX-specific buy + aggregator sell
-  // ────────────────────────────────────────────────────────────────────────────
-
-  private async phase2DeepScan(
-    token: TokenInfo, scanSol: number, scanAmountStr: string, aggregatorBuy: DexQuote,
-    preloadedRaydiumBuy?: DexQuote,
-  ): Promise<Opportunity | null> {
-    const scanAmountLamports = BigInt(scanAmountStr);
-
-    // Get DEX-specific buy quotes to find a cheaper entry than the aggregator
-    const buyQuotes: DexQuote[] = [
-      { ...aggregatorBuy, source: 'aggregator' },
-    ];
-
-    // Use pre-loaded Raydium quote from Phase 0 if available (saves an API call)
-    if (preloadedRaydiumBuy) {
-      buyQuotes.push({ ...preloadedRaydiumBuy, source: 'raydium-direct' });
-    }
-
-    for (const dexGroup of DEX_GROUPS) {
-      // Skip Raydium Jupiter-routed if we already have direct Raydium quote
-      if (preloadedRaydiumBuy && dexGroup.name === 'raydium') continue;
-
-      await this.jupiterRateLimit();
-      const quote = await this.getJupiterDexQuote(
-        SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps, dexGroup.dexes,
-      );
-      if (quote) {
-        buyQuotes.push({ ...quote, source: dexGroup.name });
-      }
-    }
-
-    // Sort: most tokens first (cheapest entry)
-    buyQuotes.sort((a, b) => parseFloat(b.outputAmount) - parseFloat(a.outputAmount));
-    const bestBuy = buyQuotes[0];
-
-    // If best buy is the aggregator, no cross-DEX advantage exists
-    const bestBuyTokens = parseFloat(bestBuy.outputAmount);
-    const aggTokens = parseFloat(aggregatorBuy.outputAmount);
-    const buyAdvantageBps = ((bestBuyTokens - aggTokens) / aggTokens) * 10_000;
-
-    strategyLog.info(
-      {
-        token: token.symbol, scanSol,
-        bestBuySource: bestBuy.source,
-        buyAdvantageBps: buyAdvantageBps.toFixed(1),
-        quotes: buyQuotes.map(q => `${q.source}=${q.outputAmount}`).join(', '),
-      },
-      `Phase2: ${token.symbol} best buy: ${bestBuy.source} (${buyAdvantageBps.toFixed(1)}bps over aggregator)`,
-    );
-
-    // Now get aggregator sell for the best buy amount (no dexes restriction = best exit)
-    await this.jupiterRateLimit();
-    const sellQuote = await this.getJupiterQuote(
-      token.mint, SOL_MINT, bestBuy.outputAmount, this.config.slippageBps,
-    );
-
-    if (!sellQuote) {
-      this.onScanResult?.({
-        strategy: this.name,
-        token: `${token.symbol}@${scanSol} (no sell P2)`,
-        spreadBps: 0, grossProfitSol: 0, netProfitUsd: 0, fees: 0, profitable: false,
-      });
-      return null;
-    }
-
-    // Calculate round-trip profit
-    const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(sellQuote.outputAmount));
-    const spreadBps = (Number(BigInt(sellQuote.outputAmount)) - Number(scanAmountLamports))
-      / Number(scanAmountLamports) * 10_000;
-
-    this.onScanResult?.({
-      strategy: this.name,
-      token: `${token.symbol}@${scanSol} (${bestBuy.source}→agg)`,
-      spreadBps,
-      grossProfitSol: profitAnalysis.grossProfitSol,
-      netProfitUsd: profitAnalysis.netProfitUsd,
-      fees: profitAnalysis.totalFeeSol,
-      profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
-    });
-
-    const logLevel = profitAnalysis.grossProfitSol > 0 ? 'warn' : 'info';
-    strategyLog[logLevel](
-      {
-        token: token.symbol, sol: scanSol,
-        buy: bestBuy.source, sell: 'aggregator',
-        spreadBps: spreadBps.toFixed(1),
-        grossSol: profitAnalysis.grossProfitSol.toFixed(6),
-        netUsd: profitAnalysis.netProfitUsd.toFixed(4),
-        fees: profitAnalysis.totalFeeSol.toFixed(6),
-      },
-      `${profitAnalysis.grossProfitSol > 0 ? '🟢' : '🔴'} ${token.symbol}@${scanSol} ${bestBuy.source}→agg ${spreadBps.toFixed(1)}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
-    );
-
-    if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
-      // Verify buy quote is Jupiter-format
-      if (!bestBuy.raw?.inAmount || !bestBuy.raw?.outAmount || !bestBuy.raw?.routePlan) {
-        strategyLog.error(
-          { token: token.symbol, buySource: bestBuy.source },
-          'Best buy quote is not Jupiter-format — skipping',
-        );
-        return null;
-      }
-
-      const now = Date.now();
-      return {
-        id: crypto.randomUUID(),
-        strategy: this.name,
-        tokenPath: ['SOL', token.symbol, 'SOL'],
-        mintPath: [SOL_MINT, token.mint, SOL_MINT],
-        inputAmountLamports: scanAmountLamports,
-        expectedOutputLamports: BigInt(sellQuote.outputAmount),
-        expectedProfitSol: profitAnalysis.netProfitSol,
-        expectedProfitUsd: profitAnalysis.netProfitUsd,
-        confidence: this.estimateConfidence(profitAnalysis),
-        // Leg 1: DEX-specific buy. Leg 2: executor gets fresh aggregator sell.
-        quotes: [bestBuy.raw, sellQuote.raw],
-        metadata: {
-          token: token.symbol,
-          scanAmountSol: scanSol,
-          buySource: bestBuy.source,
-          sellSource: 'aggregator',
-          buyAmount: bestBuy.outputAmount,
-          sellAmount: sellQuote.outputAmount,
-          spreadBps,
-          feeBreakdown: profitAnalysis.feeBreakdown,
-        },
-        timestamp: now,
-        expiresAt: now + QUOTE_LIFETIME_MS,
-      };
-    }
-
-    return null;
-  }
-
-  // ────────────────────────────────────────────────────────────────────────────
   // JUPITER QUOTES
   // ────────────────────────────────────────────────────────────────────────────
 
-  /** Aggregator quote — no dexes restriction, Jupiter finds best route */
   private async getJupiterQuote(
     inputMint: string, outputMint: string, amount: string, slippageBps: number,
   ): Promise<DexQuote | null> {
@@ -653,7 +578,6 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     }
   }
 
-  /** DEX-specific quote — forces routing through specific DEX */
   private async getJupiterDexQuote(
     inputMint: string, outputMint: string, amount: string,
     slippageBps: number, dexes: string,
@@ -692,7 +616,6 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
   // ────────────────────────────────────────────────────────────────────────────
   // RAYDIUM DIRECT API — free, 300/min, separate quota
-  // Used for price discovery only — not for execution
   // ────────────────────────────────────────────────────────────────────────────
 
   private async getRaydiumSwapQuote(
@@ -724,6 +647,65 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       }
     }
     return null;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // SWAP TX PRE-FETCH (for fast execution path)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  private async fetchSwapTxPair(
+    forwardQuote: any, reverseQuote: any,
+  ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
+    try {
+      const walletPubkey = this.connectionManager.getPublicKey().toString();
+      const swapUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+
+      const makeBody = (quote: any) => ({
+        quoteResponse: quote,
+        userPublicKey: walletPubkey,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: false,
+        prioritizationFeeLamports: 5000, // matches PRIORITY_FEE_LAMPORTS
+      });
+
+      // Fetch both swap TXs — sequential to respect rate limit
+      await this.jupiterRateLimit();
+      const fwdResp = await fetch(swapUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeBody(forwardQuote)),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!fwdResp.ok) {
+        strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
+        return null;
+      }
+      const fwdData = await fwdResp.json();
+
+      await this.jupiterRateLimit();
+      const revResp = await fetch(swapUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeBody(reverseQuote)),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!revResp.ok) {
+        strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
+        return null;
+      }
+      const revData = await revResp.json();
+
+      if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
+
+      return {
+        forwardSwapTx: fwdData.swapTransaction,
+        reverseSwapTx: revData.swapTransaction,
+      };
+    } catch (err) {
+      strategyLog.warn({ err }, 'Failed to pre-fetch swap TX pair');
+      return null;
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -770,8 +752,6 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return parseFloat(Math.min(0.90, Math.max(0.05, p.netProfitSol / p.totalFeeSol / 3)).toFixed(4));
   }
 
-  // Enforce 1s between Jupiter calls — aggressive but manageable on free tier.
-  // If we get 429s, the handler backs off 5s automatically per call.
   private async jupiterRateLimit(): Promise<void> {
     const now = Date.now();
     const elapsed = now - this.lastJupiterCallMs;

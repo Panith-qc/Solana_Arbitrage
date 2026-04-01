@@ -4,7 +4,7 @@
 // Every trade: SOL → [route] → SOL
 
 import { engineLog, tradeLogger } from './logger.js';
-import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS } from './config.js';
+import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { BotDatabase } from './database.js';
 import { Executor, ExecutionResult } from './executor.js';
@@ -18,6 +18,10 @@ import { GeyserClient } from './geyserClient.js';
 import { PoolMonitor } from './poolMonitor.js';
 import { decodeSwapInstruction, decodeAllSwaps } from './instructionDecoder.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
+import {
+  logScan, logOpportunity, logCycle, logLoop, logTrade, logApiError,
+  readLogFile, listLogFiles, getDailySummary,
+} from './scanAnalytics.js';
 
 // Strategies
 import { BaseStrategy, Opportunity } from './strategies/baseStrategy.js';
@@ -30,6 +34,8 @@ import { BackrunStrategy } from './strategies/backrunStrategy.js';
 import { LiquidationStrategy } from './strategies/liquidationStrategy.js';
 import { JITLiquidityStrategy } from './strategies/jitLiquidityStrategy.js';
 import { SnipingStrategy } from './sniping/snipingStrategy.js';
+import { LongTailArbitrageStrategy } from './strategies/longTailArbitrage.js';
+import { MicroArbitrageStrategy } from './strategies/microArbitrage.js';
 
 export type BotStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'circuit_breaker' | 'error';
 
@@ -340,10 +346,11 @@ export class BotEngine {
       engineLog.info({ strategy: name }, 'Strategy started');
     }
 
-    // Start pool monitoring
-    if (this.riskProfile.strategies.backrun || this.riskProfile.strategies.crossDexArbitrage) {
-      // Monitor major pool addresses (would be populated from on-chain data)
-      this.poolMonitor.startMonitoring([]);
+    // Start WebSocket pool monitoring with real Raydium pool addresses
+    // PRIMARY: Instant detection when pool reserves change → trigger targeted scan
+    // BACKUP: Existing poll-based scan loop continues running regardless
+    if (this.riskProfile.strategies.crossDexArbitrage || this.riskProfile.strategies.backrun) {
+      this.startWebSocketPoolMonitoring();
     }
 
     this.status = 'running';
@@ -380,6 +387,13 @@ export class BotEngine {
       strategy.stop();
       engineLog.info({ strategy: name }, 'Strategy stopped');
     }
+
+    // Stop WebSocket pool monitoring
+    if (this.wsPoolCallbackId) {
+      this.poolMonitor.removePoolUpdateCallback(this.wsPoolCallbackId);
+      this.wsPoolCallbackId = null;
+    }
+    this.wsConnected = false;
 
     // Stop monitoring
     this.poolMonitor.stopMonitoring();
@@ -432,7 +446,143 @@ export class BotEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // MAIN SCAN LOOP
+  // WEBSOCKET POOL MONITORING (PRIMARY — instant detection)
+  // ═══════════════════════════════════════════════════════════════
+
+  /** Track last WS-triggered scan per token to avoid flooding */
+  private wsLastScanMs: Map<string, number> = new Map();
+  private readonly WS_SCAN_COOLDOWN_MS = 2_000; // Don't re-scan same token within 2s
+  private wsPoolCallbackId: string | null = null;
+  private wsTriggeredScans = 0;
+  private wsConnected = false;
+
+  /**
+   * Start monitoring Raydium pools via Helius WebSocket.
+   * When a pool's reserves change significantly (>1%), triggers an immediate
+   * targeted scan for that specific token instead of waiting for the poll cycle.
+   * Falls back to poll-based scanning if WebSocket fails or disconnects.
+   */
+  private startWebSocketPoolMonitoring(): void {
+    const poolAddresses = RAYDIUM_POOL_REGISTRY.map(p => p.poolAddress);
+
+    // Register pool configs for proper labeling
+    for (const entry of RAYDIUM_POOL_REGISTRY) {
+      this.poolMonitor.addPool({
+        address: entry.poolAddress,
+        tokenA: SOL_MINT,
+        tokenB: entry.tokenMint,
+        label: entry.label,
+      });
+    }
+
+    // Register callback for pool state changes
+    this.wsPoolCallbackId = this.poolMonitor.onPoolUpdate((update) => {
+      this.handlePoolChange(update);
+    });
+
+    // Start monitoring — subscribes to on-chain account changes via WebSocket
+    this.poolMonitor.startMonitoring(poolAddresses)
+      .then(() => {
+        this.wsConnected = true;
+        engineLog.info(
+          { pools: poolAddresses.length, tokens: new Set(RAYDIUM_POOL_REGISTRY.map(p => p.tokenSymbol)).size },
+          'WebSocket pool monitoring ACTIVE — instant price detection enabled',
+        );
+      })
+      .catch((err) => {
+        this.wsConnected = false;
+        engineLog.warn(
+          { err: err?.message || String(err) },
+          'WebSocket pool monitoring FAILED — falling back to poll-only mode',
+        );
+      });
+  }
+
+  /**
+   * Handle a significant pool reserve change detected via WebSocket.
+   * Triggers an immediate targeted scan for the affected token using
+   * the existing cross-dex strategy (Raydium buy → Jupiter sell).
+   */
+  private async handlePoolChange(update: import('./poolMonitor.js').PoolUpdate): Promise<void> {
+    if (this.status !== 'running') return;
+
+    // Find which token this pool belongs to
+    const poolEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === update.poolAddress);
+    if (!poolEntry) return;
+
+    // Cooldown — don't re-scan same token too frequently
+    const lastScan = this.wsLastScanMs.get(poolEntry.tokenMint) || 0;
+    const now = Date.now();
+    if (now - lastScan < this.WS_SCAN_COOLDOWN_MS) return;
+    this.wsLastScanMs.set(poolEntry.tokenMint, now);
+
+    this.wsTriggeredScans++;
+
+    engineLog.info(
+      {
+        pool: poolEntry.label,
+        token: poolEntry.tokenSymbol,
+        slot: update.slot,
+        wsTriggeredScans: this.wsTriggeredScans,
+      },
+      `⚡ WebSocket: ${poolEntry.tokenSymbol} pool changed — triggering targeted scan`,
+    );
+
+    // Find the cross-dex strategy and trigger a targeted scan for just this token
+    const crossDexStrategy = this.strategies.get('cross-dex-arbitrage') as CrossDexArbitrageStrategy | undefined;
+    if (!crossDexStrategy || !crossDexStrategy.isActive()) return;
+
+    // Find the token info from scan tokens
+    const tokenInfo = SCAN_TOKENS.find(t => t.mint === poolEntry.tokenMint);
+    if (!tokenInfo) return;
+
+    try {
+      // Use the strategy's scanSingleToken method for fast targeted scan
+      const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
+
+      if (opportunities.length > 0) {
+        engineLog.warn(
+          {
+            token: poolEntry.tokenSymbol,
+            count: opportunities.length,
+            profitUsd: opportunities[0].expectedProfitUsd.toFixed(4),
+            triggerLatencyMs: Date.now() - update.timestamp,
+          },
+          `⚡ WebSocket PROFITABLE: ${poolEntry.tokenSymbol} — executing immediately`,
+        );
+
+        // Execute immediately
+        const hasBalance = this.stats.currentBalanceSol > 0.01;
+        for (const opp of opportunities) {
+          if (this.status !== 'running') break;
+
+          logOpportunity({
+            strategy: opp.strategy,
+            tokenPath: opp.tokenPath,
+            inputSol: Number(opp.inputAmountLamports) / 1e9,
+            expectedProfitSol: opp.expectedProfitSol,
+            expectedProfitUsd: opp.expectedProfitUsd,
+            confidence: opp.confidence,
+            spreadBps: opp.metadata?.spreadBps,
+            metadata: { ...opp.metadata, wsTriggered: true },
+            executed: hasBalance,
+            executionResult: hasBalance ? undefined : 'skipped',
+          });
+
+          if (hasBalance) {
+            await this.executeOpportunity(opp);
+          }
+        }
+
+        this.stats.opportunitiesFound += opportunities.length;
+      }
+    } catch (err) {
+      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'WebSocket-triggered scan error');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MAIN SCAN LOOP (BACKUP — poll-based, always running)
   // ═══════════════════════════════════════════════════════════════
 
   private async runScanLoop(): Promise<void> {
@@ -476,20 +626,20 @@ export class BotEngine {
       // Recover stuck tokens first
       await this.recoverStuckTokens();
 
-      // Update balance
+      // Update balance in background — don't block scanning with RPC latency
       if (this.connectionManager.hasWallet()) {
-        try {
-          this.stats.currentBalanceSol = await this.connectionManager.getBalance();
-          this.metrics.updateBalance(this.stats.currentBalanceSol);
-        } catch {
-          // Non-fatal
-        }
+        this.connectionManager.getBalance()
+          .then(bal => { this.stats.currentBalanceSol = bal; this.metrics.updateBalance(bal); })
+          .catch(() => { /* Non-fatal */ });
       }
 
       // Run poll-based strategies SEQUENTIALLY to respect API rate limits
       // (1 RPS on Jupiter Basic plan — concurrent scans cause 429 errors)
       const allOpportunities: Opportunity[] = [];
       const EVENT_DRIVEN = new Set(['sandwich', 'frontrun', 'jit-liquidity']);
+      const loopStartMs = Date.now();
+      const strategyCycleTimes: Record<string, number> = {};
+      let strategiesRun = 0;
 
       for (const [name, strategy] of this.strategies) {
         if (!strategy.isActive()) continue;
@@ -498,17 +648,78 @@ export class BotEngine {
 
         this.stats.totalScans++;
         this.metrics.recordScan(name);
+        const stratStartMs = Date.now();
 
         try {
           const opportunities = await strategy.scan();
+          const stratDurationMs = Date.now() - stratStartMs;
+          strategyCycleTimes[name] = stratDurationMs;
+          strategiesRun++;
+
+          // Log cycle timing for this strategy
+          logCycle({
+            strategy: name,
+            durationMs: stratDurationMs,
+            tokensScanned: 0, // filled by strategy-level logging
+            jupiterCalls: 0,
+            raydiumCalls: 0,
+            errors429: 0,
+            errorsOther: 0,
+            profitableFound: opportunities.length,
+          });
+
           if (opportunities.length > 0) {
             engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
             allOpportunities.push(...opportunities);
+
+            // Execute immediately — don't wait for all strategies to finish
+            // because quotes go stale in 8-15 seconds
+            const hasBalance = this.stats.currentBalanceSol > 0.01;
+            for (const opp of opportunities) {
+              if (this.status !== 'running') break;
+
+              // Log the opportunity found
+              logOpportunity({
+                strategy: opp.strategy,
+                tokenPath: opp.tokenPath,
+                inputSol: Number(opp.inputAmountLamports) / 1e9,
+                expectedProfitSol: opp.expectedProfitSol,
+                expectedProfitUsd: opp.expectedProfitUsd,
+                confidence: opp.confidence,
+                spreadBps: opp.metadata?.spreadBps,
+                metadata: opp.metadata,
+                executed: hasBalance,
+                executionResult: hasBalance ? undefined : 'skipped',
+              });
+
+              if (!hasBalance) {
+                engineLog.info(
+                  { path: opp.tokenPath.join('→'), profitUsd: opp.expectedProfitUsd.toFixed(4) },
+                  'Opportunity found (scan-only mode — wallet not funded)',
+                );
+                continue;
+              }
+              await this.executeOpportunity(opp);
+            }
           }
         } catch (err) {
+          const stratDurationMs = Date.now() - stratStartMs;
+          strategyCycleTimes[name] = stratDurationMs;
+          strategiesRun++;
           engineLog.error({ err, strategy: name }, 'Strategy scan failed');
         }
       }
+
+      // Log full loop timing
+      logLoop({
+        totalDurationMs: Date.now() - loopStartMs,
+        strategiesRun,
+        totalOpportunities: allOpportunities.length,
+        totalProfitable: allOpportunities.filter(o => o.expectedProfitUsd > 0).length,
+        solPriceUsd: this.solPriceUsd,
+        balanceSol: this.stats.currentBalanceSol,
+        strategyCycleTimes,
+      });
 
       // Sort all opportunities by expected profit
       allOpportunities.sort((a, b) => b.expectedProfitUsd - a.expectedProfitUsd);
@@ -532,19 +743,9 @@ export class BotEngine {
         this.recentOpportunities = this.recentOpportunities.slice(0, this.MAX_RECENT_OPPORTUNITIES);
       }
 
-      // Execute best opportunities (only if wallet is funded)
-      const hasBalance = this.stats.currentBalanceSol > 0.01;
-      for (const opp of allOpportunities) {
-        if (this.status !== 'running') break;
-        if (!hasBalance) {
-          engineLog.info(
-            { path: opp.tokenPath.join('→'), profitUsd: opp.expectedProfitUsd.toFixed(4) },
-            'Opportunity found (scan-only mode — wallet not funded)',
-          );
-          continue;
-        }
-        await this.executeOpportunity(opp);
-      }
+      // Opportunities are now executed inline during scanning (above)
+      // to prevent quote staleness. The allOpportunities array is still
+      // populated for dashboard tracking.
 
       // Broadcast status
       this.broadcastStatus();
@@ -568,6 +769,12 @@ export class BotEngine {
       log.info({ expiredAgoMs: Date.now() - opp.expiresAt }, 'Opportunity expired, skipping');
       this.stats.tradesSkipped++;
       this.metrics.recordTrade(opp.strategy, 'skipped', 0, 0);
+      logTrade({
+        tradeId: opp.id, strategy: opp.strategy, tokenPath: opp.tokenPath,
+        inputSol: Number(opp.inputAmountLamports) / 1e9,
+        expectedProfitUsd: opp.expectedProfitUsd, result: 'expired',
+        latencyMs: 0, solPriceUsd: this.solPriceUsd,
+      });
       return;
     }
 
@@ -638,13 +845,9 @@ export class BotEngine {
 
     const startTime = Date.now();
 
-    // Capture pre-trade balance for actual profit verification
-    let preTradeBalanceSol = 0;
-    try {
-      preTradeBalanceSol = await this.connectionManager.getBalance();
-    } catch {
-      // Non-fatal, we'll use quote-based profit
-    }
+    // Use cached balance instead of fresh RPC call — saves ~500ms latency
+    // which is critical on free tier where every second counts
+    const preTradeBalanceSol = this.stats.currentBalanceSol;
 
     try {
       // Execute the trade
@@ -652,8 +855,22 @@ export class BotEngine {
 
       if (opp.quotes.length === 2) {
         // Standard 2-leg arbitrage: SOL → Token → SOL
-        if (this.config.jitoEnabled) {
-          // ATOMIC: Both legs in a single Jito bundle — no inter-leg price risk
+        if (this.config.jitoEnabled && opp.metadata?.forwardSwapTx && opp.metadata?.reverseSwapTx) {
+          // FAST PATH: Swap TXs were pre-fetched during scan — skip re-quote
+          log.info('Using FAST execution path (pre-fetched swap TXs)');
+          result = await this.executor.executeFastAtomicArbitrage(
+            opp.metadata.forwardSwapTx,
+            opp.metadata.reverseSwapTx,
+            opp.metadata.forwardQuote,
+            opp.metadata.reverseQuote,
+            opp.mintPath[1],
+            opp.tokenPath[1],
+            this.solPriceUsd,
+            this.config.jitoTipLamports,
+            opp.metadata.scanTimestamp || opp.timestamp,
+          );
+        } else if (this.config.jitoEnabled) {
+          // SLOW PATH: No pre-fetched TXs — full re-quote cycle
           result = await this.executor.executeAtomicArbitrage(
             opp.quotes[0],
             opp.mintPath[1],
@@ -765,6 +982,38 @@ export class BotEngine {
         // Close position
         this.positionTracker.closePosition(opp.id, outputLamports, this.solPriceUsd);
 
+        // Persistent trade log
+        logTrade({
+          tradeId: opp.id,
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          inputSol: Number(tradeAmountLamports) / 1e9,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          result: 'success',
+          verifiedProfitSol,
+          verifiedProfitUsd,
+          signatures: result.signatures,
+          latencyMs,
+          solPriceUsd: this.solPriceUsd,
+        });
+
+        // Update opportunity log with execution result
+        logOpportunity({
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          inputSol: Number(tradeAmountLamports) / 1e9,
+          expectedProfitSol: opp.expectedProfitSol,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          confidence: opp.confidence,
+          spreadBps: opp.metadata?.spreadBps,
+          executed: true,
+          executionResult: 'success',
+          signatures: result.signatures,
+          verifiedProfitSol,
+          verifiedProfitUsd,
+          latencyMs,
+        });
+
         log.info({
           verifiedProfitSol: verifiedProfitSol.toFixed(6),
           verifiedProfitUsd: verifiedProfitUsd.toFixed(2),
@@ -784,6 +1033,20 @@ export class BotEngine {
         this.riskManager.reportTradeResult(false, 0);
         this.metrics.recordTrade(opp.strategy, 'failed', 0, latencyMs);
         this.tradeJournal.failTrade(opp.id, result.error || 'Unknown error', result.signatures);
+
+        // Persistent trade log
+        logTrade({
+          tradeId: opp.id,
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          inputSol: Number(tradeAmountLamports) / 1e9,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          result: 'failed',
+          signatures: result.signatures,
+          error: result.error || undefined,
+          latencyMs,
+          solPriceUsd: this.solPriceUsd,
+        });
 
         log.error({ error: result.error, signatures: result.signatures }, 'Trade failed');
 
@@ -858,9 +1121,10 @@ export class BotEngine {
       maxPositionSol: profile.maxPositionSol,
     };
 
-    // Scan-result callback: pipes every token scan to the dashboard log buffer
+    // Scan-result callback: pipes every token scan to dashboard + persistent JSONL log
     const scanCallback = (entry: { strategy: string; token: string; spreadBps: number; grossProfitSol: number; netProfitUsd: number; fees: number; profitable: boolean }) => {
       this.addScanLog(entry);
+      logScan(entry); // persistent file
     };
 
     if (profile.strategies.cyclicArbitrage) {
@@ -925,6 +1189,22 @@ export class BotEngine {
       );
       this.strategies.set('jit-liquidity', strategy);
       this.mevStrategies.push(strategy as any);
+    }
+
+    if (profile.strategies.longTailArbitrage) {
+      const strategy = new LongTailArbitrageStrategy(
+        this.connectionManager, this.config, this.riskProfile
+      );
+      strategy.onScanResult = scanCallback;
+      this.strategies.set('long-tail-arbitrage', strategy);
+    }
+
+    if (profile.strategies.microArbitrage) {
+      const strategy = new MicroArbitrageStrategy(
+        this.connectionManager, this.config, this.riskProfile
+      );
+      strategy.onScanResult = scanCallback;
+      this.strategies.set('micro-arbitrage', strategy);
     }
 
     // Sniping strategy (uses its own pool detection + execution pipeline)
@@ -1295,6 +1575,15 @@ export class BotEngine {
     }
   }
 
+  getWebSocketStatus(): { connected: boolean; monitoredPools: number; triggeredScans: number } {
+    const poolStats = this.poolMonitor.getStats();
+    return {
+      connected: this.wsConnected && poolStats.monitoredPools > 0,
+      monitoredPools: poolStats.monitoredPools,
+      triggeredScans: this.wsTriggeredScans,
+    };
+  }
+
   getRiskStatus(): Record<string, any> {
     return {
       riskLevel: this.config.riskLevel,
@@ -1312,6 +1601,22 @@ export class BotEngine {
 
   getSnipingStrategy(): SnipingStrategy | null {
     return this.snipingStrategy;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // ANALYTICS LOG ACCESS (for API routes)
+  // ═══════════════════════════════════════════════════════════════
+
+  getAnalyticsSummary(date?: string): ReturnType<typeof getDailySummary> {
+    return getDailySummary(date);
+  }
+
+  getAnalyticsLogFiles(): string[] {
+    return listLogFiles();
+  }
+
+  getAnalyticsLog(prefix: string, date?: string, tail: number = 200): string[] {
+    return readLogFile(prefix, date, tail);
   }
 
   setRiskLevel(level: string): void {
