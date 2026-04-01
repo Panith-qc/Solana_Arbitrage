@@ -182,7 +182,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
             if (this.onImmediateExecute) {
               strategyLog.info({ token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
                 `⚡ IMMEDIATE: Executing ${token.symbol} NOW (not waiting for scan to finish)`);
-              this.onImmediateExecute(opp);
+              await this.onImmediateExecute(opp);
             }
             opportunities.push(opp);
           }

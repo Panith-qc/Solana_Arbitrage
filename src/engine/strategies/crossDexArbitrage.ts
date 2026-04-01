@@ -257,7 +257,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           if (this.onImmediateExecute) {
             strategyLog.info({ token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
               `⚡ IMMEDIATE: Executing ${token.symbol} NOW`);
-            this.onImmediateExecute(opp);
+            await this.onImmediateExecute(opp);
           }
           opportunities.push(opp);
         }
@@ -369,7 +369,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         }
 
         if (this.onImmediateExecute) {
-          this.onImmediateExecute(opp);
+          await this.onImmediateExecute(opp);
         }
         opportunities.push(opp);
       }
@@ -488,7 +488,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             opp.metadata.scanTimestamp = Date.now();
           }
           if (this.onImmediateExecute) {
-            this.onImmediateExecute(opp);
+            await this.onImmediateExecute(opp);
           }
           opportunities.push(opp);
         }

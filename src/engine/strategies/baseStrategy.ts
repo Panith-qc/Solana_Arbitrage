@@ -42,7 +42,7 @@ export interface ScanResultEntry {
 export type ScanResultCallback = (entry: ScanResultEntry) => void;
 
 /** Callback to execute an opportunity immediately when found (don't wait for scan to finish) */
-export type ImmediateExecuteCallback = (opp: Opportunity) => void;
+export type ImmediateExecuteCallback = (opp: Opportunity) => Promise<void>;
 
 export abstract class BaseStrategy {
   name: string;
