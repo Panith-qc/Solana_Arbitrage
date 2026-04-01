@@ -281,6 +281,21 @@ export class BotEngine {
   }
 
   private async completeInitialization(): Promise<void> {
+    // CRITICAL: Validate that config Jito tip matches the constant used in profit calculations.
+    // If these diverge, scanner finds "profitable" trades that the executor pays more fees on.
+    const { JITO_TIP_LAMPORTS } = await import('./config.js');
+    if (this.config.jitoTipLamports !== JITO_TIP_LAMPORTS) {
+      engineLog.warn(
+        {
+          configTip: this.config.jitoTipLamports,
+          constantTip: JITO_TIP_LAMPORTS,
+          action: 'Overriding config to match constant',
+        },
+        'JITO_TIP_LAMPORTS env does not match fee constant — forcing alignment to prevent profit mismatch',
+      );
+      this.config.jitoTipLamports = JITO_TIP_LAMPORTS;
+    }
+
     // Initialize strategies based on risk profile
     this.initializeStrategies();
 

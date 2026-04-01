@@ -15,6 +15,7 @@ import {
   BotConfig,
   SOL_MINT,
   LAMPORTS_PER_SOL,
+  BASE_GAS_LAMPORTS,
   PRIORITY_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
   SINGLE_LEG_FEE_LAMPORTS,
@@ -531,16 +532,17 @@ export class Executor {
           },
           'REAL profit from on-chain balance delta',
         );
-      } catch {
-        // Balance check failed — use quote-based fallback
+      } catch (err: any) {
+        executionLog.warn({ error: err?.message }, 'Post-trade balance check failed, using quote-based fallback');
+        // Sequential execution (no Jito) — only count gas + priority, no Jito tip
         const grossLamports = reverseOutputLamports - inputLamports;
-        const feeLamports = TWO_LEG_FEE_LAMPORTS;
+        const feeLamports = (BASE_GAS_LAMPORTS * 2) + PRIORITY_FEE_LAMPORTS;
         actualProfitSol = (grossLamports - feeLamports) / LAMPORTS_PER_SOL;
       }
     } else {
-      // No pre-trade balance — use quote-based estimate
+      // No pre-trade balance — use quote-based estimate (sequential, no Jito)
       const grossLamports = reverseOutputLamports - inputLamports;
-      const feeLamports = TWO_LEG_FEE_LAMPORTS;
+      const feeLamports = (BASE_GAS_LAMPORTS * 2) + PRIORITY_FEE_LAMPORTS;
       actualProfitSol = (grossLamports - feeLamports) / LAMPORTS_PER_SOL;
     }
 
@@ -603,6 +605,10 @@ export class Executor {
     const wallet = this.connManager.getWallet();
     const inputLamports = parseInt(forwardQuote.inAmount, 10);
 
+    if (isNaN(inputLamports) || inputLamports <= 0) {
+      return this.failResult('ATOMIC: Invalid forward quote inAmount', startMs);
+    }
+
     // ── CAPTURE PRE-TRADE SOL BALANCE ────────────────────────────
     let preTradeBalanceLamports: number | null = null;
     try {
@@ -631,6 +637,11 @@ export class Executor {
 
     const scanTokens = parseInt(forwardQuote.outAmount, 10);
     const freshTokens = parseInt(freshForward.outAmount, 10);
+
+    if (isNaN(scanTokens) || isNaN(freshTokens) || scanTokens <= 0) {
+      return this.failResult('ATOMIC: Invalid quote amounts (NaN or zero)', startMs);
+    }
+
     const driftBps = ((freshTokens - scanTokens) / scanTokens) * 10_000;
 
     if (driftBps < -10) {
@@ -670,6 +681,11 @@ export class Executor {
     // TWO_LEG_FEE_LAMPORTS already includes JITO_TIP_LAMPORTS (10k).
     // Only add the EXTRA tip if config tip > base tip.
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
+
+    if (isNaN(reverseOutputLamports) || reverseOutputLamports <= 0) {
+      return this.failResult('ATOMIC: Invalid reverse quote outAmount (NaN or zero)', startMs);
+    }
+
     const grossProfitLamports = reverseOutputLamports - inputLamports;
     const extraTipLamports = Math.max(0, tipLamports - JITO_TIP_LAMPORTS);
     const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + extraTipLamports;
@@ -788,7 +804,8 @@ export class Executor {
           },
           'ATOMIC: REAL profit from on-chain balance delta',
         );
-      } catch {
+      } catch (err: any) {
+        executionLog.warn({ error: err?.message }, 'ATOMIC: Post-trade balance check failed, using quote-based fallback');
         actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
       }
     } else {
