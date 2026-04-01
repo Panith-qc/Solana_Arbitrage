@@ -49,7 +49,7 @@ async function main() {
   const app = express();
   app.use(express.json());
 
-  // CORS - restrictive in production
+  // CORS - allow localhost and GitHub Codespaces
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',')
     : [`http://localhost:${config.port}`];
@@ -59,6 +59,10 @@ async function main() {
       // Allow requests with no origin (mobile apps, curl, etc)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow GitHub Codespaces domains
+      if (origin.endsWith('.app.github.dev')) return callback(null, true);
+      // Allow any localhost port
+      if (origin.startsWith('http://localhost:')) return callback(null, true);
       callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
