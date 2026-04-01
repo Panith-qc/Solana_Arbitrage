@@ -18,6 +18,10 @@ import { GeyserClient } from './geyserClient.js';
 import { PoolMonitor } from './poolMonitor.js';
 import { decodeSwapInstruction, decodeAllSwaps } from './instructionDecoder.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
+import {
+  logScan, logOpportunity, logCycle, logLoop, logTrade, logApiError,
+  readLogFile, listLogFiles, getDailySummary,
+} from './scanAnalytics.js';
 
 // Strategies
 import { BaseStrategy, Opportunity } from './strategies/baseStrategy.js';
@@ -492,6 +496,9 @@ export class BotEngine {
       // (1 RPS on Jupiter Basic plan — concurrent scans cause 429 errors)
       const allOpportunities: Opportunity[] = [];
       const EVENT_DRIVEN = new Set(['sandwich', 'frontrun', 'jit-liquidity']);
+      const loopStartMs = Date.now();
+      const strategyCycleTimes: Record<string, number> = {};
+      let strategiesRun = 0;
 
       for (const [name, strategy] of this.strategies) {
         if (!strategy.isActive()) continue;
@@ -500,9 +507,26 @@ export class BotEngine {
 
         this.stats.totalScans++;
         this.metrics.recordScan(name);
+        const stratStartMs = Date.now();
 
         try {
           const opportunities = await strategy.scan();
+          const stratDurationMs = Date.now() - stratStartMs;
+          strategyCycleTimes[name] = stratDurationMs;
+          strategiesRun++;
+
+          // Log cycle timing for this strategy
+          logCycle({
+            strategy: name,
+            durationMs: stratDurationMs,
+            tokensScanned: 0, // filled by strategy-level logging
+            jupiterCalls: 0,
+            raydiumCalls: 0,
+            errors429: 0,
+            errorsOther: 0,
+            profitableFound: opportunities.length,
+          });
+
           if (opportunities.length > 0) {
             engineLog.info({ strategy: name, count: opportunities.length }, 'Opportunities found');
             allOpportunities.push(...opportunities);
@@ -512,6 +536,21 @@ export class BotEngine {
             const hasBalance = this.stats.currentBalanceSol > 0.01;
             for (const opp of opportunities) {
               if (this.status !== 'running') break;
+
+              // Log the opportunity found
+              logOpportunity({
+                strategy: opp.strategy,
+                tokenPath: opp.tokenPath,
+                inputSol: Number(opp.inputAmountLamports) / 1e9,
+                expectedProfitSol: opp.expectedProfitSol,
+                expectedProfitUsd: opp.expectedProfitUsd,
+                confidence: opp.confidence,
+                spreadBps: opp.metadata?.spreadBps,
+                metadata: opp.metadata,
+                executed: hasBalance,
+                executionResult: hasBalance ? undefined : 'skipped',
+              });
+
               if (!hasBalance) {
                 engineLog.info(
                   { path: opp.tokenPath.join('→'), profitUsd: opp.expectedProfitUsd.toFixed(4) },
@@ -523,9 +562,23 @@ export class BotEngine {
             }
           }
         } catch (err) {
+          const stratDurationMs = Date.now() - stratStartMs;
+          strategyCycleTimes[name] = stratDurationMs;
+          strategiesRun++;
           engineLog.error({ err, strategy: name }, 'Strategy scan failed');
         }
       }
+
+      // Log full loop timing
+      logLoop({
+        totalDurationMs: Date.now() - loopStartMs,
+        strategiesRun,
+        totalOpportunities: allOpportunities.length,
+        totalProfitable: allOpportunities.filter(o => o.expectedProfitUsd > 0).length,
+        solPriceUsd: this.solPriceUsd,
+        balanceSol: this.stats.currentBalanceSol,
+        strategyCycleTimes,
+      });
 
       // Sort all opportunities by expected profit
       allOpportunities.sort((a, b) => b.expectedProfitUsd - a.expectedProfitUsd);
@@ -575,6 +628,12 @@ export class BotEngine {
       log.info({ expiredAgoMs: Date.now() - opp.expiresAt }, 'Opportunity expired, skipping');
       this.stats.tradesSkipped++;
       this.metrics.recordTrade(opp.strategy, 'skipped', 0, 0);
+      logTrade({
+        tradeId: opp.id, strategy: opp.strategy, tokenPath: opp.tokenPath,
+        inputSol: Number(opp.inputAmountLamports) / 1e9,
+        expectedProfitUsd: opp.expectedProfitUsd, result: 'expired',
+        latencyMs: 0, solPriceUsd: this.solPriceUsd,
+      });
       return;
     }
 
@@ -772,6 +831,38 @@ export class BotEngine {
         // Close position
         this.positionTracker.closePosition(opp.id, outputLamports, this.solPriceUsd);
 
+        // Persistent trade log
+        logTrade({
+          tradeId: opp.id,
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          inputSol: Number(tradeAmountLamports) / 1e9,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          result: 'success',
+          verifiedProfitSol,
+          verifiedProfitUsd,
+          signatures: result.signatures,
+          latencyMs,
+          solPriceUsd: this.solPriceUsd,
+        });
+
+        // Update opportunity log with execution result
+        logOpportunity({
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          inputSol: Number(tradeAmountLamports) / 1e9,
+          expectedProfitSol: opp.expectedProfitSol,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          confidence: opp.confidence,
+          spreadBps: opp.metadata?.spreadBps,
+          executed: true,
+          executionResult: 'success',
+          signatures: result.signatures,
+          verifiedProfitSol,
+          verifiedProfitUsd,
+          latencyMs,
+        });
+
         log.info({
           verifiedProfitSol: verifiedProfitSol.toFixed(6),
           verifiedProfitUsd: verifiedProfitUsd.toFixed(2),
@@ -791,6 +882,20 @@ export class BotEngine {
         this.riskManager.reportTradeResult(false, 0);
         this.metrics.recordTrade(opp.strategy, 'failed', 0, latencyMs);
         this.tradeJournal.failTrade(opp.id, result.error || 'Unknown error', result.signatures);
+
+        // Persistent trade log
+        logTrade({
+          tradeId: opp.id,
+          strategy: opp.strategy,
+          tokenPath: opp.tokenPath,
+          inputSol: Number(tradeAmountLamports) / 1e9,
+          expectedProfitUsd: opp.expectedProfitUsd,
+          result: 'failed',
+          signatures: result.signatures,
+          error: result.error || undefined,
+          latencyMs,
+          solPriceUsd: this.solPriceUsd,
+        });
 
         log.error({ error: result.error, signatures: result.signatures }, 'Trade failed');
 
@@ -865,9 +970,10 @@ export class BotEngine {
       maxPositionSol: profile.maxPositionSol,
     };
 
-    // Scan-result callback: pipes every token scan to the dashboard log buffer
+    // Scan-result callback: pipes every token scan to dashboard + persistent JSONL log
     const scanCallback = (entry: { strategy: string; token: string; spreadBps: number; grossProfitSol: number; netProfitUsd: number; fees: number; profitable: boolean }) => {
       this.addScanLog(entry);
+      logScan(entry); // persistent file
     };
 
     if (profile.strategies.cyclicArbitrage) {
@@ -1335,6 +1441,22 @@ export class BotEngine {
 
   getSnipingStrategy(): SnipingStrategy | null {
     return this.snipingStrategy;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // ANALYTICS LOG ACCESS (for API routes)
+  // ═══════════════════════════════════════════════════════════════
+
+  getAnalyticsSummary(date?: string): ReturnType<typeof getDailySummary> {
+    return getDailySummary(date);
+  }
+
+  getAnalyticsLogFiles(): string[] {
+    return listLogFiles();
+  }
+
+  getAnalyticsLog(prefix: string, date?: string, tail: number = 200): string[] {
+    return readLogFile(prefix, date, tail);
   }
 
   setRiskLevel(level: string): void {
