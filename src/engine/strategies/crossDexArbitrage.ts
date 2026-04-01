@@ -31,7 +31,7 @@ import {
 import { ConnectionManager } from '../connectionManager.js';
 
 const ALL_TOKENS = SCAN_TOKENS.filter(t => t.mint !== SOL_MINT && t.mint !== USDC_MINT);
-const QUOTE_LIFETIME_MS = 12_000;  // increased from 8s — must exceed executor's 10s staleness check
+const QUOTE_LIFETIME_MS = 5_000;   // with immediate await execution, quotes are used within 0-2s
 const EXECUTION_SAFETY_BUFFER_BPS = 0;
 
 // Raydium API — free tier, 300 req/min, completely separate from Jupiter quota

@@ -869,13 +869,13 @@ export class Executor {
 
     // ── STALENESS CHECK ─────────────────────────────────────────
     // Increased from 6s to 10s — on free tier, scan+fetch takes 4-6s,
-    // leaving no time at 6s. The profitability sanity check below
-    // protects against stale quotes that moved against us.
+    // With immediate execution (await), quotes are typically 0-2s old.
+    // If somehow older than 3s, the price has likely moved — re-quote.
     const ageMs = Date.now() - scanTimestamp;
-    if (ageMs > 10000) {
+    if (ageMs > 3000) {
       executionLog.warn(
         { tokenSymbol, ageMs },
-        'FAST: Scan quotes too old (>10s), falling back to full re-quote',
+        'FAST: Scan quotes too old (>3s), falling back to full re-quote',
       );
       return this.executeAtomicArbitrage(forwardQuote, tokenMint, tokenSymbol, solPrice, tipLamports);
     }
