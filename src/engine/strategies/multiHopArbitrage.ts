@@ -48,7 +48,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'multi-hop-arbitrage',
       enabled: riskProfile.strategies.multiHopArbitrage,
-      scanIntervalMs: 15_000,
+      scanIntervalMs: 45_000,  // Every 45s — lowest priority scanner
       minProfitUsd: riskProfile.minProfitUsd,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,

@@ -80,7 +80,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'cross-dex-arbitrage',
       enabled: riskProfile.strategies.crossDexArbitrage,
-      scanIntervalMs: 12_000,
+      scanIntervalMs: 30_000,  // Every 30s — saves rate budget for sniping
       minProfitUsd: 0,  // ANY positive net profit triggers execution (Jito atomic = safe)
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
