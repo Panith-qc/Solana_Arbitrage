@@ -19,8 +19,8 @@ import {
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 const QUOTE_LIFETIME_MS = 12_000;    // 3-leg paths stale faster
-const EXECUTION_SAFETY_BUFFER_BPS = 10;  // tighter buffer to catch more opps
-const MAX_PAIRS_TO_CHECK = 6;        // cap to stay within API rate limits (1 RPS)
+const EXECUTION_SAFETY_BUFFER_BPS = 0;   // Jito atomic bundles = no inter-leg risk
+const MAX_PAIRS_TO_CHECK = 4;        // 4 pairs × 3 legs = 12 Jupiter calls per cycle
 
 // Stablecoin mints to skip pairing together (no arb between two stables)
 const STABLECOIN_MINTS = new Set([

@@ -25,7 +25,7 @@ const CYCLIC_SYMBOLS = new Set(['JUP', 'RAY', 'ORCA', 'BONK', 'WIF', 'MEW', 'BOM
 const CYCLIC_TOKENS = SCAN_TOKENS.filter(t => CYCLIC_SYMBOLS.has(t.symbol));
 
 const QUOTE_LIFETIME_MS = 15_000;
-const EXECUTION_SAFETY_BUFFER_BPS = 5;
+const EXECUTION_SAFETY_BUFFER_BPS = 0; // Jito atomic bundles = no inter-leg risk
 
 export class CyclicArbitrageStrategy extends BaseStrategy {
   private connectionManager: ConnectionManager;

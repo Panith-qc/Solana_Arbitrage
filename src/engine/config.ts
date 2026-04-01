@@ -161,15 +161,15 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     circuitBreakerFailures: 15,
     circuitBreakerCooldownMs: 60000, // 1 min
     strategies: {
-      cyclicArbitrage: false,
-      multiHopArbitrage: false,
-      crossDexArbitrage: true,
-      sandwich: false,
-      frontrun: false,
-      backrun: true,
-      liquidation: false,
-      jitLiquidity: false,
-      sniping: true,
+      cyclicArbitrage: true,      // SOL→Token→SOL via Jupiter aggregator
+      multiHopArbitrage: true,    // SOL→TokenA→TokenB→SOL triangular arb
+      crossDexArbitrage: true,    // Raydium buy → Jupiter sell
+      sandwich: false,            // needs Geyser
+      frontrun: false,            // needs Geyser
+      backrun: true,              // poll-based confirmed TX scanning
+      liquidation: false,         // stub only
+      jitLiquidity: false,        // needs Geyser
+      sniping: true,              // new pool detection + execution
     },
   },
 };
