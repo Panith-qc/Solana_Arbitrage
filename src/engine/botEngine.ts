@@ -4,7 +4,7 @@
 // Every trade: SOL → [route] → SOL
 
 import { engineLog, tradeLogger } from './logger.js';
-import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS } from './config.js';
+import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { BotDatabase } from './database.js';
 import { Executor, ExecutionResult } from './executor.js';
@@ -346,10 +346,11 @@ export class BotEngine {
       engineLog.info({ strategy: name }, 'Strategy started');
     }
 
-    // Start pool monitoring
-    if (this.riskProfile.strategies.backrun || this.riskProfile.strategies.crossDexArbitrage) {
-      // Monitor major pool addresses (would be populated from on-chain data)
-      this.poolMonitor.startMonitoring([]);
+    // Start WebSocket pool monitoring with real Raydium pool addresses
+    // PRIMARY: Instant detection when pool reserves change → trigger targeted scan
+    // BACKUP: Existing poll-based scan loop continues running regardless
+    if (this.riskProfile.strategies.crossDexArbitrage || this.riskProfile.strategies.backrun) {
+      this.startWebSocketPoolMonitoring();
     }
 
     this.status = 'running';
@@ -386,6 +387,13 @@ export class BotEngine {
       strategy.stop();
       engineLog.info({ strategy: name }, 'Strategy stopped');
     }
+
+    // Stop WebSocket pool monitoring
+    if (this.wsPoolCallbackId) {
+      this.poolMonitor.removePoolUpdateCallback(this.wsPoolCallbackId);
+      this.wsPoolCallbackId = null;
+    }
+    this.wsConnected = false;
 
     // Stop monitoring
     this.poolMonitor.stopMonitoring();
@@ -438,7 +446,143 @@ export class BotEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // MAIN SCAN LOOP
+  // WEBSOCKET POOL MONITORING (PRIMARY — instant detection)
+  // ═══════════════════════════════════════════════════════════════
+
+  /** Track last WS-triggered scan per token to avoid flooding */
+  private wsLastScanMs: Map<string, number> = new Map();
+  private readonly WS_SCAN_COOLDOWN_MS = 2_000; // Don't re-scan same token within 2s
+  private wsPoolCallbackId: string | null = null;
+  private wsTriggeredScans = 0;
+  private wsConnected = false;
+
+  /**
+   * Start monitoring Raydium pools via Helius WebSocket.
+   * When a pool's reserves change significantly (>1%), triggers an immediate
+   * targeted scan for that specific token instead of waiting for the poll cycle.
+   * Falls back to poll-based scanning if WebSocket fails or disconnects.
+   */
+  private startWebSocketPoolMonitoring(): void {
+    const poolAddresses = RAYDIUM_POOL_REGISTRY.map(p => p.poolAddress);
+
+    // Register pool configs for proper labeling
+    for (const entry of RAYDIUM_POOL_REGISTRY) {
+      this.poolMonitor.addPool({
+        address: entry.poolAddress,
+        tokenA: SOL_MINT,
+        tokenB: entry.tokenMint,
+        label: entry.label,
+      });
+    }
+
+    // Register callback for pool state changes
+    this.wsPoolCallbackId = this.poolMonitor.onPoolUpdate((update) => {
+      this.handlePoolChange(update);
+    });
+
+    // Start monitoring — subscribes to on-chain account changes via WebSocket
+    this.poolMonitor.startMonitoring(poolAddresses)
+      .then(() => {
+        this.wsConnected = true;
+        engineLog.info(
+          { pools: poolAddresses.length, tokens: new Set(RAYDIUM_POOL_REGISTRY.map(p => p.tokenSymbol)).size },
+          'WebSocket pool monitoring ACTIVE — instant price detection enabled',
+        );
+      })
+      .catch((err) => {
+        this.wsConnected = false;
+        engineLog.warn(
+          { err: err?.message || String(err) },
+          'WebSocket pool monitoring FAILED — falling back to poll-only mode',
+        );
+      });
+  }
+
+  /**
+   * Handle a significant pool reserve change detected via WebSocket.
+   * Triggers an immediate targeted scan for the affected token using
+   * the existing cross-dex strategy (Raydium buy → Jupiter sell).
+   */
+  private async handlePoolChange(update: import('./poolMonitor.js').PoolUpdate): Promise<void> {
+    if (this.status !== 'running') return;
+
+    // Find which token this pool belongs to
+    const poolEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === update.poolAddress);
+    if (!poolEntry) return;
+
+    // Cooldown — don't re-scan same token too frequently
+    const lastScan = this.wsLastScanMs.get(poolEntry.tokenMint) || 0;
+    const now = Date.now();
+    if (now - lastScan < this.WS_SCAN_COOLDOWN_MS) return;
+    this.wsLastScanMs.set(poolEntry.tokenMint, now);
+
+    this.wsTriggeredScans++;
+
+    engineLog.info(
+      {
+        pool: poolEntry.label,
+        token: poolEntry.tokenSymbol,
+        slot: update.slot,
+        wsTriggeredScans: this.wsTriggeredScans,
+      },
+      `⚡ WebSocket: ${poolEntry.tokenSymbol} pool changed — triggering targeted scan`,
+    );
+
+    // Find the cross-dex strategy and trigger a targeted scan for just this token
+    const crossDexStrategy = this.strategies.get('cross-dex-arbitrage') as CrossDexArbitrageStrategy | undefined;
+    if (!crossDexStrategy || !crossDexStrategy.isActive()) return;
+
+    // Find the token info from scan tokens
+    const tokenInfo = SCAN_TOKENS.find(t => t.mint === poolEntry.tokenMint);
+    if (!tokenInfo) return;
+
+    try {
+      // Use the strategy's scanSingleToken method for fast targeted scan
+      const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
+
+      if (opportunities.length > 0) {
+        engineLog.warn(
+          {
+            token: poolEntry.tokenSymbol,
+            count: opportunities.length,
+            profitUsd: opportunities[0].expectedProfitUsd.toFixed(4),
+            triggerLatencyMs: Date.now() - update.timestamp,
+          },
+          `⚡ WebSocket PROFITABLE: ${poolEntry.tokenSymbol} — executing immediately`,
+        );
+
+        // Execute immediately
+        const hasBalance = this.stats.currentBalanceSol > 0.01;
+        for (const opp of opportunities) {
+          if (this.status !== 'running') break;
+
+          logOpportunity({
+            strategy: opp.strategy,
+            tokenPath: opp.tokenPath,
+            inputSol: Number(opp.inputAmountLamports) / 1e9,
+            expectedProfitSol: opp.expectedProfitSol,
+            expectedProfitUsd: opp.expectedProfitUsd,
+            confidence: opp.confidence,
+            spreadBps: opp.metadata?.spreadBps,
+            metadata: { ...opp.metadata, wsTriggered: true },
+            executed: hasBalance,
+            executionResult: hasBalance ? undefined : 'skipped',
+          });
+
+          if (hasBalance) {
+            await this.executeOpportunity(opp);
+          }
+        }
+
+        this.stats.opportunitiesFound += opportunities.length;
+      }
+    } catch (err) {
+      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'WebSocket-triggered scan error');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MAIN SCAN LOOP (BACKUP — poll-based, always running)
   // ═══════════════════════════════════════════════════════════════
 
   private async runScanLoop(): Promise<void> {
@@ -1429,6 +1573,15 @@ export class BotEngine {
     if (this.scanLogs.length > this.MAX_SCAN_LOGS) {
       this.scanLogs = this.scanLogs.slice(0, this.MAX_SCAN_LOGS);
     }
+  }
+
+  getWebSocketStatus(): { connected: boolean; monitoredPools: number; triggeredScans: number } {
+    const poolStats = this.poolMonitor.getStats();
+    return {
+      connected: this.wsConnected && poolStats.monitoredPools > 0,
+      monitoredPools: poolStats.monitoredPools,
+      triggeredScans: this.wsTriggeredScans,
+    };
   }
 
   getRiskStatus(): Record<string, any> {

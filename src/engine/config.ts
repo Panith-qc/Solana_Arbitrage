@@ -40,6 +40,39 @@ export const SCAN_TOKENS: TokenInfo[] = [
   { mint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', symbol: 'bSOL', decimals: 9 },
 ];
 
+// ── Raydium pool addresses for WebSocket monitoring ─────────────────────────
+// These are the highest-liquidity Raydium pools for each scan token paired with SOL.
+// Used by PoolMonitor to subscribe via Helius WebSocket for instant price change detection.
+// Both AMM V4 (standard) and CLMM (concentrated) pools included for broader coverage.
+export interface PoolRegistryEntry {
+  poolAddress: string;
+  tokenMint: string;
+  tokenSymbol: string;
+  poolType: 'amm-v4' | 'clmm';
+  label: string;
+}
+
+export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
+  // RAY/SOL — AMM V4 ($2.69M TVL)
+  { poolAddress: 'AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'amm-v4', label: 'RAY/SOL AMM' },
+  // RAY/SOL — CLMM ($1.2M TVL)
+  { poolAddress: '2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'clmm', label: 'RAY/SOL CLMM' },
+  // mSOL/SOL — CLMM ($1.07M TVL)
+  { poolAddress: '8EzbUfvcRT1Q6RL462ekGkgqbxsPmwC5FMLQZhSPMjJ3', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'clmm', label: 'mSOL/SOL CLMM' },
+  // mSOL/SOL — AMM V4 ($93K TVL)
+  { poolAddress: 'EGyhb2uLAsRUbRx9dNFBjMVYnFaASWMvD6RE1aEf2LxL', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'amm-v4', label: 'mSOL/SOL AMM' },
+  // jitoSOL/SOL — CLMM ($1.77M TVL)
+  { poolAddress: '2uoKbPEidR7KAMYtY4x7xdkHXWqYib5k4CutJauSL3Mc', tokenMint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', tokenSymbol: 'jitoSOL', poolType: 'clmm', label: 'jitoSOL/SOL CLMM' },
+  // JUP/SOL — CLMM ($37K TVL)
+  { poolAddress: 'EZVkeboWeXygtq8LMyENHyXdF5wpYrtExRNH9UwB1qYw', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'clmm', label: 'JUP/SOL CLMM' },
+  // JUP/SOL — AMM V4 ($6.3K TVL)
+  { poolAddress: 'EYErUp5muPYEEkeaUCY22JibeZX7E9UuMcJFZkmNAN7c', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'amm-v4', label: 'JUP/SOL AMM' },
+  // wBTC/SOL — AMM V4 ($1.7K TVL)
+  { poolAddress: '9Kf7NXFvkwcRoqNw7GWwUL3fuRCmTrbA2oyGcZCVfoDf', tokenMint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', tokenSymbol: 'wBTC', poolType: 'amm-v4', label: 'wBTC/SOL AMM' },
+  // bSOL/SOL — AMM V4 ($112 TVL — low, but only Raydium pool available)
+  { poolAddress: '7jQLGDGb3fjELEBM6BCvnqjxUGLkeAVUgh3ZimtkDs6Q', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'amm-v4', label: 'bSOL/SOL AMM' },
+];
+
 // Jito Block Engine endpoints (ordered by geography)
 export const JITO_BLOCK_ENGINES = [
   'https://mainnet.block-engine.jito.wtf',

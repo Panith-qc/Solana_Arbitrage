@@ -279,6 +279,96 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     return opportunities;
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // TARGETED SINGLE-TOKEN SCAN (called by WebSocket pool change handler)
+  // Scans only 1 token instead of all — runs in ~1-2s instead of ~8-10s
+  // ────────────────────────────────────────────────────────────────────────────
+
+  async scanSingleToken(token: TokenInfo): Promise<Opportunity[]> {
+    if (!this.isActive()) return [];
+
+    const opportunities: Opportunity[] = [];
+
+    strategyLog.info(
+      { token: token.symbol, trigger: 'websocket' },
+      `⚡ WebSocket-triggered scan for ${token.symbol}`,
+    );
+
+    for (const scanSol of SCAN_AMOUNTS_SOL) {
+      const scanAmountStr = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL)).toString();
+      const scanAmountLamports = BigInt(scanAmountStr);
+      const inputLamports = parseFloat(scanAmountStr);
+
+      // Raydium buy quote (FREE)
+      const buyQuote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
+      if (!buyQuote) continue;
+
+      // Jupiter sell quote (1 call)
+      await this.jupiterRateLimit();
+      const jupSell = await this.getJupiterQuote(
+        token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
+      );
+      if (!jupSell) continue;
+
+      const outputLamports = parseFloat(jupSell.outputAmount);
+      const spreadBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
+      const profitAnalysis = this.calculateProfit(scanAmountLamports, BigInt(jupSell.outputAmount));
+
+      this.onScanResult?.({
+        strategy: this.name,
+        token: `${token.symbol}@${scanSol} (ws→ray→jup)`,
+        spreadBps,
+        grossProfitSol: profitAnalysis.grossProfitSol,
+        netProfitUsd: profitAnalysis.netProfitUsd,
+        fees: profitAnalysis.totalFeeSol,
+        profitable: profitAnalysis.netProfitUsd > 0,
+      });
+
+      strategyLog.info(
+        {
+          token: token.symbol, sol: scanSol, spreadBps: spreadBps.toFixed(1),
+          netUsd: profitAnalysis.netProfitUsd.toFixed(4), trigger: 'websocket',
+        },
+        `⚡ WS ${token.symbol}@${scanSol} ray→jup ${spreadBps.toFixed(1)}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
+      );
+
+      if (profitAnalysis.netProfitUsd > 0) {
+        strategyLog.warn(
+          { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
+          `⚡ WS PROFITABLE: ${token.symbol} — fetching swap TXs NOW`,
+        );
+
+        // Jupiter buy quote for swap TX (1 call)
+        await this.jupiterRateLimit();
+        const jupBuy = await this.getJupiterQuote(
+          SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
+        );
+        if (!jupBuy?.raw?.routePlan) continue;
+
+        // Pre-fetch swap TXs
+        const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+        const now = Date.now();
+        const opp = this.buildOpportunity(
+          token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, now,
+        );
+
+        if (swapTxs) {
+          opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
+          opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+          opp.metadata.forwardQuote = jupBuy.raw;
+          opp.metadata.reverseQuote = jupSell.raw;
+          opp.metadata.scanTimestamp = now;
+          opp.metadata.wsTriggered = true;
+          strategyLog.info({ token: token.symbol }, '⚡ WS FAST PATH: Swap TXs pre-fetched');
+        }
+
+        opportunities.push(opp);
+      }
+    }
+
+    return opportunities;
+  }
+
   private buildOpportunity(
     token: TokenInfo, scanSol: number, scanAmountLamports: bigint,
     buyQuote: DexQuote, sellQuote: DexQuote,

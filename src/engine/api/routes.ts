@@ -239,6 +239,8 @@ export function createRoutes(deps: RouteDependencies): Router {
       const recentOpportunities = botEngine?.getRecentOpportunities?.() ?? [];
       const scanLogs = botEngine?.getScanLogs?.() ?? [];
 
+      const wsStatus = botEngine?.getWebSocketStatus?.() ?? { connected: false, monitoredPools: 0, triggeredScans: 0 };
+
       res.json({
         running,
         stats,
@@ -246,6 +248,7 @@ export function createRoutes(deps: RouteDependencies): Router {
         circuitBreaker,
         recentOpportunities,
         scanLogs,
+        wsStatus,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         timestamp: Date.now(),
       });
