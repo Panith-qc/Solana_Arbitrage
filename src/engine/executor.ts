@@ -725,20 +725,12 @@ export class Executor {
     const tipAccount = getRandomTipAccount();
     reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
 
-    // ── STEP 5: SIMULATE FORWARD ONLY ────────────────────────────
-    // Reverse TX cannot be simulated independently — it needs tokens from
-    // the forward TX which don't exist in current wallet state. In the Jito
-    // bundle, both execute atomically so the reverse TX will have the tokens.
-    const forwardSim = await simulateTransaction(connection, forwardTx);
+    // ── STEP 5: SKIP SIMULATION — SUBMIT DIRECTLY TO JITO ────────
+    // Simulation costs 500-1000ms on free-tier RPC. The Jito atomic bundle
+    // guarantees both TXs land or neither does — if invalid, bundle is
+    // rejected with no SOL lost. Going straight to submission saves ~1s.
 
-    if (!forwardSim.success) {
-      return this.failResult(`ATOMIC: Forward sim failed: ${forwardSim.error}`, startMs);
-    }
-
-    executionLog.info(
-      { forwardCU: forwardSim.unitsConsumed },
-      'ATOMIC: Forward leg simulated OK — skipping reverse sim (atomic bundle)',
-    );
+    executionLog.info('ATOMIC: Skipping simulation — submitting directly to Jito atomic bundle');
 
     // ── STEP 6: SUBMIT AS ATOMIC JITO BUNDLE ────────────────────
     const forwardB64 = serializeTransaction(forwardTx);
@@ -769,7 +761,7 @@ export class Executor {
         profitSol: 0,
         profitUsd: 0,
         signatures: [],
-        gasUsed: forwardSim.unitsConsumed + 0,
+        gasUsed: 0,
         jitoTip: tipLamports / LAMPORTS_PER_SOL,
         error: `ATOMIC: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
         stuckToken: null, // Atomic = no stuck tokens possible
@@ -827,7 +819,7 @@ export class Executor {
       profitSol: actualProfitSol,
       profitUsd: netProfitUsd,
       signatures: [], // Jito bundles don't return individual sigs
-      gasUsed: forwardSim.unitsConsumed + 0,
+      gasUsed: 0,
       jitoTip: tipLamports / LAMPORTS_PER_SOL,
       error: null,
       stuckToken: null,
@@ -925,22 +917,15 @@ export class Executor {
     const tipAccount = getRandomTipAccount();
     reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
 
-    // ── SIMULATE FORWARD TX ONLY ─────────────────────────────────
-    // The reverse TX (Token→SOL) CANNOT be simulated independently because
-    // it depends on tokens received from the forward TX. RPC simulates against
-    // current state where the wallet has no tokens yet → always fails with
-    // Jupiter error 0x1789 (SlippageToleranceExceeded / insufficient balance).
-    // In a Jito bundle, both TXs execute atomically — the reverse TX will have
-    // the tokens from the forward TX. We only simulate forward to validate it.
-    const forwardSim = await simulateTransaction(connection, forwardTx);
-
-    if (!forwardSim.success) {
-      return this.failResult(`FAST: Forward sim failed: ${forwardSim.error}`, startMs);
-    }
+    // ── SKIP SIMULATION — SUBMIT DIRECTLY TO JITO ────────────────
+    // Simulation costs 500-1000ms on free-tier RPC and has never helped:
+    // the Jito atomic bundle guarantees both TXs land or neither does.
+    // If forward TX is invalid, Jito rejects the bundle — no SOL lost.
+    // Removing simulation saves ~1s per trade execution.
 
     executionLog.info(
-      { forwardCU: forwardSim.unitsConsumed },
-      'FAST: Forward leg simulated OK — skipping reverse sim (atomic bundle)',
+      { tokenSymbol, ageMs },
+      'FAST: Skipping simulation — submitting directly to Jito atomic bundle',
     );
 
     // ── SUBMIT JITO BUNDLE ──────────────────────────────────────
@@ -968,7 +953,7 @@ export class Executor {
     if (finalStatus.status !== 'landed') {
       return {
         success: false, profitSol: 0, profitUsd: 0, signatures: [],
-        gasUsed: forwardSim.unitsConsumed + 0,
+        gasUsed: 0,
         jitoTip: tipLamports / LAMPORTS_PER_SOL,
         error: `FAST: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
         stuckToken: null, executionTimeMs: elapsed,
@@ -999,7 +984,7 @@ export class Executor {
       profitSol: actualProfitSol,
       profitUsd: actualProfitSol * solPrice,
       signatures: [],
-      gasUsed: forwardSim.unitsConsumed + 0,
+      gasUsed: 0,
       jitoTip: tipLamports / LAMPORTS_PER_SOL,
       error: null, stuckToken: null, executionTimeMs: elapsed,
     };
