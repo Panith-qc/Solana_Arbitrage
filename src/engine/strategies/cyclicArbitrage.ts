@@ -37,7 +37,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'cyclic-arbitrage',
       enabled: riskProfile.strategies.cyclicArbitrage,
-      scanIntervalMs: 30_000,  // Every 30s — saves rate budget for sniping
+      scanIntervalMs: 10_000,
       minProfitUsd: riskProfile.minProfitUsd,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,

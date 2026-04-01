@@ -62,7 +62,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'micro-arbitrage',
       enabled: true,
-      scanIntervalMs: 30_000,  // Every 30s — saves rate budget for sniping
+      scanIntervalMs: 6_000,
       minProfitUsd: 0,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,

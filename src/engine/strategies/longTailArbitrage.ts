@@ -66,7 +66,7 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
     const strategyConfig: StrategyConfig = {
       name: 'long-tail-arbitrage',
       enabled: true, // Always enabled when strategy is instantiated
-      scanIntervalMs: 30_000,  // Every 30s — saves rate budget for sniping
+      scanIntervalMs: 8_000,
       minProfitUsd: 0,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
