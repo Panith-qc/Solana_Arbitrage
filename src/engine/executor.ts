@@ -725,25 +725,19 @@ export class Executor {
     const tipAccount = getRandomTipAccount();
     reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
 
-    // ── STEP 5: SIMULATE BOTH ───────────────────────────────────
-    const [forwardSim, reverseSim] = await Promise.all([
-      simulateTransaction(connection, forwardTx),
-      simulateTransaction(connection, reverseTx),
-    ]);
+    // ── STEP 5: SIMULATE FORWARD ONLY ────────────────────────────
+    // Reverse TX cannot be simulated independently — it needs tokens from
+    // the forward TX which don't exist in current wallet state. In the Jito
+    // bundle, both execute atomically so the reverse TX will have the tokens.
+    const forwardSim = await simulateTransaction(connection, forwardTx);
 
     if (!forwardSim.success) {
       return this.failResult(`ATOMIC: Forward sim failed: ${forwardSim.error}`, startMs);
     }
-    if (!reverseSim.success) {
-      return this.failResult(`ATOMIC: Reverse sim failed: ${reverseSim.error}`, startMs);
-    }
 
     executionLog.info(
-      {
-        forwardCU: forwardSim.unitsConsumed,
-        reverseCU: reverseSim.unitsConsumed,
-      },
-      'ATOMIC: Both legs simulated successfully',
+      { forwardCU: forwardSim.unitsConsumed },
+      'ATOMIC: Forward leg simulated OK — skipping reverse sim (atomic bundle)',
     );
 
     // ── STEP 6: SUBMIT AS ATOMIC JITO BUNDLE ────────────────────
@@ -775,7 +769,7 @@ export class Executor {
         profitSol: 0,
         profitUsd: 0,
         signatures: [],
-        gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+        gasUsed: forwardSim.unitsConsumed + 0,
         jitoTip: tipLamports / LAMPORTS_PER_SOL,
         error: `ATOMIC: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
         stuckToken: null, // Atomic = no stuck tokens possible
@@ -833,7 +827,7 @@ export class Executor {
       profitSol: actualProfitSol,
       profitUsd: netProfitUsd,
       signatures: [], // Jito bundles don't return individual sigs
-      gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+      gasUsed: forwardSim.unitsConsumed + 0,
       jitoTip: tipLamports / LAMPORTS_PER_SOL,
       error: null,
       stuckToken: null,
@@ -931,22 +925,22 @@ export class Executor {
     const tipAccount = getRandomTipAccount();
     reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
 
-    // ── SIMULATE BOTH ───────────────────────────────────────────
-    const [forwardSim, reverseSim] = await Promise.all([
-      simulateTransaction(connection, forwardTx),
-      simulateTransaction(connection, reverseTx),
-    ]);
+    // ── SIMULATE FORWARD TX ONLY ─────────────────────────────────
+    // The reverse TX (Token→SOL) CANNOT be simulated independently because
+    // it depends on tokens received from the forward TX. RPC simulates against
+    // current state where the wallet has no tokens yet → always fails with
+    // Jupiter error 0x1789 (SlippageToleranceExceeded / insufficient balance).
+    // In a Jito bundle, both TXs execute atomically — the reverse TX will have
+    // the tokens from the forward TX. We only simulate forward to validate it.
+    const forwardSim = await simulateTransaction(connection, forwardTx);
 
     if (!forwardSim.success) {
       return this.failResult(`FAST: Forward sim failed: ${forwardSim.error}`, startMs);
     }
-    if (!reverseSim.success) {
-      return this.failResult(`FAST: Reverse sim failed: ${reverseSim.error}`, startMs);
-    }
 
     executionLog.info(
-      { forwardCU: forwardSim.unitsConsumed, reverseCU: reverseSim.unitsConsumed },
-      'FAST: Both legs simulated OK',
+      { forwardCU: forwardSim.unitsConsumed },
+      'FAST: Forward leg simulated OK — skipping reverse sim (atomic bundle)',
     );
 
     // ── SUBMIT JITO BUNDLE ──────────────────────────────────────
@@ -974,7 +968,7 @@ export class Executor {
     if (finalStatus.status !== 'landed') {
       return {
         success: false, profitSol: 0, profitUsd: 0, signatures: [],
-        gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+        gasUsed: forwardSim.unitsConsumed + 0,
         jitoTip: tipLamports / LAMPORTS_PER_SOL,
         error: `FAST: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
         stuckToken: null, executionTimeMs: elapsed,
@@ -1005,7 +999,7 @@ export class Executor {
       profitSol: actualProfitSol,
       profitUsd: actualProfitSol * solPrice,
       signatures: [],
-      gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+      gasUsed: forwardSim.unitsConsumed + 0,
       jitoTip: tipLamports / LAMPORTS_PER_SOL,
       error: null, stuckToken: null, executionTimeMs: elapsed,
     };
