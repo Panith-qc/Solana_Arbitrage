@@ -16,6 +16,7 @@ import {
   SOL_MINT,
   LAMPORTS_PER_SOL,
   PRIORITY_FEE_LAMPORTS,
+  JITO_TIP_LAMPORTS,
   SINGLE_LEG_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
 } from './config.js';
@@ -665,10 +666,13 @@ export class Executor {
       return this.failResult('ATOMIC: Reverse quote unavailable', startMs);
     }
 
-    // Final profitability check before committing
+    // Final profitability check before committing.
+    // TWO_LEG_FEE_LAMPORTS already includes JITO_TIP_LAMPORTS (10k).
+    // Only add the EXTRA tip if config tip > base tip.
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
     const grossProfitLamports = reverseOutputLamports - inputLamports;
-    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + tipLamports;
+    const extraTipLamports = Math.max(0, tipLamports - JITO_TIP_LAMPORTS);
+    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + extraTipLamports;
     const netProfitLamports = grossProfitLamports - totalFeeLamports;
 
     executionLog.info(

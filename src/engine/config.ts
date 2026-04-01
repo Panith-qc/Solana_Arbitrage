@@ -231,7 +231,9 @@ export function loadConfig(): BotConfig {
     jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
     jitoEnabled: process.env.JITO_ENABLED !== 'false',
-    jitoTipLamports: parseInt(process.env.JITO_TIP_LAMPORTS || '100000'),
+    // CRITICAL: Must match JITO_TIP_LAMPORTS (10,000) used in profit calculations.
+    // 100k default was eating ALL profit. 10k is the minimum viable Jito tip.
+    jitoTipLamports: parseInt(process.env.JITO_TIP_LAMPORTS || '10000'),
     jitoMaxTipLamports: parseInt(process.env.JITO_MAX_TIP_LAMPORTS || '500000'),
     geyserUrl: process.env.GEYSER_URL || '',
     geyserToken: process.env.GEYSER_TOKEN || '',
