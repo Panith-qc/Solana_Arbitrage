@@ -54,8 +54,8 @@ const RAYDIUM_API_URLS = [
   'https://transaction-v1.raydium.io',
   'https://api-v3.raydium.io',
 ];
-const RAYDIUM_BATCH_SIZE = 4; // parallel Raydium requests per batch
-const RAYDIUM_BATCH_DELAY_MS = 250; // small delay between batches
+const RAYDIUM_BATCH_SIZE = 6; // parallel Raydium requests per batch
+const RAYDIUM_BATCH_DELAY_MS = 200; // small delay between batches
 
 interface DexQuote {
   source: string;
@@ -78,7 +78,7 @@ interface HotToken {
 // How close to profitable a token must be to become "hot" (bps)
 const HOT_TOKEN_THRESHOLD_BPS = -3;
 // Max hot tokens to track
-const MAX_HOT_TOKENS = 3;
+const MAX_HOT_TOKENS = 6;
 // How often to re-check hot tokens (ms) — much faster than full scan
 const HOT_TOKEN_RECHECK_MS = 3_000;
 
