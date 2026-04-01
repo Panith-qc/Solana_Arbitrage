@@ -93,6 +93,8 @@ export interface RiskProfile {
     liquidation: boolean;
     jitLiquidity: boolean;
     sniping: boolean;
+    longTailArbitrage: boolean;
+    microArbitrage: boolean;
   };
 }
 
@@ -120,6 +122,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       liquidation: false,
       jitLiquidity: false,
       sniping: false,
+      longTailArbitrage: false,
+      microArbitrage: false,
     },
   },
   BALANCED: {
@@ -145,6 +149,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       liquidation: false,
       jitLiquidity: false,
       sniping: true,
+      longTailArbitrage: false,
+      microArbitrage: false,
     },
   },
   AGGRESSIVE: {
@@ -170,6 +176,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
       liquidation: false,         // stub only
       jitLiquidity: false,        // needs Geyser
       sniping: true,              // new pool detection + execution
+      longTailArbitrage: true,    // mid-cap tokens via Raydium→Jupiter
+      microArbitrage: true,       // small rapid trades across many tokens
     },
   },
 };

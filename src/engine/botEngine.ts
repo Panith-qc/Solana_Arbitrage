@@ -30,6 +30,8 @@ import { BackrunStrategy } from './strategies/backrunStrategy.js';
 import { LiquidationStrategy } from './strategies/liquidationStrategy.js';
 import { JITLiquidityStrategy } from './strategies/jitLiquidityStrategy.js';
 import { SnipingStrategy } from './sniping/snipingStrategy.js';
+import { LongTailArbitrageStrategy } from './strategies/longTailArbitrage.js';
+import { MicroArbitrageStrategy } from './strategies/microArbitrage.js';
 
 export type BotStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'circuit_breaker' | 'error';
 
@@ -925,6 +927,22 @@ export class BotEngine {
       );
       this.strategies.set('jit-liquidity', strategy);
       this.mevStrategies.push(strategy as any);
+    }
+
+    if (profile.strategies.longTailArbitrage) {
+      const strategy = new LongTailArbitrageStrategy(
+        this.connectionManager, this.config, this.riskProfile
+      );
+      strategy.onScanResult = scanCallback;
+      this.strategies.set('long-tail-arbitrage', strategy);
+    }
+
+    if (profile.strategies.microArbitrage) {
+      const strategy = new MicroArbitrageStrategy(
+        this.connectionManager, this.config, this.riskProfile
+      );
+      strategy.onScanResult = scanCallback;
+      this.strategies.set('micro-arbitrage', strategy);
     }
 
     // Sniping strategy (uses its own pool detection + execution pipeline)
