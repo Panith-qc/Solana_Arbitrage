@@ -45,6 +45,14 @@ const SCAN_AMOUNTS_SOL = [5, 10];
 // Phase 1 filter: skip tokens with worse than this round-trip loss
 const PHASE1_ROUND_TRIP_THRESHOLD_BPS = -5;
 
+// Raydium API — free tier, 300 req/min, completely separate from Jupiter quota
+const RAYDIUM_API_URLS = [
+  'https://transaction-v1.raydium.io',
+  'https://api-v3.raydium.io',
+];
+const RAYDIUM_BATCH_SIZE = 4; // parallel Raydium requests per batch
+const RAYDIUM_BATCH_DELAY_MS = 250; // small delay between batches
+
 interface DexQuote {
   source: string;
   inputMint: string;
@@ -89,16 +97,61 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
     strategyLog.info(
       { tokens: ALL_TOKENS.length, amounts: SCAN_AMOUNTS_SOL, scan: this.scanCount },
-      'Two-phase scan starting',
+      'Three-phase scan starting (Raydium bulk → Jupiter filter → DEX deep)',
     );
 
     for (const scanSol of SCAN_AMOUNTS_SOL) {
       const scanAmountStr = BigInt(Math.round(scanSol * LAMPORTS_PER_SOL)).toString();
 
-      // ── PHASE 1: Quick aggregator round-trip filter ──
-      const candidates: { token: TokenInfo; buyQuote: DexQuote; roundTripBps: number }[] = [];
+      // ── PHASE 0: Raydium bulk scan (FREE, parallel, 300/min) ──
+      // Get Raydium buy+sell prices for ALL tokens without touching Jupiter quota.
+      // This pre-filters tokens before we spend precious Jupiter API calls.
+      const raydiumResults = await this.phase0RaydiumBulkScan(scanSol, scanAmountStr);
+
+      // Tokens that survive Phase 0 (round-trip > -10bps on Raydium)
+      // PLUS tokens that Raydium couldn't price (might have Orca/Meteora liquidity)
+      const phase0Survivors: TokenInfo[] = [];
+      const raydiumBuyQuotes = new Map<string, DexQuote>();
 
       for (const token of ALL_TOKENS) {
+        const result = raydiumResults.get(token.mint);
+        if (!result) {
+          // Raydium has no pool — still worth checking on Jupiter
+          phase0Survivors.push(token);
+          continue;
+        }
+        if (result.roundTripBps > -10) {
+          phase0Survivors.push(token);
+          if (result.buyQuote) {
+            raydiumBuyQuotes.set(token.mint, result.buyQuote);
+          }
+        }
+        // Report all Raydium results to dashboard
+        this.onScanResult?.({
+          strategy: this.name,
+          token: `${token.symbol}@${scanSol} (ray)`,
+          spreadBps: result.roundTripBps,
+          grossProfitSol: result.grossProfitSol,
+          netProfitUsd: 0,
+          fees: 0,
+          profitable: false,
+        });
+      }
+
+      strategyLog.info(
+        {
+          scanSol,
+          totalTokens: ALL_TOKENS.length,
+          raydiumPriced: raydiumResults.size,
+          survivors: phase0Survivors.length,
+        },
+        `Phase 0: Raydium bulk scan done — ${phase0Survivors.length}/${ALL_TOKENS.length} tokens survive`,
+      );
+
+      // ── PHASE 1: Jupiter aggregator round-trip for survivors ──
+      const candidates: { token: TokenInfo; buyQuote: DexQuote; roundTripBps: number }[] = [];
+
+      for (const token of phase0Survivors) {
         try {
           const result = await this.phase1QuickCheck(token, scanSol, scanAmountStr);
           if (result) {
@@ -111,13 +164,12 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
       if (candidates.length === 0) {
         strategyLog.info(
-          { scanSol, tokensChecked: ALL_TOKENS.length },
-          'Phase 1: no candidates passed round-trip filter',
+          { scanSol, tokensChecked: phase0Survivors.length },
+          'Phase 1: no candidates passed Jupiter round-trip filter',
         );
         continue;
       }
 
-      // Sort: closest to profitable first
       candidates.sort((a, b) => b.roundTripBps - a.roundTripBps);
 
       strategyLog.info(
@@ -128,10 +180,12 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         `Phase 1: ${candidates.length} candidates for deep scan`,
       );
 
-      // ── PHASE 2: DEX-specific buy quotes for candidates ──
+      // ── PHASE 2: DEX-specific buy + aggregator sell ──
       for (const candidate of candidates) {
         try {
-          const opp = await this.phase2DeepScan(candidate.token, scanSol, scanAmountStr, candidate.buyQuote);
+          // Pass Raydium buy quote if we have one — avoids an extra API call in Phase 2
+          const raydiumBuy = raydiumBuyQuotes.get(candidate.token.mint);
+          const opp = await this.phase2DeepScan(candidate.token, scanSol, scanAmountStr, candidate.buyQuote, raydiumBuy);
           if (opp) {
             opportunities.push(opp);
           }
@@ -149,6 +203,62 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     );
 
     return opportunities;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // PHASE 0: Raydium bulk scan (FREE API, parallel, no Jupiter quota used)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  private async phase0RaydiumBulkScan(
+    scanSol: number,
+    scanAmountStr: string,
+  ): Promise<Map<string, { roundTripBps: number; grossProfitSol: number; buyQuote: DexQuote | null }>> {
+    const results = new Map<string, { roundTripBps: number; grossProfitSol: number; buyQuote: DexQuote | null }>();
+    const inputLamports = parseFloat(scanAmountStr);
+
+    // Process tokens in parallel batches (Raydium allows 300/min = 5/sec)
+    for (let i = 0; i < ALL_TOKENS.length; i += RAYDIUM_BATCH_SIZE) {
+      const batch = ALL_TOKENS.slice(i, i + RAYDIUM_BATCH_SIZE);
+
+      const promises = batch.map(async (token) => {
+        try {
+          // Buy: SOL -> Token via Raydium
+          const buyQuote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
+          if (!buyQuote) return;
+
+          // Sell: Token -> SOL via Raydium
+          const sellQuote = await this.getRaydiumSwapQuote(token.mint, SOL_MINT, buyQuote.outputAmount);
+          if (!sellQuote) {
+            // Have buy but no sell — still useful data
+            results.set(token.mint, { roundTripBps: -100, grossProfitSol: 0, buyQuote });
+            return;
+          }
+
+          const outputLamports = parseFloat(sellQuote.outputAmount);
+          const roundTripBps = ((outputLamports - inputLamports) / inputLamports) * 10_000;
+          const grossProfitSol = (outputLamports - inputLamports) / LAMPORTS_PER_SOL;
+
+          results.set(token.mint, { roundTripBps, grossProfitSol, buyQuote });
+
+          strategyLog.debug(
+            { token: token.symbol, roundTripBps: roundTripBps.toFixed(1), scanSol },
+            `Raydium: ${token.symbol} round-trip ${roundTripBps.toFixed(1)}bps`,
+          );
+        } catch (err) {
+          // Raydium failures are non-fatal — token falls through to Jupiter
+          strategyLog.debug({ err, token: token.symbol }, 'Raydium scan error');
+        }
+      });
+
+      await Promise.all(promises);
+
+      // Small delay between batches to stay within rate limits
+      if (i + RAYDIUM_BATCH_SIZE < ALL_TOKENS.length) {
+        await new Promise(r => setTimeout(r, RAYDIUM_BATCH_DELAY_MS));
+      }
+    }
+
+    return results;
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -223,6 +333,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
   private async phase2DeepScan(
     token: TokenInfo, scanSol: number, scanAmountStr: string, aggregatorBuy: DexQuote,
+    preloadedRaydiumBuy?: DexQuote,
   ): Promise<Opportunity | null> {
     const scanAmountLamports = BigInt(scanAmountStr);
 
@@ -231,7 +342,15 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       { ...aggregatorBuy, source: 'aggregator' },
     ];
 
+    // Use pre-loaded Raydium quote from Phase 0 if available (saves an API call)
+    if (preloadedRaydiumBuy) {
+      buyQuotes.push({ ...preloadedRaydiumBuy, source: 'raydium-direct' });
+    }
+
     for (const dexGroup of DEX_GROUPS) {
+      // Skip Raydium Jupiter-routed if we already have direct Raydium quote
+      if (preloadedRaydiumBuy && dexGroup.name === 'raydium') continue;
+
       await this.jupiterRateLimit();
       const quote = await this.getJupiterDexQuote(
         SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps, dexGroup.dexes,

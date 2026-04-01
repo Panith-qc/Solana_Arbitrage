@@ -637,13 +637,24 @@ export class BotEngine {
 
       if (opp.quotes.length === 2) {
         // Standard 2-leg arbitrage: SOL → Token → SOL
-        // Use the sequential executor which handles inter-leg verification
-        result = await this.executor.executeArbitrageCycle(
-          opp.quotes[0],
-          opp.mintPath[1],
-          opp.tokenPath[1],
-          this.solPriceUsd
-        );
+        if (this.config.jitoEnabled) {
+          // ATOMIC: Both legs in a single Jito bundle — no inter-leg price risk
+          result = await this.executor.executeAtomicArbitrage(
+            opp.quotes[0],
+            opp.mintPath[1],
+            opp.tokenPath[1],
+            this.solPriceUsd,
+            this.config.jitoTipLamports,
+          );
+        } else {
+          // Fallback: Sequential execution (higher risk, no Jito)
+          result = await this.executor.executeArbitrageCycle(
+            opp.quotes[0],
+            opp.mintPath[1],
+            opp.tokenPath[1],
+            this.solPriceUsd,
+          );
+        }
       } else if (opp.quotes.length >= 3) {
         // Multi-leg: MUST use Jito bundles for atomic execution
         // Sequential execution of 3+ legs is too risky (stuck tokens)

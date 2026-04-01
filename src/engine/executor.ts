@@ -28,6 +28,7 @@ import {
   buildSwapTransaction,
   serializeTransaction,
   getRandomTipAccount,
+  addJitoTip,
 } from './transactionBuilder.js';
 import {
   submitArbitrageBundle,
@@ -573,16 +574,259 @@ export class Executor {
   }
 
   // ═════════════════════════════════════════════════════════════════
-  // PUBLIC: EXECUTE VIA JITO BUNDLE
+  // PUBLIC: EXECUTE 2-LEG ARB AS ATOMIC JITO BUNDLE
   // ═════════════════════════════════════════════════════════════════
 
   /**
-   * Submit one or more base64-encoded signed transactions as an atomic Jito bundle.
-   * Waits for the bundle to land (or fail) before returning.
+   * Execute a SOL -> Token -> SOL arbitrage as an ATOMIC Jito bundle.
+   * Both legs are built upfront and submitted together — either both execute
+   * in the same slot or neither does. No inter-leg price risk.
    *
-   * @param transactions  Array of base64-encoded serialized VersionedTransactions
-   * @param tipLamports   Jito tip amount (must already be embedded in the last TX)
-   * @returns             ExecutionResult
+   * Flow:
+   * 1. Re-validate forward quote (abort if price drifted)
+   * 2. Get fresh forward swap TX from Jupiter
+   * 3. Get fresh reverse quote + swap TX from Jupiter
+   * 4. Add Jito tip to the last TX
+   * 5. Submit both as a single atomic bundle
+   * 6. Wait for landing, measure real balance delta
+   */
+  async executeAtomicArbitrage(
+    forwardQuote: JupiterQuote,
+    tokenMint: string,
+    tokenSymbol: string,
+    solPrice: number,
+    tipLamports: number,
+  ): Promise<ExecutionResult> {
+    const startMs = Date.now();
+    const connection = this.connManager.getConnection();
+    const wallet = this.connManager.getWallet();
+    const inputLamports = parseInt(forwardQuote.inAmount, 10);
+
+    // ── CAPTURE PRE-TRADE SOL BALANCE ────────────────────────────
+    let preTradeBalanceLamports: number | null = null;
+    try {
+      const balanceSol = await this.connManager.getBalance();
+      preTradeBalanceLamports = Math.round(balanceSol * LAMPORTS_PER_SOL);
+      executionLog.info(
+        { preTradeBalanceSol: balanceSol, tokenSymbol, inputSol: inputLamports / LAMPORTS_PER_SOL },
+        'ATOMIC: Pre-trade SOL balance captured',
+      );
+    } catch (err) {
+      executionLog.warn({ err }, 'Could not capture pre-trade balance');
+    }
+
+    // ── STEP 1: FRESH FORWARD QUOTE VALIDATION ──────────────────
+    await this.rateLimit();
+    const freshForward = await this.fetchQuote(
+      forwardQuote.inputMint,
+      forwardQuote.outputMint,
+      forwardQuote.inAmount,
+      forwardQuote.slippageBps,
+    );
+
+    if (!freshForward) {
+      return this.failResult('ATOMIC: Fresh forward quote unavailable', startMs);
+    }
+
+    const scanTokens = parseInt(forwardQuote.outAmount, 10);
+    const freshTokens = parseInt(freshForward.outAmount, 10);
+    const driftBps = ((freshTokens - scanTokens) / scanTokens) * 10_000;
+
+    if (driftBps < -10) {
+      return this.failResult(
+        `ATOMIC: Forward price drifted ${driftBps.toFixed(1)}bps against us`,
+        startMs,
+      );
+    }
+
+    executionLog.info(
+      { tokenSymbol, driftBps: driftBps.toFixed(1), freshTokens, scanTokens },
+      'ATOMIC: Forward quote validated',
+    );
+
+    // ── STEP 2: GET FORWARD SWAP TX ─────────────────────────────
+    await this.rateLimit();
+    const forwardSwap = await this.fetchSwapTransaction(freshForward, freshForward.slippageBps, wallet);
+    if (!forwardSwap) {
+      return this.failResult('ATOMIC: Failed to get forward swap TX', startMs);
+    }
+
+    // ── STEP 3: FRESH REVERSE QUOTE + SWAP TX ───────────────────
+    // Use the expected token output from forward quote as reverse input
+    await this.rateLimit();
+    const reverseQuote = await this.fetchQuote(
+      tokenMint,
+      SOL_MINT,
+      freshForward.outAmount,
+      freshForward.slippageBps,
+    );
+
+    if (!reverseQuote) {
+      return this.failResult('ATOMIC: Reverse quote unavailable', startMs);
+    }
+
+    // Final profitability check before committing
+    const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
+    const grossProfitLamports = reverseOutputLamports - inputLamports;
+    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + tipLamports;
+    const netProfitLamports = grossProfitLamports - totalFeeLamports;
+
+    executionLog.info(
+      {
+        tokenSymbol,
+        grossProfitLamports,
+        totalFeeLamports,
+        netProfitLamports,
+        tipLamports,
+      },
+      netProfitLamports > 0
+        ? 'ATOMIC: Profitability CONFIRMED'
+        : 'ATOMIC: Trade would be unprofitable — aborting',
+    );
+
+    if (netProfitLamports < 0) {
+      return this.failResult(
+        `ATOMIC: Net loss ${(netProfitLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL after fees`,
+        startMs,
+      );
+    }
+
+    await this.rateLimit();
+    const reverseSwap = await this.fetchSwapTransaction(reverseQuote, reverseQuote.slippageBps, wallet);
+    if (!reverseSwap) {
+      return this.failResult('ATOMIC: Failed to get reverse swap TX', startMs);
+    }
+
+    // ── STEP 4: BUILD + SIGN BOTH TXS ──────────────────────────
+    const forwardTx = buildSwapTransaction(forwardSwap.swapTransaction, wallet);
+    let reverseTx = buildSwapTransaction(reverseSwap.swapTransaction, wallet);
+
+    // Add Jito tip to the LAST transaction in the bundle
+    const tipAccount = getRandomTipAccount();
+    reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
+
+    // ── STEP 5: SIMULATE BOTH ───────────────────────────────────
+    const [forwardSim, reverseSim] = await Promise.all([
+      simulateTransaction(connection, forwardTx),
+      simulateTransaction(connection, reverseTx),
+    ]);
+
+    if (!forwardSim.success) {
+      return this.failResult(`ATOMIC: Forward sim failed: ${forwardSim.error}`, startMs);
+    }
+    if (!reverseSim.success) {
+      return this.failResult(`ATOMIC: Reverse sim failed: ${reverseSim.error}`, startMs);
+    }
+
+    executionLog.info(
+      {
+        forwardCU: forwardSim.unitsConsumed,
+        reverseCU: reverseSim.unitsConsumed,
+      },
+      'ATOMIC: Both legs simulated successfully',
+    );
+
+    // ── STEP 6: SUBMIT AS ATOMIC JITO BUNDLE ────────────────────
+    const forwardB64 = serializeTransaction(forwardTx);
+    const reverseB64 = serializeTransaction(reverseTx);
+
+    const bundleResult = await submitArbitrageBundle([forwardB64, reverseB64], tipLamports);
+
+    if (!bundleResult.bundleId) {
+      return this.failResult(`ATOMIC: Bundle rejected: ${bundleResult.error}`, startMs);
+    }
+
+    executionLog.info(
+      { bundleId: bundleResult.bundleId, endpoint: bundleResult.endpoint },
+      'ATOMIC: Bundle submitted — waiting for landing',
+    );
+
+    // ── STEP 7: WAIT FOR LANDING ────────────────────────────────
+    const finalStatus = await waitForBundleLanding(
+      bundleResult.bundleId,
+      bundleResult.endpoint || undefined,
+    );
+
+    const elapsed = Date.now() - startMs;
+
+    if (finalStatus.status !== 'landed') {
+      return {
+        success: false,
+        profitSol: 0,
+        profitUsd: 0,
+        signatures: [],
+        gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+        jitoTip: tipLamports / LAMPORTS_PER_SOL,
+        error: `ATOMIC: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
+        stuckToken: null, // Atomic = no stuck tokens possible
+        executionTimeMs: elapsed,
+      };
+    }
+
+    // ── STEP 8: MEASURE REAL PROFIT ─────────────────────────────
+    let actualProfitSol: number;
+
+    if (preTradeBalanceLamports !== null) {
+      try {
+        // Wait briefly for balance to settle
+        await sleep(1500);
+        const postBalanceSol = await this.connManager.getBalance();
+        const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
+        actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
+
+        executionLog.info(
+          {
+            preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL,
+            postBalanceSol,
+            actualProfitSol: actualProfitSol.toFixed(6),
+            tokenSymbol,
+            bundleId: bundleResult.bundleId,
+          },
+          'ATOMIC: REAL profit from on-chain balance delta',
+        );
+      } catch {
+        actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+      }
+    } else {
+      actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+    }
+
+    const netProfitUsd = actualProfitSol * solPrice;
+
+    executionLog.info(
+      {
+        tokenSymbol,
+        bundleId: bundleResult.bundleId,
+        landedSlot: finalStatus.landedSlot,
+        netProfitSol: actualProfitSol.toFixed(6),
+        netProfitUsd: netProfitUsd.toFixed(4),
+        elapsedMs: elapsed,
+      },
+      actualProfitSol > 0
+        ? 'ATOMIC ARBITRAGE COMPLETED — PROFIT'
+        : 'ATOMIC ARBITRAGE COMPLETED — LOSS',
+    );
+
+    return {
+      success: true,
+      profitSol: actualProfitSol,
+      profitUsd: netProfitUsd,
+      signatures: [], // Jito bundles don't return individual sigs
+      gasUsed: forwardSim.unitsConsumed + reverseSim.unitsConsumed,
+      jitoTip: tipLamports / LAMPORTS_PER_SOL,
+      error: null,
+      stuckToken: null,
+      executionTimeMs: elapsed,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // PUBLIC: EXECUTE VIA JITO BUNDLE (pre-built TXs)
+  // ═════════════════════════════════════════════════════════════════
+
+  /**
+   * Submit pre-built base64-encoded signed transactions as an atomic Jito bundle.
+   * Used for multi-leg (3+) trades where TXs are already constructed.
    */
   async executeViaJitoBundle(
     transactions: string[],
@@ -604,7 +848,6 @@ export class Executor {
       );
     }
 
-    // Wait for the bundle to land
     const finalStatus = await waitForBundleLanding(
       bundleResult.bundleId,
       bundleResult.endpoint || undefined,
@@ -625,9 +868,9 @@ export class Executor {
 
       return {
         success: true,
-        profitSol: 0, // Must be computed by caller
+        profitSol: 0,
         profitUsd: 0,
-        signatures: [], // Bundle does not directly return individual signatures
+        signatures: [],
         gasUsed: 0,
         jitoTip: tipLamports / LAMPORTS_PER_SOL,
         error: null,
