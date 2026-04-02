@@ -503,7 +503,10 @@ export async function combineSwapsWithTokenLedger(
   );
 
   // ── 4. Deserialize reverse leg instructions ────────────────────
-  const reverseSetupIxs = reverseInstructions.setupInstructions.map(deserializeJupiterInstruction);
+  // NOTE: We skip reverseInstructions.setupInstructions because the
+  // forward TX already creates the necessary token accounts (ATAs).
+  // Including reverse setup would try to re-create the same accounts,
+  // causing errors 6 (AlreadyInUse) or 13 (InvalidState).
   const reverseSwapIx = deserializeJupiterInstruction(reverseInstructions.swapInstruction);
   const reverseCleanupIx = reverseInstructions.cleanupInstruction
     ? deserializeJupiterInstruction(reverseInstructions.cleanupInstruction)
@@ -513,7 +516,8 @@ export async function combineSwapsWithTokenLedger(
     : null;
 
   // ── 5. Build combined instruction array ────────────────────────
-  // Order: ComputeBudget → Forward ixs → SetTokenLedger → Reverse setup → Reverse swap → Cleanup
+  // Order: ComputeBudget → Forward ixs → SetTokenLedger → Reverse swap → Cleanup
+  // No reverse setup — forward leg already created all needed accounts.
   const combinedInstructions: TransactionInstruction[] = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports }),
@@ -526,7 +530,6 @@ export async function combineSwapsWithTokenLedger(
     combinedInstructions.push(tokenLedgerIx);
   }
 
-  combinedInstructions.push(...reverseSetupIxs);
   combinedInstructions.push(reverseSwapIx);
   if (reverseCleanupIx) {
     combinedInstructions.push(reverseCleanupIx);
@@ -550,7 +553,7 @@ export async function combineSwapsWithTokenLedger(
   if (sizeBytes > MAX_TX_SIZE) {
     throw new TxTooLargeError(
       `Token ledger combined TX is ${sizeBytes} bytes (limit: ${MAX_TX_SIZE}). ` +
-      `Forward: ${forwardSwapIxs.length} ixs, Reverse: 1 swap + ${reverseSetupIxs.length} setup`,
+      `Forward: ${forwardSwapIxs.length} ixs, Reverse: 1 swap`,
       sizeBytes,
     );
   }
@@ -563,7 +566,6 @@ export async function combineSwapsWithTokenLedger(
       sizeBytes,
       forwardIxs: forwardSwapIxs.length,
       hasTokenLedger: !!tokenLedgerIx,
-      reverseSetupIxs: reverseSetupIxs.length,
       hasCleanup: !!reverseCleanupIx,
       lookupTables: allLookupTables.length,
       computeUnitLimit,
