@@ -6,6 +6,7 @@
 
 import { strategyLog } from './logger.js';
 import { BotConfig, PRIORITY_FEE_LAMPORTS, JUPITER_MAX_ACCOUNTS } from './config.js';
+import type { SwapInstructionsResponse } from './transactionBuilder.js';
 
 export interface JupiterEndpoint {
   /** Base URL (same for all: https://lite-api.jup.ag) */
@@ -225,7 +226,58 @@ export class JupiterPool {
   }
 
   /**
-   * Fetch forward + reverse swap TXs in PARALLEL using two different endpoints.
+   * Fetch swap instructions (individual ixs, not a base64 TX) from /swap-instructions.
+   * When useTokenLedger=true, the response includes a tokenLedgerInstruction and
+   * the swap uses sharedAccountsRouteWithTokenLedger (dynamic input amount).
+   */
+  async fetchSwapInstructions(
+    endpointIndex: number,
+    quote: any,
+    walletPubkey: string,
+    useTokenLedger: boolean = false,
+  ): Promise<SwapInstructionsResponse | null> {
+    const ep = this.endpoints[endpointIndex % this.endpoints.length];
+    await this.rateLimitEndpoint(ep);
+
+    const ixUrl = `${ep.baseUrl}/swap/v1/swap-instructions`;
+    const body = {
+      quoteResponse: quote,
+      userPublicKey: walletPubkey,
+      wrapAndUnwrapSol: true,
+      useTokenLedger,
+      dynamicComputeUnitLimit: true,
+      dynamicSlippage: false,
+      prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
+    };
+
+    try {
+      const response = await fetch(ixUrl, {
+        method: 'POST',
+        headers: this.buildHeaders(ep, true),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) {
+        if (response.status === 429) {
+          ep.throttleCount++;
+          strategyLog.warn({ endpoint: ep.label }, 'Jupiter /swap-instructions 429');
+          await new Promise(r => setTimeout(r, 5000));
+        }
+        return null;
+      }
+      const result = (await response.json()) as SwapInstructionsResponse;
+      if (!result.swapInstruction) return null;
+      return result;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetch forward swap TX + reverse swap INSTRUCTIONS in PARALLEL.
+   * Forward: standard /swap (base64 TX with fixed inAmount — fine for SOL input).
+   * Reverse: /swap-instructions with useTokenLedger=true (dynamic input amount).
+   * This fixes error 6024 in combined atomic TXs.
    */
   async fetchSwapTxPairParallel(
     forwardQuote: any,
@@ -233,17 +285,17 @@ export class JupiterPool {
     walletPubkey: string,
     forwardEndpoint: number,
     reverseEndpoint: number,
-  ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
-    const [fwdData, revData] = await Promise.all([
+  ): Promise<{ forwardSwapTx: string; reverseSwapIxs: SwapInstructionsResponse } | null> {
+    const [fwdData, revIxs] = await Promise.all([
       this.fetchSwapTx(forwardEndpoint, forwardQuote, walletPubkey),
-      this.fetchSwapTx(reverseEndpoint, reverseQuote, walletPubkey),
+      this.fetchSwapInstructions(reverseEndpoint, reverseQuote, walletPubkey, true),
     ]);
 
-    if (!fwdData?.swapTransaction || !revData?.swapTransaction) return null;
+    if (!fwdData?.swapTransaction || !revIxs) return null;
 
     return {
       forwardSwapTx: fwdData.swapTransaction,
-      reverseSwapTx: revData.swapTransaction,
+      reverseSwapIxs: revIxs,
     };
   }
 

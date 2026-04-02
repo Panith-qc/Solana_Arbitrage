@@ -30,7 +30,9 @@ import {
 import {
   buildSwapTransaction,
   combineSwapsIntoSingleTx,
+  combineSwapsWithTokenLedger,
   TxTooLargeError,
+  SwapInstructionsResponse,
 } from './transactionBuilder.js';
 import {
   submitArbitrageBundle,
@@ -101,6 +103,7 @@ interface JupiterSwapResponse {
 
 const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
 const JUPITER_SWAP_URL = 'https://lite-api.jup.ag/swap/v1/swap';
+const JUPITER_SWAP_INSTRUCTIONS_URL = 'https://lite-api.jup.ag/swap/v1/swap-instructions';
 
 const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1_000;
@@ -713,28 +716,33 @@ export class Executor {
       );
     }
 
+    // ── STEP 3b: GET REVERSE SWAP INSTRUCTIONS (with Token Ledger) ─
+    // Use /swap-instructions with useTokenLedger=true so the reverse leg
+    // dynamically reads the actual token balance instead of a hardcoded inAmount.
+    // This fixes error 6024 caused by the forward leg producing fewer tokens than quoted.
     await this.rateLimit();
-    const reverseSwap = await this.fetchSwapTransaction(reverseQuote, reverseQuote.slippageBps, wallet);
-    if (!reverseSwap) {
-      return this.failResult('ATOMIC: Failed to get reverse swap TX', startMs);
+    const reverseSwapIxs = await this.fetchSwapInstructions(reverseQuote, wallet, true);
+    if (!reverseSwapIxs) {
+      return this.failResult('ATOMIC: Failed to get reverse swap instructions', startMs);
     }
 
-    // ── STEP 4: BUILD SINGLE ATOMIC TX ────────────────────────────
-    // Combine forward + reverse swap into ONE transaction.
+    // ── STEP 4: BUILD TOKEN LEDGER COMBINED TX ───────────────────
+    // Forward swap (base64 TX) + reverse swap (token ledger instructions).
+    // SetTokenLedger records the intermediate token balance after forward.
+    // Reverse swap uses the ACTUAL balance, not a hardcoded quote amount.
     // Solana runtime: all instructions succeed or all revert. No partial.
-    // Sent via Helius staked connection with dynamic priority fees.
 
     try {
       // Get optimal priority fee from Helius (cached 10s)
       const dynamicPriorityFee = await this.connManager.getDynamicPriorityFee();
 
-      const combined = await combineSwapsIntoSingleTx(
+      const combined = await combineSwapsWithTokenLedger(
         forwardSwap.swapTransaction,
-        reverseSwap.swapTransaction,
+        reverseSwapIxs,
         wallet,
         connection,
         dynamicPriorityFee,   // dynamic priority fee from Helius
-        600_000,              // compute units for 2 swaps
+        600_000,              // compute units for 2 swaps + token ledger
       );
 
       executionLog.info(
@@ -859,19 +867,19 @@ export class Executor {
    * - Pre-trade + post-trade balance delta verifies real profit
    * - If scan quote is older than 3s, falls back to full re-quote path
    *
-   * @param forwardSwapTx  Base64-encoded swap TX from Jupiter /swap (SOL→Token)
-   * @param reverseSwapTx  Base64-encoded swap TX from Jupiter /swap (Token→SOL)
-   * @param forwardQuote   The Jupiter quote used to get forwardSwapTx
-   * @param reverseQuote   The Jupiter quote used to get reverseSwapTx
-   * @param tokenMint      Intermediate token mint
-   * @param tokenSymbol    Human-readable symbol
-   * @param solPrice       Current SOL/USD price
-   * @param tipLamports    Jito tip to embed
-   * @param scanTimestamp  When the scan quotes were obtained (for staleness check)
+   * @param forwardSwapTx       Base64-encoded swap TX from Jupiter /swap (SOL→Token)
+   * @param reverseSwapIxs      Instructions from Jupiter /swap-instructions with useTokenLedger=true (Token→SOL)
+   * @param forwardQuote        The Jupiter quote used to get forwardSwapTx
+   * @param reverseQuote        The Jupiter quote used to get reverseSwapIxs
+   * @param tokenMint           Intermediate token mint
+   * @param tokenSymbol         Human-readable symbol
+   * @param solPrice            Current SOL/USD price
+   * @param tipLamports         Jito tip to embed
+   * @param scanTimestamp       When the scan quotes were obtained (for staleness check)
    */
   async executeFastAtomicArbitrage(
     forwardSwapTx: string,
-    reverseSwapTx: string,
+    reverseSwapIxs: SwapInstructionsResponse,
     forwardQuote: JupiterQuote,
     reverseQuote: JupiterQuote,
     tokenMint: string,
@@ -930,13 +938,13 @@ export class Executor {
       // Get optimal priority fee from Helius (cached 10s, ~0ms when cached)
       const dynamicPriorityFee = await this.connManager.getDynamicPriorityFee();
 
-      const combined = await combineSwapsIntoSingleTx(
+      const combined = await combineSwapsWithTokenLedger(
         forwardSwapTx,
-        reverseSwapTx,
+        reverseSwapIxs,
         wallet,
         connection,
         dynamicPriorityFee,   // dynamic priority fee from Helius
-        600_000,              // compute units (2 swaps need more)
+        600_000,              // compute units (2 swaps + token ledger)
       );
 
       executionLog.info(
@@ -1287,6 +1295,77 @@ export class Executor {
       executionLog.error(
         { error: err.message },
         'Exception fetching Jupiter swap transaction',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Fetch individual swap instructions from Jupiter's /swap-instructions endpoint.
+   * When useTokenLedger=true, the response includes a tokenLedgerInstruction and
+   * the swap instruction uses sharedAccountsRouteWithTokenLedger (no hardcoded inAmount).
+   * This is essential for the reverse leg of combined atomic TXs.
+   */
+  private async fetchSwapInstructions(
+    quote: JupiterQuote,
+    wallet: Keypair,
+    useTokenLedger: boolean = false,
+  ): Promise<SwapInstructionsResponse | null> {
+    try {
+      const body = {
+        quoteResponse: quote,
+        userPublicKey: wallet.publicKey.toString(),
+        wrapAndUnwrapSol: true,
+        useTokenLedger,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: false,
+        prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
+      };
+
+      const response = await fetchWithTimeout(
+        JUPITER_SWAP_INSTRUCTIONS_URL,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...this.jupiterHeaders(),
+          },
+          body: JSON.stringify(body),
+        },
+        15_000,
+      );
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        executionLog.warn(
+          { status: response.status, body: text.slice(0, 300), useTokenLedger },
+          'Jupiter /swap-instructions request failed',
+        );
+        return null;
+      }
+
+      const result = (await response.json()) as SwapInstructionsResponse;
+
+      if (!result.swapInstruction) {
+        executionLog.warn('Jupiter /swap-instructions returned no swapInstruction');
+        return null;
+      }
+
+      executionLog.debug(
+        {
+          hasTokenLedger: !!result.tokenLedgerInstruction,
+          setupCount: result.setupInstructions.length,
+          hasCleanup: !!result.cleanupInstruction,
+          lookupTables: result.addressLookupTableAddresses.length,
+        },
+        'Jupiter swap instructions fetched',
+      );
+
+      return result;
+    } catch (err: any) {
+      executionLog.error(
+        { error: err.message, useTokenLedger },
+        'Exception fetching Jupiter swap instructions',
       );
       return null;
     }

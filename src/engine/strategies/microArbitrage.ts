@@ -173,7 +173,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
             // Attach pre-fetched swap TXs for fast execution
             if (swapTxs) {
               opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
-              opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+              opp.metadata.reverseSwapIxs = swapTxs.reverseSwapIxs;
               opp.metadata.forwardQuote = leg1.raw;
               opp.metadata.reverseQuote = leg2.raw;
               opp.metadata.scanTimestamp = now;
@@ -233,13 +233,14 @@ export class MicroArbitrageStrategy extends BaseStrategy {
 
   private async fetchSwapTxPair(
     forwardQuote: any, reverseQuote: any,
-  ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
+  ): Promise<{ forwardSwapTx: string; reverseSwapIxs: any } | null> {
     try {
       const walletPubkey = this.connectionManager.getPublicKey().toString();
-      const primaryUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+      const swapUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+      const ixUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap-instructions`;
       const hasSecondKey = !!this.botConfig.jupiterApiKey2;
 
-      const makeBody = (quote: any) => ({
+      const makeSwapBody = (quote: any) => ({
         quoteResponse: quote,
         userPublicKey: walletPubkey,
         wrapAndUnwrapSol: true,
@@ -248,8 +249,18 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
       });
 
+      const makeIxBody = (quote: any) => ({
+        quoteResponse: quote,
+        userPublicKey: walletPubkey,
+        wrapAndUnwrapSol: true,
+        useTokenLedger: true,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: false,
+        prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
+      });
+
       let fwdData: any;
-      let revData: any;
+      let revIxData: any;
 
       const primaryHeaders = this.jupiterApiHeaders(true);
       const secondaryHeaders = hasSecondKey
@@ -257,49 +268,49 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         : primaryHeaders;
 
       if (hasSecondKey) {
-        // PARALLEL: Forward on key1, Reverse on key2
+        // PARALLEL: Forward /swap on key1, Reverse /swap-instructions on key2
         await this.jupiterRateLimit();
         const [fwdResp, revResp] = await Promise.all([
-          fetch(primaryUrl, {
+          fetch(swapUrl, {
             method: 'POST',
             headers: primaryHeaders,
-            body: JSON.stringify(makeBody(forwardQuote)),
+            body: JSON.stringify(makeSwapBody(forwardQuote)),
             signal: AbortSignal.timeout(10000),
           }),
-          fetch(primaryUrl, {
+          fetch(ixUrl, {
             method: 'POST',
             headers: secondaryHeaders,
-            body: JSON.stringify(makeBody(reverseQuote)),
+            body: JSON.stringify(makeIxBody(reverseQuote)),
             signal: AbortSignal.timeout(10000),
           }),
         ]);
         if (!fwdResp.ok || !revResp.ok) return null;
-        [fwdData, revData] = await Promise.all([fwdResp.json(), revResp.json()]);
+        [fwdData, revIxData] = await Promise.all([fwdResp.json(), revResp.json()]);
       } else {
         // SEQUENTIAL: Single key
         await this.jupiterRateLimit();
-        const fwdResp = await fetch(primaryUrl, {
+        const fwdResp = await fetch(swapUrl, {
           method: 'POST',
           headers: primaryHeaders,
-          body: JSON.stringify(makeBody(forwardQuote)),
+          body: JSON.stringify(makeSwapBody(forwardQuote)),
           signal: AbortSignal.timeout(10000),
         });
         if (!fwdResp.ok) return null;
         fwdData = await fwdResp.json();
 
         await this.jupiterRateLimit();
-        const revResp = await fetch(primaryUrl, {
+        const revResp = await fetch(ixUrl, {
           method: 'POST',
           headers: primaryHeaders,
-          body: JSON.stringify(makeBody(reverseQuote)),
+          body: JSON.stringify(makeIxBody(reverseQuote)),
           signal: AbortSignal.timeout(10000),
         });
         if (!revResp.ok) return null;
-        revData = await revResp.json();
+        revIxData = await revResp.json();
       }
 
-      if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
-      return { forwardSwapTx: fwdData.swapTransaction, reverseSwapTx: revData.swapTransaction };
+      if (!fwdData.swapTransaction || !revIxData.swapInstruction) return null;
+      return { forwardSwapTx: fwdData.swapTransaction, reverseSwapIxs: revIxData };
     } catch {
       return null;
     }

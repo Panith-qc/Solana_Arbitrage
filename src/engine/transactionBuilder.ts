@@ -401,6 +401,180 @@ export class TxTooLargeError extends Error {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// TOKEN LEDGER COMBINED SWAP
+// Uses Jupiter's sharedAccountsRouteWithTokenLedger for the reverse leg
+// so it dynamically reads the actual token balance instead of a hardcoded inAmount.
+// ═══════════════════════════════════════════════════════════════════
+
+/** A single instruction from Jupiter's /swap-instructions response */
+export interface JupiterInstructionPayload {
+  programId: string;
+  accounts: Array<{ pubkey: string; isSigner: boolean; isWritable: boolean }>;
+  data: string; // base64-encoded
+}
+
+/** Response from Jupiter's /swap-instructions endpoint */
+export interface SwapInstructionsResponse {
+  tokenLedgerInstruction: JupiterInstructionPayload | null;
+  computeBudgetInstructions: JupiterInstructionPayload[];
+  setupInstructions: JupiterInstructionPayload[];
+  swapInstruction: JupiterInstructionPayload;
+  cleanupInstruction: JupiterInstructionPayload | null;
+  addressLookupTableAddresses: string[];
+}
+
+/** Deserialize a Jupiter instruction payload into a Solana TransactionInstruction */
+function deserializeJupiterInstruction(ix: JupiterInstructionPayload): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: new PublicKey(ix.programId),
+    keys: ix.accounts.map((acc) => ({
+      pubkey: new PublicKey(acc.pubkey),
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })),
+    data: Buffer.from(ix.data, 'base64'),
+  });
+}
+
+/**
+ * Combine a forward Jupiter swap TX (base64) with a reverse leg that uses
+ * Jupiter's Token Ledger mechanism. The Token Ledger records the intermediate
+ * token balance BEFORE the reverse swap, so the reverse instruction uses
+ * the ACTUAL token amount (whatever the forward leg produced) instead of
+ * a hardcoded inAmount from the quote.
+ *
+ * TX structure:
+ * [ComputeBudget] → [Forward setup + swap ixs] → [SetTokenLedger] →
+ * [Reverse setup ixs] → [Reverse swap (token ledger)] → [Reverse cleanup]
+ *
+ * @param forwardSwapBase64   Base64 TX from Jupiter /swap (SOL→Token)
+ * @param reverseInstructions Parsed instructions from Jupiter /swap-instructions
+ *                            with useTokenLedger=true (Token→SOL)
+ * @param wallet              Signing keypair
+ * @param connection          Solana connection
+ * @param priorityFeeMicroLamports  Priority fee
+ * @param computeUnitLimit    Compute budget
+ */
+export async function combineSwapsWithTokenLedger(
+  forwardSwapBase64: string,
+  reverseInstructions: SwapInstructionsResponse,
+  wallet: Keypair,
+  connection: Connection,
+  priorityFeeMicroLamports: number = 10_000,
+  computeUnitLimit: number = 600_000,
+): Promise<CombinedSwapResult> {
+  // ── 1. Deserialize forward swap TX ─────────────────────────────
+  const forwardTx = VersionedTransaction.deserialize(
+    Buffer.from(forwardSwapBase64, 'base64'),
+  );
+
+  // ── 2. Resolve address lookup tables from BOTH legs ────────────
+  const lookupTableMap = new Map<string, AddressLookupTableAccount>();
+
+  // From forward TX
+  const fwdMsg = forwardTx.message;
+  if ('addressTableLookups' in fwdMsg && fwdMsg.addressTableLookups.length > 0) {
+    for (const lookup of fwdMsg.addressTableLookups) {
+      const key = lookup.accountKey.toString();
+      if (!lookupTableMap.has(key)) {
+        const info = await connection.getAddressLookupTable(lookup.accountKey);
+        if (info.value) lookupTableMap.set(key, info.value);
+      }
+    }
+  }
+
+  // From reverse instructions' addressLookupTableAddresses
+  for (const addr of reverseInstructions.addressLookupTableAddresses) {
+    if (!lookupTableMap.has(addr)) {
+      const pubkey = new PublicKey(addr);
+      const info = await connection.getAddressLookupTable(pubkey);
+      if (info.value) lookupTableMap.set(addr, info.value);
+    }
+  }
+
+  const allLookupTables = Array.from(lookupTableMap.values());
+
+  // ── 3. Decompile forward TX to get its instructions ────────────
+  const forwardMsg = TransactionMessage.decompile(forwardTx.message, {
+    addressLookupTableAccounts: allLookupTables,
+  });
+  const forwardSwapIxs = forwardMsg.instructions.filter(
+    (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+  );
+
+  // ── 4. Deserialize reverse leg instructions ────────────────────
+  const reverseSetupIxs = reverseInstructions.setupInstructions.map(deserializeJupiterInstruction);
+  const reverseSwapIx = deserializeJupiterInstruction(reverseInstructions.swapInstruction);
+  const reverseCleanupIx = reverseInstructions.cleanupInstruction
+    ? deserializeJupiterInstruction(reverseInstructions.cleanupInstruction)
+    : null;
+  const tokenLedgerIx = reverseInstructions.tokenLedgerInstruction
+    ? deserializeJupiterInstruction(reverseInstructions.tokenLedgerInstruction)
+    : null;
+
+  // ── 5. Build combined instruction array ────────────────────────
+  // Order: ComputeBudget → Forward ixs → SetTokenLedger → Reverse setup → Reverse swap → Cleanup
+  const combinedInstructions: TransactionInstruction[] = [
+    ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports }),
+    ...forwardSwapIxs,
+  ];
+
+  // Token ledger instruction MUST come after forward swap (records balance)
+  // and BEFORE reverse swap (reverse reads the recorded balance)
+  if (tokenLedgerIx) {
+    combinedInstructions.push(tokenLedgerIx);
+  }
+
+  combinedInstructions.push(...reverseSetupIxs);
+  combinedInstructions.push(reverseSwapIx);
+  if (reverseCleanupIx) {
+    combinedInstructions.push(reverseCleanupIx);
+  }
+
+  // ── 6. Get fresh blockhash and compile ─────────────────────────
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+  const compiledMessage = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: blockhash,
+    instructions: combinedInstructions,
+  }).compileToV0Message(allLookupTables);
+
+  const combinedTx = new VersionedTransaction(compiledMessage);
+
+  // ── 7. Check size BEFORE signing ───────────────────────────────
+  const serialized = combinedTx.serialize();
+  const sizeBytes = serialized.length;
+
+  if (sizeBytes > MAX_TX_SIZE) {
+    throw new TxTooLargeError(
+      `Token ledger combined TX is ${sizeBytes} bytes (limit: ${MAX_TX_SIZE}). ` +
+      `Forward: ${forwardSwapIxs.length} ixs, Reverse: 1 swap + ${reverseSetupIxs.length} setup`,
+      sizeBytes,
+    );
+  }
+
+  // ── 8. Sign and return ─────────────────────────────────────────
+  combinedTx.sign([wallet]);
+
+  executionLog.info(
+    {
+      sizeBytes,
+      forwardIxs: forwardSwapIxs.length,
+      hasTokenLedger: !!tokenLedgerIx,
+      reverseSetupIxs: reverseSetupIxs.length,
+      hasCleanup: !!reverseCleanupIx,
+      lookupTables: allLookupTables.length,
+      computeUnitLimit,
+    },
+    'Token ledger combined TX built — reverse leg uses dynamic balance',
+  );
+
+  return { transaction: combinedTx, sizeBytes };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // UTILITY: BUILD TIP-ONLY TRANSACTION
 // ═══════════════════════════════════════════════════════════════════
 

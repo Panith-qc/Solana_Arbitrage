@@ -867,12 +867,12 @@ export class BotEngine {
 
       if (opp.quotes.length === 2) {
         // Standard 2-leg arbitrage: SOL → Token → SOL
-        if (opp.metadata?.forwardSwapTx && opp.metadata?.reverseSwapTx) {
-          // FAST PATH: Swap TXs were pre-fetched during scan — combine into single atomic TX
-          log.info('Using FAST execution path (pre-fetched swap TXs → single atomic TX)');
+        if (opp.metadata?.forwardSwapTx && opp.metadata?.reverseSwapIxs) {
+          // FAST PATH: Forward swap TX + reverse swap instructions (token ledger) pre-fetched
+          log.info('Using FAST execution path (token ledger → single atomic TX)');
           result = await this.executor.executeFastAtomicArbitrage(
             opp.metadata.forwardSwapTx,
-            opp.metadata.reverseSwapTx,
+            opp.metadata.reverseSwapIxs,
             opp.metadata.forwardQuote,
             opp.metadata.reverseQuote,
             opp.mintPath[1],

@@ -264,7 +264,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
           if (swapTxs) {
             opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
-            opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+            opp.metadata.reverseSwapIxs = swapTxs.reverseSwapIxs;
             opp.metadata.forwardQuote = jupBuy.raw;
             opp.metadata.reverseQuote = jupSell.raw;
             opp.metadata.scanTimestamp = now;
@@ -387,7 +387,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
 
         if (swapTxs) {
           opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
-          opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+          opp.metadata.reverseSwapIxs = swapTxs.reverseSwapIxs;
           opp.metadata.forwardQuote = jupBuy.raw;
           opp.metadata.reverseQuote = jupSell.raw;
           opp.metadata.scanTimestamp = now;
@@ -514,7 +514,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           );
           if (swapTxs) {
             opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
-            opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
+            opp.metadata.reverseSwapIxs = swapTxs.reverseSwapIxs;
             opp.metadata.forwardQuote = jupBuy.raw;
             opp.metadata.reverseQuote = jupSell.raw;
             opp.metadata.scanTimestamp = Date.now();
