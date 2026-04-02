@@ -1217,7 +1217,12 @@ export class Executor {
         userPublicKey: wallet.publicKey.toString(),
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
-        dynamicSlippage: false,
+        // DYNAMIC SLIPPAGE: Let Jupiter compute per-hop optimal slippage tolerances
+        // based on each pool's liquidity depth. Critical for combined atomic TXs where
+        // the forward leg changes pool state before the reverse leg executes.
+        // maxBps caps the per-hop tolerance; the executor's pre-flight profit check
+        // still ensures we only send net-profitable trades.
+        dynamicSlippage: { maxBps: 1000 },
         // CRITICAL: Set explicit priority fee matching our profit calculation.
         // 'auto' would let Jupiter set 100k-500k lamports, eating all profit.
         // We use Jito for block inclusion, so priority fee can be minimal.
