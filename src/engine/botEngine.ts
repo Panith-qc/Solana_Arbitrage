@@ -934,8 +934,8 @@ export class BotEngine {
 
         if (preTradeBalanceSol > 0) {
           try {
-            // Small delay for balance to settle on-chain
-            await new Promise(r => setTimeout(r, 1000));
+            // Short delay for balance to settle — TX already confirmed at 'confirmed' level
+            await new Promise(r => setTimeout(r, 300));
             const postTradeBalanceSol = await this.connectionManager.getBalance();
             const actualDelta = postTradeBalanceSol - preTradeBalanceSol;
 

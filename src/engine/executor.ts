@@ -901,12 +901,6 @@ export class Executor {
       'FAST: Using pre-fetched swap TXs — skipping re-quote',
     );
 
-    // ── CAPTURE PRE-TRADE BALANCE ───────────────────────────────
-    // Skip RPC getBalance() here — the caller (botEngine) already caches the
-    // balance and the ~500ms RPC call eats into our quote freshness window.
-    // We'll measure post-trade balance after bundle lands for real profit calc.
-    let preTradeBalanceLamports: number | null = null;
-
     // ── BUILD SINGLE ATOMIC TX (both swaps in one transaction) ──
     // Combines forward + reverse swap instructions into ONE TX.
     // Solana runtime guarantees: all instructions succeed or all revert.
@@ -958,29 +952,20 @@ export class Executor {
         };
       }
 
-      // ── MEASURE REAL PROFIT ──────────────────────────────────
-      let actualProfitSol: number;
-      try {
-        await sleep(1000);
-        const postBalanceSol = await this.connManager.getBalance();
-        const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
-        if (preTradeBalanceLamports !== null) {
-          actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
-          executionLog.info(
-            { preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL, postBalanceSol, actualProfitSol, signature },
-            'FAST: REAL profit from balance delta',
-          );
-        } else {
-          actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
-        }
-      } catch {
-        actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
-      }
+      // ── PROFIT ESTIMATE (real verification done by botEngine) ─
+      // Skip balance check here — botEngine does its own post-trade
+      // balance delta which is the ground truth. Saves ~1.5s latency.
+      const estimatedProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+
+      executionLog.info(
+        { tokenSymbol, signature, estimatedProfitSol: estimatedProfitSol.toFixed(6), elapsedMs: elapsed },
+        'FAST: Atomic TX confirmed — profit verified by engine',
+      );
 
       return {
         success: true,
-        profitSol: actualProfitSol,
-        profitUsd: actualProfitSol * solPrice,
+        profitSol: estimatedProfitSol,
+        profitUsd: estimatedProfitSol * solPrice,
         signatures: [signature],
         gasUsed: 0, jitoTip: 0,
         error: null, stuckToken: null, executionTimeMs: elapsed,
