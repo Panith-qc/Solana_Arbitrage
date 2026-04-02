@@ -259,6 +259,148 @@ export function getRandomTipAccount(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// COMBINED ATOMIC SWAP (two Jupiter swaps in ONE transaction)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Max Solana transaction size in bytes */
+const MAX_TX_SIZE = 1232;
+
+export interface CombinedSwapResult {
+  transaction: VersionedTransaction;
+  /** Serialized size in bytes — must be ≤ 1232 */
+  sizeBytes: number;
+}
+
+/**
+ * Combine two Jupiter swap transactions (forward: SOL→Token, reverse: Token→SOL)
+ * into a SINGLE VersionedTransaction. This is fully atomic by Solana's runtime:
+ * if any instruction fails, the entire transaction reverts. No partial execution.
+ *
+ * Flow:
+ * 1. Deserialize both swap TXs from Jupiter /swap base64 payloads
+ * 2. Decompile both to extract raw instructions
+ * 3. Merge: [ComputeBudget] + [Forward swap ixs] + [Reverse swap ixs]
+ * 4. Compile to V0 message with all lookup tables from both TXs
+ * 5. Sign once, return combined TX
+ *
+ * @returns CombinedSwapResult with the signed TX and its byte size, or throws if > 1232 bytes
+ */
+export async function combineSwapsIntoSingleTx(
+  forwardSwapBase64: string,
+  reverseSwapBase64: string,
+  wallet: Keypair,
+  connection: Connection,
+  priorityFeeMicroLamports: number = 10_000,
+  computeUnitLimit: number = 600_000,
+): Promise<CombinedSwapResult> {
+  // ── 1. Deserialize both swap TXs ─────────────────────────────
+  const forwardTx = VersionedTransaction.deserialize(
+    Buffer.from(forwardSwapBase64, 'base64'),
+  );
+  const reverseTx = VersionedTransaction.deserialize(
+    Buffer.from(reverseSwapBase64, 'base64'),
+  );
+
+  // ── 2. Resolve ALL address lookup tables from both TXs ───────
+  const lookupTableMap = new Map<string, AddressLookupTableAccount>();
+
+  for (const tx of [forwardTx, reverseTx]) {
+    const msg = tx.message;
+    if ('addressTableLookups' in msg && msg.addressTableLookups.length > 0) {
+      for (const lookup of msg.addressTableLookups) {
+        const key = lookup.accountKey.toString();
+        if (!lookupTableMap.has(key)) {
+          const info = await connection.getAddressLookupTable(lookup.accountKey);
+          if (info.value) {
+            lookupTableMap.set(key, info.value);
+          }
+        }
+      }
+    }
+  }
+
+  const allLookupTables = Array.from(lookupTableMap.values());
+
+  // ── 3. Decompile both messages to get raw instructions ───────
+  const forwardMsg = TransactionMessage.decompile(forwardTx.message, {
+    addressLookupTableAccounts: allLookupTables,
+  });
+  const reverseMsg = TransactionMessage.decompile(reverseTx.message, {
+    addressLookupTableAccounts: allLookupTables,
+  });
+
+  // ── 4. Extract swap instructions (strip ComputeBudget from both) ──
+  const forwardSwapIxs = forwardMsg.instructions.filter(
+    (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+  );
+  const reverseSwapIxs = reverseMsg.instructions.filter(
+    (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+  );
+
+  // ── 5. Build combined instruction array ──────────────────────
+  // Order: ComputeBudget → Forward swap → Reverse swap
+  const combinedInstructions: TransactionInstruction[] = [
+    ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports }),
+    ...forwardSwapIxs,
+    ...reverseSwapIxs,
+  ];
+
+  // ── 6. Get fresh blockhash and compile ───────────────────────
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+  const compiledMessage = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: blockhash,
+    instructions: combinedInstructions,
+  }).compileToV0Message(allLookupTables);
+
+  const combinedTx = new VersionedTransaction(compiledMessage);
+
+  // ── 7. Check size BEFORE signing ─────────────────────────────
+  // Signing doesn't change size (signature slot is pre-allocated)
+  const serialized = combinedTx.serialize();
+  const sizeBytes = serialized.length;
+
+  if (sizeBytes > MAX_TX_SIZE) {
+    throw new TxTooLargeError(
+      `Combined TX is ${sizeBytes} bytes (limit: ${MAX_TX_SIZE}). ` +
+      `Forward: ${forwardSwapIxs.length} ixs, Reverse: ${reverseSwapIxs.length} ixs`,
+      sizeBytes,
+    );
+  }
+
+  // ── 8. Sign and return ───────────────────────────────────────
+  combinedTx.sign([wallet]);
+
+  executionLog.info(
+    {
+      sizeBytes,
+      forwardIxs: forwardSwapIxs.length,
+      reverseIxs: reverseSwapIxs.length,
+      lookupTables: allLookupTables.length,
+      computeUnitLimit,
+    },
+    'Combined atomic TX built — both swaps in single transaction',
+  );
+
+  return { transaction: combinedTx, sizeBytes };
+}
+
+/**
+ * Custom error for when combined TX exceeds 1232 byte limit.
+ * Caller can catch this specifically and fall back to sequential execution.
+ */
+export class TxTooLargeError extends Error {
+  public readonly sizeBytes: number;
+  constructor(message: string, sizeBytes: number) {
+    super(message);
+    this.name = 'TxTooLargeError';
+    this.sizeBytes = sizeBytes;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // UTILITY: BUILD TIP-ONLY TRANSACTION
 // ═══════════════════════════════════════════════════════════════════
 

@@ -678,7 +678,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
         dynamicSlippage: false,
-        prioritizationFeeLamports: 5000, // matches PRIORITY_FEE_LAMPORTS
+        prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
       });
 
       // Fetch both swap TXs — sequential to respect rate limit

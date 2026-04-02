@@ -17,7 +17,6 @@ import {
   LAMPORTS_PER_SOL,
   BASE_GAS_LAMPORTS,
   PRIORITY_FEE_LAMPORTS,
-  JITO_TIP_LAMPORTS,
   SINGLE_LEG_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
 } from './config.js';
@@ -28,9 +27,8 @@ import {
 } from './simulator.js';
 import {
   buildSwapTransaction,
-  serializeTransaction,
-  getRandomTipAccount,
-  addJitoTip,
+  combineSwapsIntoSingleTx,
+  TxTooLargeError,
 } from './transactionBuilder.js';
 import {
   submitArbitrageBundle,
@@ -678,8 +676,7 @@ export class Executor {
     }
 
     // Final profitability check before committing.
-    // TWO_LEG_FEE_LAMPORTS already includes JITO_TIP_LAMPORTS (10k).
-    // Only add the EXTRA tip if config tip > base tip.
+    // Single atomic TX = 1 signature + priority fee. No Jito tip.
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
 
     if (isNaN(reverseOutputLamports) || reverseOutputLamports <= 0) {
@@ -687,8 +684,7 @@ export class Executor {
     }
 
     const grossProfitLamports = reverseOutputLamports - inputLamports;
-    const extraTipLamports = Math.max(0, tipLamports - JITO_TIP_LAMPORTS);
-    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + extraTipLamports;
+    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS;
     const netProfitLamports = grossProfitLamports - totalFeeLamports;
 
     executionLog.info(
@@ -717,114 +713,115 @@ export class Executor {
       return this.failResult('ATOMIC: Failed to get reverse swap TX', startMs);
     }
 
-    // ── STEP 4: BUILD + SIGN BOTH TXS ──────────────────────────
-    const forwardTx = buildSwapTransaction(forwardSwap.swapTransaction, wallet);
-    let reverseTx = buildSwapTransaction(reverseSwap.swapTransaction, wallet);
+    // ── STEP 4: BUILD SINGLE ATOMIC TX ────────────────────────────
+    // Combine forward + reverse swap into ONE transaction.
+    // Solana runtime: all instructions succeed or all revert. No partial.
+    // Sent via Helius staked connection — no Jito needed.
 
-    // Add Jito tip to the LAST transaction in the bundle
-    const tipAccount = getRandomTipAccount();
-    reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
+    try {
+      const combined = await combineSwapsIntoSingleTx(
+        forwardSwap.swapTransaction,
+        reverseSwap.swapTransaction,
+        wallet,
+        connection,
+        10_000,   // priority fee micro-lamports
+        600_000,  // compute units for 2 swaps
+      );
 
-    // ── STEP 5: SKIP SIMULATION — SUBMIT DIRECTLY TO JITO ────────
-    // Simulation costs 500-1000ms on free-tier RPC. The Jito atomic bundle
-    // guarantees both TXs land or neither does — if invalid, bundle is
-    // rejected with no SOL lost. Going straight to submission saves ~1s.
+      executionLog.info(
+        { tokenSymbol, sizeBytes: combined.sizeBytes },
+        'ATOMIC: Combined TX built — sending via staked connection',
+      );
 
-    executionLog.info('ATOMIC: Skipping simulation — submitting directly to Jito atomic bundle');
+      // ── STEP 5: SEND VIA HELIUS STAKED CONNECTION ──────────────
+      const rawTx = combined.transaction.serialize();
+      const signature = await connection.sendRawTransaction(rawTx, {
+        skipPreflight: true,
+        maxRetries: 2,
+        preflightCommitment: 'processed',
+      });
 
-    // ── STEP 6: SUBMIT AS ATOMIC JITO BUNDLE ────────────────────
-    const forwardB58 = serializeTransaction(forwardTx);
-    const reverseB58 = serializeTransaction(reverseTx);
+      executionLog.info({ tokenSymbol, signature }, 'ATOMIC: TX sent — confirming');
 
-    const bundleResult = await submitArbitrageBundle([forwardB58, reverseB58], tipLamports);
+      // ── STEP 6: CONFIRM ────────────────────────────────────────
+      const { blockhash: confBlockhash, lastValidBlockHeight: confHeight } =
+        await connection.getLatestBlockhash('confirmed');
+      const confirmation = await connection.confirmTransaction(
+        { signature, blockhash: confBlockhash, lastValidBlockHeight: confHeight },
+        'confirmed',
+      );
 
-    if (!bundleResult.bundleId) {
-      return this.failResult(`ATOMIC: Bundle rejected: ${bundleResult.error}`, startMs);
-    }
+      const elapsed = Date.now() - startMs;
 
-    executionLog.info(
-      { bundleId: bundleResult.bundleId, endpoint: bundleResult.endpoint },
-      'ATOMIC: Bundle submitted — waiting for landing',
-    );
+      if (confirmation.value.err) {
+        return {
+          success: false, profitSol: 0, profitUsd: 0,
+          signatures: [signature], gasUsed: 0, jitoTip: 0,
+          error: `ATOMIC: TX reverted: ${JSON.stringify(confirmation.value.err)}`,
+          stuckToken: null, executionTimeMs: elapsed,
+        };
+      }
 
-    // ── STEP 7: WAIT FOR LANDING ────────────────────────────────
-    const finalStatus = await waitForBundleLanding(
-      bundleResult.bundleId,
-      bundleResult.endpoint || undefined,
-    );
+      // ── STEP 7: MEASURE REAL PROFIT ────────────────────────────
+      let actualProfitSol: number;
 
-    const elapsed = Date.now() - startMs;
+      if (preTradeBalanceLamports !== null) {
+        try {
+          await sleep(1000);
+          const postBalanceSol = await this.connManager.getBalance();
+          const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
+          actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
 
-    if (finalStatus.status !== 'landed') {
-      return {
-        success: false,
-        profitSol: 0,
-        profitUsd: 0,
-        signatures: [],
-        gasUsed: 0,
-        jitoTip: tipLamports / LAMPORTS_PER_SOL,
-        error: `ATOMIC: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
-        stuckToken: null, // Atomic = no stuck tokens possible
-        executionTimeMs: elapsed,
-      };
-    }
-
-    // ── STEP 8: MEASURE REAL PROFIT ─────────────────────────────
-    let actualProfitSol: number;
-
-    if (preTradeBalanceLamports !== null) {
-      try {
-        // Wait briefly for balance to settle
-        await sleep(1500);
-        const postBalanceSol = await this.connManager.getBalance();
-        const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
-        actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
-
-        executionLog.info(
-          {
-            preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL,
-            postBalanceSol,
-            actualProfitSol: actualProfitSol.toFixed(6),
-            tokenSymbol,
-            bundleId: bundleResult.bundleId,
-          },
-          'ATOMIC: REAL profit from on-chain balance delta',
-        );
-      } catch (err: any) {
-        executionLog.warn({ error: err?.message }, 'ATOMIC: Post-trade balance check failed, using quote-based fallback');
+          executionLog.info(
+            {
+              preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL,
+              postBalanceSol,
+              actualProfitSol: actualProfitSol.toFixed(6),
+              tokenSymbol, signature,
+            },
+            'ATOMIC: REAL profit from on-chain balance delta',
+          );
+        } catch (err: any) {
+          executionLog.warn({ error: err?.message }, 'ATOMIC: Post-trade balance check failed');
+          actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+        }
+      } else {
         actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
       }
-    } else {
-      actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+
+      const netProfitUsd = actualProfitSol * solPrice;
+
+      executionLog.info(
+        {
+          tokenSymbol, signature,
+          netProfitSol: actualProfitSol.toFixed(6),
+          netProfitUsd: netProfitUsd.toFixed(4),
+          elapsedMs: elapsed,
+        },
+        actualProfitSol > 0
+          ? 'ATOMIC ARBITRAGE COMPLETED — PROFIT'
+          : 'ATOMIC ARBITRAGE COMPLETED — LOSS',
+      );
+
+      return {
+        success: true,
+        profitSol: actualProfitSol,
+        profitUsd: netProfitUsd,
+        signatures: [signature],
+        gasUsed: 0, jitoTip: 0,
+        error: null, stuckToken: null,
+        executionTimeMs: elapsed,
+      };
+
+    } catch (err: any) {
+      if (err instanceof TxTooLargeError) {
+        executionLog.warn(
+          { tokenSymbol, sizeBytes: err.sizeBytes },
+          'ATOMIC: Combined TX too large — aborting (route too complex)',
+        );
+      }
+      return this.failResult(`ATOMIC: ${err.message}`, startMs);
     }
-
-    const netProfitUsd = actualProfitSol * solPrice;
-
-    executionLog.info(
-      {
-        tokenSymbol,
-        bundleId: bundleResult.bundleId,
-        landedSlot: finalStatus.landedSlot,
-        netProfitSol: actualProfitSol.toFixed(6),
-        netProfitUsd: netProfitUsd.toFixed(4),
-        elapsedMs: elapsed,
-      },
-      actualProfitSol > 0
-        ? 'ATOMIC ARBITRAGE COMPLETED — PROFIT'
-        : 'ATOMIC ARBITRAGE COMPLETED — LOSS',
-    );
-
-    return {
-      success: true,
-      profitSol: actualProfitSol,
-      profitUsd: netProfitUsd,
-      signatures: [], // Jito bundles don't return individual sigs
-      gasUsed: 0,
-      jitoTip: tipLamports / LAMPORTS_PER_SOL,
-      error: null,
-      stuckToken: null,
-      executionTimeMs: elapsed,
-    };
   }
 
   // ═════════════════════════════════════════════════════════════════
@@ -837,9 +834,10 @@ export class Executor {
    *
    * Safety:
    * - Swap TXs are signed fresh from Jupiter /swap (not just quotes)
-   * - Both legs go into a single atomic Jito bundle (no stuck tokens)
+   * - Both legs combined into a SINGLE atomic transaction (no stuck tokens)
+   * - Sent via Helius staked connection for fast block inclusion
    * - Pre-trade + post-trade balance delta verifies real profit
-   * - If scan quote is older than maxAgeMs, falls back to full re-quote path
+   * - If scan quote is older than 3s, falls back to full re-quote path
    *
    * @param forwardSwapTx  Base64-encoded swap TX from Jupiter /swap (SOL→Token)
    * @param reverseSwapTx  Base64-encoded swap TX from Jupiter /swap (Token→SOL)
@@ -881,10 +879,10 @@ export class Executor {
     }
 
     // ── PROFITABILITY SANITY CHECK ──────────────────────────────
+    // Single atomic TX = 1 signature + priority fee. No Jito tip.
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
     const grossProfitLamports = reverseOutputLamports - inputLamports;
-    const extraTipLamports = Math.max(0, tipLamports - JITO_TIP_LAMPORTS);
-    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS + extraTipLamports;
+    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS;
     const netProfitLamports = grossProfitLamports - totalFeeLamports;
 
     if (netProfitLamports < 0) {
@@ -909,85 +907,95 @@ export class Executor {
     // We'll measure post-trade balance after bundle lands for real profit calc.
     let preTradeBalanceLamports: number | null = null;
 
-    // ── BUILD + SIGN TXS ────────────────────────────────────────
-    const forwardTx = buildSwapTransaction(forwardSwapTx, wallet);
-    let reverseTx = buildSwapTransaction(reverseSwapTx, wallet);
+    // ── BUILD SINGLE ATOMIC TX (both swaps in one transaction) ──
+    // Combines forward + reverse swap instructions into ONE TX.
+    // Solana runtime guarantees: all instructions succeed or all revert.
+    // No Jito needed. Sent via Helius staked connection for fast landing.
 
-    // Add Jito tip to the last TX
-    const tipAccount = getRandomTipAccount();
-    reverseTx = await addJitoTip(reverseTx, tipLamports, tipAccount, wallet, connection);
+    try {
+      const combined = await combineSwapsIntoSingleTx(
+        forwardSwapTx,
+        reverseSwapTx,
+        wallet,
+        connection,
+        10_000,   // priority fee micro-lamports
+        600_000,  // compute units (2 swaps need more)
+      );
 
-    // ── SKIP SIMULATION — SUBMIT DIRECTLY TO JITO ────────────────
-    // Simulation costs 500-1000ms on free-tier RPC and has never helped:
-    // the Jito atomic bundle guarantees both TXs land or neither does.
-    // If forward TX is invalid, Jito rejects the bundle — no SOL lost.
-    // Removing simulation saves ~1s per trade execution.
+      executionLog.info(
+        { tokenSymbol, ageMs, sizeBytes: combined.sizeBytes },
+        'FAST: Combined atomic TX built — sending via staked connection',
+      );
 
-    executionLog.info(
-      { tokenSymbol, ageMs },
-      'FAST: Skipping simulation — submitting directly to Jito atomic bundle',
-    );
+      // ── SEND VIA HELIUS STAKED CONNECTION ─────────────────────
+      const rawTx = combined.transaction.serialize();
+      const signature = await connection.sendRawTransaction(rawTx, {
+        skipPreflight: true,
+        maxRetries: 2,
+        preflightCommitment: 'processed',
+      });
 
-    // ── SUBMIT JITO BUNDLE ──────────────────────────────────────
-    const forwardB58 = serializeTransaction(forwardTx);
-    const reverseB58 = serializeTransaction(reverseTx);
-    const bundleResult = await submitArbitrageBundle([forwardB58, reverseB58], tipLamports);
+      executionLog.info(
+        { tokenSymbol, signature },
+        'FAST: Atomic TX sent — confirming',
+      );
 
-    if (!bundleResult.bundleId) {
-      return this.failResult(`FAST: Bundle rejected: ${bundleResult.error}`, startMs);
-    }
+      // ── CONFIRM ──────────────────────────────────────────────
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      const confirmation = await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        'confirmed',
+      );
 
-    executionLog.info(
-      { bundleId: bundleResult.bundleId, submissionLatencyMs: bundleResult.submissionLatencyMs },
-      'FAST: Bundle submitted — waiting for landing',
-    );
+      const elapsed = Date.now() - startMs;
 
-    // ── WAIT FOR LANDING ────────────────────────────────────────
-    const finalStatus = await waitForBundleLanding(
-      bundleResult.bundleId,
-      bundleResult.endpoint || undefined,
-    );
+      if (confirmation.value.err) {
+        return {
+          success: false, profitSol: 0, profitUsd: 0,
+          signatures: [signature], gasUsed: 0, jitoTip: 0,
+          error: `FAST: TX reverted on-chain: ${JSON.stringify(confirmation.value.err)}`,
+          stuckToken: null, executionTimeMs: elapsed,
+        };
+      }
 
-    const elapsed = Date.now() - startMs;
-
-    if (finalStatus.status !== 'landed') {
-      return {
-        success: false, profitSol: 0, profitUsd: 0, signatures: [],
-        gasUsed: 0,
-        jitoTip: tipLamports / LAMPORTS_PER_SOL,
-        error: `FAST: Bundle ${finalStatus.status}: ${finalStatus.error || 'no details'}`,
-        stuckToken: null, executionTimeMs: elapsed,
-      };
-    }
-
-    // ── MEASURE REAL PROFIT ─────────────────────────────────────
-    let actualProfitSol: number;
-    if (preTradeBalanceLamports !== null) {
+      // ── MEASURE REAL PROFIT ──────────────────────────────────
+      let actualProfitSol: number;
       try {
-        await sleep(1500);
+        await sleep(1000);
         const postBalanceSol = await this.connManager.getBalance();
         const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
-        actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
-        executionLog.info(
-          { preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL, postBalanceSol, actualProfitSol, bundleId: bundleResult.bundleId },
-          'FAST: REAL profit from balance delta',
-        );
+        if (preTradeBalanceLamports !== null) {
+          actualProfitSol = (postBalanceLamports - preTradeBalanceLamports) / LAMPORTS_PER_SOL;
+          executionLog.info(
+            { preBalanceSol: preTradeBalanceLamports / LAMPORTS_PER_SOL, postBalanceSol, actualProfitSol, signature },
+            'FAST: REAL profit from balance delta',
+          );
+        } else {
+          actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
+        }
       } catch {
         actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
       }
-    } else {
-      actualProfitSol = (grossProfitLamports - totalFeeLamports) / LAMPORTS_PER_SOL;
-    }
 
-    return {
-      success: true,
-      profitSol: actualProfitSol,
-      profitUsd: actualProfitSol * solPrice,
-      signatures: [],
-      gasUsed: 0,
-      jitoTip: tipLamports / LAMPORTS_PER_SOL,
-      error: null, stuckToken: null, executionTimeMs: elapsed,
-    };
+      return {
+        success: true,
+        profitSol: actualProfitSol,
+        profitUsd: actualProfitSol * solPrice,
+        signatures: [signature],
+        gasUsed: 0, jitoTip: 0,
+        error: null, stuckToken: null, executionTimeMs: elapsed,
+      };
+
+    } catch (err: any) {
+      if (err instanceof TxTooLargeError) {
+        executionLog.warn(
+          { tokenSymbol, sizeBytes: err.sizeBytes },
+          'FAST: Combined TX too large — falling back to full re-quote path',
+        );
+        return this.executeAtomicArbitrage(forwardQuote, tokenMint, tokenSymbol, solPrice, tipLamports);
+      }
+      return this.failResult(`FAST: ${err.message}`, startMs);
+    }
   }
 
   // ═════════════════════════════════════════════════════════════════

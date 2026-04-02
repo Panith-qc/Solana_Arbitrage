@@ -9,13 +9,13 @@ export const USDC_DECIMALS = 6;
 // ── On-chain fee constants (single source of truth) ──────────────────────────
 // These are the REAL Solana protocol fees — never duplicate these values elsewhere.
 export const BASE_GAS_LAMPORTS = 5_000;        // 5000 lamports per signature (Solana protocol fixed)
-export const PRIORITY_FEE_LAMPORTS = 5_000;    // Minimal priority fee — Jito handles block inclusion
-export const JITO_TIP_LAMPORTS = 10_000;       // Minimum viable Jito tip for bundle inclusion
+export const PRIORITY_FEE_LAMPORTS = 10_000;   // Priority fee for staked connection inclusion
+export const JITO_TIP_LAMPORTS = 10_000;       // Kept for backward compat with config references
 
-// Derived: total cost for a single-leg swap (1 signature + priority + Jito)
-export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 20,000
-// Derived: total cost for a 2-leg arbitrage cycle (2 signatures + priority + Jito)
-export const TWO_LEG_FEE_LAMPORTS = (BASE_GAS_LAMPORTS * 2) + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 25,000
+// Single atomic TX = 1 signature + priority fee (no Jito tip needed)
+export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS; // 15,000
+// Combined atomic TX: both swaps in one TX = 1 signature + priority fee
+export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS;    // 15,000
 
 // Token list for scanning
 export interface TokenInfo {
@@ -214,6 +214,7 @@ export interface BotConfig {
   // RPC
   rpcUrl: string;
   rpcBackupUrl: string;
+  rpcWsUrl: string;
   rpcCommitment: 'processed' | 'confirmed' | 'finalized';
 
   // Wallet
@@ -263,6 +264,7 @@ export function loadConfig(): BotConfig {
   return {
     rpcUrl: process.env.HELIUS_RPC_URL || '',
     rpcBackupUrl: process.env.QUICKNODE_RPC_URL || '',
+    rpcWsUrl: process.env.HELIUS_WS_URL || '',
     rpcCommitment: (process.env.RPC_COMMITMENT as any) || 'confirmed',
     privateKey: process.env.PRIVATE_KEY || '',
     riskLevel: (process.env.RISK_LEVEL as RiskLevel) || 'AGGRESSIVE',

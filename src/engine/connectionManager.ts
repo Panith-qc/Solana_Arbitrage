@@ -26,14 +26,22 @@ export class ConnectionManager {
   }
 
   async initialize(): Promise<void> {
-    // Initialize primary RPC
+    // Initialize primary RPC (with explicit WebSocket URL if configured)
     if (this.config.rpcUrl) {
-      this.primaryConnection = new Connection(this.config.rpcUrl, {
+      const connectionOpts: any = {
         commitment: this.config.rpcCommitment,
         confirmTransactionInitialTimeout: 30000,
-      });
+      };
+      // Use explicit WebSocket URL for enhanced WebSocket on paid Helius tiers
+      if (this.config.rpcWsUrl) {
+        connectionOpts.wsEndpoint = this.config.rpcWsUrl;
+      }
+      this.primaryConnection = new Connection(this.config.rpcUrl, connectionOpts);
       this.activeConnection = this.primaryConnection;
-      engineLog.info({ rpc: this.maskUrl(this.config.rpcUrl) }, 'Primary RPC initialized');
+      engineLog.info(
+        { rpc: this.maskUrl(this.config.rpcUrl), ws: this.config.rpcWsUrl ? 'explicit' : 'auto' },
+        'Primary RPC initialized',
+      );
     }
 
     // Initialize backup RPC
