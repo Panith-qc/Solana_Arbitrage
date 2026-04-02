@@ -977,7 +977,18 @@ export class Executor {
         );
         return this.executeAtomicArbitrage(forwardQuote, tokenMint, tokenSymbol, solPrice, tipLamports);
       }
-      return this.failResult(`FAST: ${err.message}`, startMs);
+      // Deserialization errors (e.g. "encoding overruns Uint8Array") mean the
+      // swap TXs are too complex to combine. Fall back to SLOW path which
+      // re-quotes with potentially simpler routing.
+      const msg = err.message || String(err);
+      if (msg.includes('encoding overruns') || msg.includes('Uint8Array') || msg.includes('deserialize')) {
+        executionLog.warn(
+          { tokenSymbol, error: msg },
+          'FAST: Swap TX deserialization failed — falling back to full re-quote path',
+        );
+        return this.executeAtomicArbitrage(forwardQuote, tokenMint, tokenSymbol, solPrice, tipLamports);
+      }
+      return this.failResult(`FAST: ${msg}`, startMs);
     }
   }
 
