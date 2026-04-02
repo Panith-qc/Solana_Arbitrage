@@ -867,9 +867,9 @@ export class BotEngine {
 
       if (opp.quotes.length === 2) {
         // Standard 2-leg arbitrage: SOL → Token → SOL
-        if (this.config.jitoEnabled && opp.metadata?.forwardSwapTx && opp.metadata?.reverseSwapTx) {
-          // FAST PATH: Swap TXs were pre-fetched during scan — skip re-quote
-          log.info('Using FAST execution path (pre-fetched swap TXs)');
+        if (opp.metadata?.forwardSwapTx && opp.metadata?.reverseSwapTx) {
+          // FAST PATH: Swap TXs were pre-fetched during scan — combine into single atomic TX
+          log.info('Using FAST execution path (pre-fetched swap TXs → single atomic TX)');
           result = await this.executor.executeFastAtomicArbitrage(
             opp.metadata.forwardSwapTx,
             opp.metadata.reverseSwapTx,
@@ -881,22 +881,14 @@ export class BotEngine {
             this.config.jitoTipLamports,
             opp.metadata.scanTimestamp || opp.timestamp,
           );
-        } else if (this.config.jitoEnabled) {
-          // SLOW PATH: No pre-fetched TXs — full re-quote cycle
+        } else {
+          // SLOW PATH: No pre-fetched TXs — full re-quote then combine into single atomic TX
           result = await this.executor.executeAtomicArbitrage(
             opp.quotes[0],
             opp.mintPath[1],
             opp.tokenPath[1],
             this.solPriceUsd,
             this.config.jitoTipLamports,
-          );
-        } else {
-          // Fallback: Sequential execution (higher risk, no Jito)
-          result = await this.executor.executeArbitrageCycle(
-            opp.quotes[0],
-            opp.mintPath[1],
-            opp.tokenPath[1],
-            this.solPriceUsd,
           );
         }
       } else if (opp.quotes.length >= 3) {
