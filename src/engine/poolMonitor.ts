@@ -113,6 +113,23 @@ export class PoolMonitor {
   /** Timer for periodic cache cleanup */
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
+  /** Timer for WebSocket health check / reconnection */
+  private wsHealthTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Addresses being monitored (for reconnection) */
+  private monitoredAddresses: string[] = [];
+
+  /** Last time we received ANY account change event */
+  private lastEventReceivedMs: number = 0;
+
+  /** How long without events before we assume WS is dead */
+  private readonly WS_DEAD_THRESHOLD_MS = 60_000; // 60s no events = reconnect
+
+  /** Reconnection state */
+  private reconnecting = false;
+  private reconnectAttempts = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 10;
+
   constructor(connectionManager: ConnectionManager, config: BotConfig) {
     this.connectionManager = connectionManager;
     this.config = config;
@@ -181,9 +198,19 @@ export class PoolMonitor {
       this.cleanupTimer = setInterval(() => this.evictStaleEntries(), this.cacheTtlMs);
     }
 
+    // Save addresses for reconnection
+    this.monitoredAddresses = [...new Set([...this.monitoredAddresses, ...poolAddresses])];
+    this.lastEventReceivedMs = Date.now();
+    this.reconnectAttempts = 0;
+
+    // Start WebSocket health check timer (detects dead connections)
+    if (!this.wsHealthTimer) {
+      this.wsHealthTimer = setInterval(() => this.checkWsHealth(), 15_000);
+    }
+
     dataLog.info(
       { activeSubscriptions: this.subscriptions.size },
-      'Pool monitoring started'
+      'Pool monitoring started — WebSocket health check active'
     );
   }
 
@@ -215,7 +242,107 @@ export class PoolMonitor {
       this.cleanupTimer = null;
     }
 
+    if (this.wsHealthTimer) {
+      clearInterval(this.wsHealthTimer);
+      this.wsHealthTimer = null;
+    }
+
     dataLog.info('Pool monitoring stopped');
+  }
+
+  // ─────────────────────────────────────────────
+  // WebSocket health check & auto-reconnection
+  // ─────────────────────────────────────────────
+
+  /**
+   * Periodic check: if no account change events received within threshold,
+   * assume WebSocket is dead and reconnect all subscriptions.
+   */
+  private async checkWsHealth(): Promise<void> {
+    if (!this.isMonitoring || this.reconnecting) return;
+    if (this.monitoredAddresses.length === 0) return;
+
+    const silenceMs = Date.now() - this.lastEventReceivedMs;
+
+    if (silenceMs < this.WS_DEAD_THRESHOLD_MS) return;
+
+    // WebSocket appears dead
+    dataLog.warn(
+      { silenceMs, subscriptions: this.subscriptions.size, attempt: this.reconnectAttempts + 1 },
+      'WebSocket appears dead — no events received, reconnecting...',
+    );
+
+    if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+      dataLog.error(
+        { attempts: this.reconnectAttempts },
+        'WebSocket reconnection failed after max attempts — falling back to poll-only mode',
+      );
+      return;
+    }
+
+    await this.reconnectSubscriptions();
+  }
+
+  /**
+   * Tear down all existing subscriptions and re-subscribe.
+   * This forces the Solana Connection to open a fresh WebSocket.
+   */
+  private async reconnectSubscriptions(): Promise<void> {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
+    this.reconnectAttempts++;
+
+    try {
+      const connection = this.connectionManager.getConnection();
+
+      // Unsubscribe all existing
+      for (const [address, subId] of this.subscriptions) {
+        try {
+          await connection.removeAccountChangeListener(subId);
+        } catch {
+          // Ignore — connection may already be dead
+        }
+      }
+      this.subscriptions.clear();
+
+      // Brief pause to let old WS close
+      await new Promise(r => setTimeout(r, 1000));
+
+      // Re-subscribe all addresses
+      for (const address of this.monitoredAddresses) {
+        try {
+          const pubkey = new PublicKey(address);
+          const subId = connection.onAccountChange(
+            pubkey,
+            (accountInfo: AccountInfo<Buffer>, context: Context) => {
+              this.handleAccountChange(address, accountInfo, context);
+            },
+            this.connectionManager.getConnection() ? 'confirmed' : 'confirmed',
+          );
+          this.subscriptions.set(address, subId);
+        } catch (err) {
+          dataLog.error({ err, pool: address }, 'Failed to re-subscribe pool');
+        }
+      }
+
+      this.lastEventReceivedMs = Date.now(); // Reset timer
+      dataLog.info(
+        { resubscribed: this.subscriptions.size, attempt: this.reconnectAttempts },
+        'WebSocket reconnected — pool subscriptions restored',
+      );
+    } catch (err) {
+      dataLog.error({ err, attempt: this.reconnectAttempts }, 'WebSocket reconnection failed');
+    } finally {
+      this.reconnecting = false;
+    }
+  }
+
+  /**
+   * Check if WebSocket monitoring is alive and receiving events.
+   */
+  isWsAlive(): boolean {
+    if (!this.isMonitoring || this.subscriptions.size === 0) return false;
+    return (Date.now() - this.lastEventReceivedMs) < this.WS_DEAD_THRESHOLD_MS;
   }
 
   /**
@@ -356,6 +483,10 @@ export class PoolMonitor {
     accountInfo: AccountInfo<Buffer>,
     context: Context
   ): void {
+    // Track that WS is alive
+    this.lastEventReceivedMs = Date.now();
+    this.reconnectAttempts = 0;
+
     try {
       const update = this.parsePoolData(poolAddress, accountInfo, context);
       if (!update) return;

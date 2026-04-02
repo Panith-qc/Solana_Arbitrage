@@ -716,30 +716,29 @@ export class Executor {
     // ── STEP 4: BUILD SINGLE ATOMIC TX ────────────────────────────
     // Combine forward + reverse swap into ONE transaction.
     // Solana runtime: all instructions succeed or all revert. No partial.
-    // Sent via Helius staked connection — no Jito needed.
+    // Sent via Helius staked connection with dynamic priority fees.
 
     try {
+      // Get optimal priority fee from Helius (cached 10s)
+      const dynamicPriorityFee = await this.connManager.getDynamicPriorityFee();
+
       const combined = await combineSwapsIntoSingleTx(
         forwardSwap.swapTransaction,
         reverseSwap.swapTransaction,
         wallet,
         connection,
-        10_000,   // priority fee micro-lamports
-        600_000,  // compute units for 2 swaps
+        dynamicPriorityFee,   // dynamic priority fee from Helius
+        600_000,              // compute units for 2 swaps
       );
 
       executionLog.info(
-        { tokenSymbol, sizeBytes: combined.sizeBytes },
-        'ATOMIC: Combined TX built — sending via staked connection',
+        { tokenSymbol, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
+        'ATOMIC: Combined TX built — sending via Helius staked connection',
       );
 
-      // ── STEP 5: SEND VIA HELIUS STAKED CONNECTION ──────────────
-      const rawTx = combined.transaction.serialize();
-      const signature = await connection.sendRawTransaction(rawTx, {
-        skipPreflight: true,
-        maxRetries: 2,
-        preflightCommitment: 'processed',
-      });
+      // ── STEP 5: SEND VIA HELIUS SMART SEND (staked validators) ─
+      const rawTx = Buffer.from(combined.transaction.serialize());
+      const signature = await this.connManager.sendSmartTransaction(rawTx);
 
       executionLog.info({ tokenSymbol, signature }, 'ATOMIC: TX sent — confirming');
 
@@ -904,30 +903,29 @@ export class Executor {
     // ── BUILD SINGLE ATOMIC TX (both swaps in one transaction) ──
     // Combines forward + reverse swap instructions into ONE TX.
     // Solana runtime guarantees: all instructions succeed or all revert.
-    // No Jito needed. Sent via Helius staked connection for fast landing.
+    // Sent via Helius staked connection with dynamic priority fees.
 
     try {
+      // Get optimal priority fee from Helius (cached 10s, ~0ms when cached)
+      const dynamicPriorityFee = await this.connManager.getDynamicPriorityFee();
+
       const combined = await combineSwapsIntoSingleTx(
         forwardSwapTx,
         reverseSwapTx,
         wallet,
         connection,
-        10_000,   // priority fee micro-lamports
-        600_000,  // compute units (2 swaps need more)
+        dynamicPriorityFee,   // dynamic priority fee from Helius
+        600_000,              // compute units (2 swaps need more)
       );
 
       executionLog.info(
-        { tokenSymbol, ageMs, sizeBytes: combined.sizeBytes },
-        'FAST: Combined atomic TX built — sending via staked connection',
+        { tokenSymbol, ageMs, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
+        'FAST: Combined atomic TX built — sending via Helius staked connection',
       );
 
-      // ── SEND VIA HELIUS STAKED CONNECTION ─────────────────────
-      const rawTx = combined.transaction.serialize();
-      const signature = await connection.sendRawTransaction(rawTx, {
-        skipPreflight: true,
-        maxRetries: 2,
-        preflightCommitment: 'processed',
-      });
+      // ── SEND VIA HELIUS SMART SEND (staked validators) ────────
+      const rawTx = Buffer.from(combined.transaction.serialize());
+      const signature = await this.connManager.sendSmartTransaction(rawTx);
 
       executionLog.info(
         { tokenSymbol, signature },

@@ -235,6 +235,123 @@ export class ConnectionManager {
     return BigInt(balance.value.amount);
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // HELIUS PAID TIER: DYNAMIC PRIORITY FEES
+  // ═══════════════════════════════════════════════════════════════
+
+  private cachedPriorityFee: number = 10_000; // default micro-lamports
+  private lastPriorityFeeFetchMs: number = 0;
+  private readonly PRIORITY_FEE_CACHE_TTL_MS = 10_000; // refresh every 10s
+
+  /**
+   * Get optimal priority fee from Helius getPriorityFeeEstimate API.
+   * Returns micro-lamports. Cached for 10s to avoid hammering.
+   * Falls back to default 10,000 if API fails.
+   */
+  async getDynamicPriorityFee(): Promise<number> {
+    const now = Date.now();
+    if (now - this.lastPriorityFeeFetchMs < this.PRIORITY_FEE_CACHE_TTL_MS) {
+      return this.cachedPriorityFee;
+    }
+
+    if (!this.config.rpcUrl) return this.cachedPriorityFee;
+
+    try {
+      const response = await fetch(this.config.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'priority-fee',
+          method: 'getPriorityFeeEstimate',
+          params: [{
+            options: {
+              recommended: true,
+            },
+          }],
+        }),
+        signal: AbortSignal.timeout(3000),
+      });
+
+      const data = await response.json() as any;
+      if (data?.result?.priorityFeeEstimate) {
+        const fee = Math.ceil(data.result.priorityFeeEstimate);
+        // Clamp between 1,000 and 100,000 micro-lamports
+        this.cachedPriorityFee = Math.max(1_000, Math.min(100_000, fee));
+        this.lastPriorityFeeFetchMs = now;
+        engineLog.debug(
+          { priorityFeeMicroLamports: this.cachedPriorityFee },
+          'Dynamic priority fee updated from Helius',
+        );
+      }
+    } catch (err: any) {
+      engineLog.debug({ err: err?.message }, 'Priority fee API failed — using cached value');
+    }
+
+    return this.cachedPriorityFee;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // HELIUS PAID TIER: SMART TRANSACTION SEND
+  // Dual-routes via staked validators AND Jito simultaneously
+  // Higher landing rate than plain sendRawTransaction
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Send a serialized transaction via Helius sendTransaction RPC method.
+   * On paid Helius tiers, this automatically routes through staked connections.
+   * Falls back to standard sendRawTransaction if the enhanced method fails.
+   */
+  async sendSmartTransaction(serializedTx: Buffer): Promise<string> {
+    const connection = this.getConnection();
+
+    // Helius paid tier: sendTransaction via RPC auto-routes through staked validators
+    // Use base58 encoding as required by Solana RPC spec
+    try {
+      const response = await fetch(this.config.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'send-tx',
+          method: 'sendTransaction',
+          params: [
+            Buffer.from(serializedTx).toString('base64'),
+            {
+              encoding: 'base64',
+              skipPreflight: true,
+              maxRetries: 2,
+              preflightCommitment: 'processed',
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const data = await response.json() as any;
+      if (data?.result) {
+        return data.result as string;
+      }
+      if (data?.error) {
+        throw new Error(`Helius sendTransaction: ${JSON.stringify(data.error)}`);
+      }
+      throw new Error('No result from sendTransaction');
+    } catch (err: any) {
+      engineLog.warn({ err: err?.message }, 'Helius smart send failed — falling back to sendRawTransaction');
+      // Fallback to standard SDK method
+      const signature = await connection.sendRawTransaction(serializedTx, {
+        skipPreflight: true,
+        maxRetries: 2,
+        preflightCommitment: 'processed',
+      });
+      return signature;
+    }
+  }
+
+  getRpcUrl(): string {
+    return this.config.rpcUrl;
+  }
+
   private maskUrl(url: string): string {
     try {
       const u = new URL(url);

@@ -1624,10 +1624,11 @@ export class BotEngine {
     }
   }
 
-  getWebSocketStatus(): { connected: boolean; monitoredPools: number; triggeredScans: number } {
+  getWebSocketStatus(): { connected: boolean; alive: boolean; monitoredPools: number; triggeredScans: number } {
     const poolStats = this.poolMonitor.getStats();
     return {
       connected: this.wsConnected && poolStats.monitoredPools > 0,
+      alive: this.poolMonitor.isWsAlive(),
       monitoredPools: poolStats.monitoredPools,
       triggeredScans: this.wsTriggeredScans,
     };
