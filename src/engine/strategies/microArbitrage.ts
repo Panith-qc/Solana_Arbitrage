@@ -21,7 +21,6 @@ import {
   TWO_LEG_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
   JUPITER_MAX_ACCOUNTS,
-  EXECUTION_SLIPPAGE_BPS,
   MIN_VIABLE_PROFIT_USD,
   REVERSE_LEG_SLIPPAGE_BPS,
 } from '../config.js';
@@ -313,10 +312,8 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
     const grossProfitSol = outputSol - inputSol;
 
-    // Real costs: TX fees + expected slippage during execution window
-    const txFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-    const slippageBudgetSol = inputSol * (EXECUTION_SLIPPAGE_BPS / 10_000);
-    const totalFeeSol = txFeeSol + slippageBudgetSol;
+    // TX fees only — reverse leg's 300bps tolerance handles execution variance
+    const totalFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
     const netProfitSol = grossProfitSol - totalFeeSol;
 
     const solPriceUsd = this.botConfig.solPriceUsd || 0;
@@ -324,7 +321,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
       grossProfitSol, netProfitSol,
       netProfitUsd: solPriceUsd > 0 ? netProfitSol * solPriceUsd : -1,
       totalFeeSol,
-      feeBreakdown: { txFee: txFeeSol, slippageBudget: slippageBudgetSol },
+      feeBreakdown: { txFee: totalFeeSol },
     };
   }
 

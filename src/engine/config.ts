@@ -34,10 +34,10 @@ export const JUPITER_MAX_ACCOUNTS = 20;
  *  fires on spreads wide enough to survive execution latency. */
 export const EXECUTION_SLIPPAGE_BPS = 5;
 
-/** Minimum net profit in USD after fees AND slippage buffer.
+/** Minimum net profit in USD after TX fees.
  *  At $0.002/TX fee, need > $0.003 to break even on 50% success rate.
- *  $0.005 gives a small edge. Keep low — opportunities are real and frequent. */
-export const MIN_VIABLE_PROFIT_USD = 0.005;
+ *  $0.003 keeps the bot active on the frequent micro-spreads. */
+export const MIN_VIABLE_PROFIT_USD = 0.003;
 
 /** Slippage tolerance for the REVERSE leg of a combined atomic TX, in bps.
  *  Must be higher than forward slippage because:

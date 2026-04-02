@@ -30,7 +30,6 @@ import {
   JITO_TIP_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
   JUPITER_MAX_ACCOUNTS,
-  EXECUTION_SLIPPAGE_BPS,
   MIN_VIABLE_PROFIT_USD,
   REVERSE_LEG_SLIPPAGE_BPS,
 } from '../config.js';
@@ -717,23 +716,16 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
     const grossProfitSol = outputSol - inputSol;
 
-    // ── REAL COST CALCULATION ─────────────────────────────────────
-    // 1. TX fees: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
-    const txFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-
-    // 2. Expected slippage: price moves ~10bps during 1.6s execution window.
-    //    This is not "tolerance" — it's the statistical cost of latency.
-    //    If gross profit < slippage budget, the trade will revert most of the time.
-    const slippageBudgetSol = inputSol * (EXECUTION_SLIPPAGE_BPS / 10_000);
-
-    const totalFeeSol = txFeeSol + slippageBudgetSol;
+    // TX fees: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
+    // No slippage budget — reverse leg's 300bps tolerance handles execution variance
+    const totalFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
     const netProfitSol = grossProfitSol - totalFeeSol;
 
     const solPriceUsd = this.botConfig.solPriceUsd;
     if (!solPriceUsd || solPriceUsd <= 0) {
       return {
         grossProfitSol, netProfitSol: -1, netProfitUsd: -1, totalFeeSol,
-        feeBreakdown: { txFee: txFeeSol, slippageBudget: slippageBudgetSol },
+        feeBreakdown: { txFee: totalFeeSol },
       };
     }
 
@@ -742,7 +734,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       netProfitSol,
       netProfitUsd: netProfitSol * solPriceUsd,
       totalFeeSol,
-      feeBreakdown: { txFee: txFeeSol, slippageBudget: slippageBudgetSol },
+      feeBreakdown: { txFee: totalFeeSol },
     };
   }
 
