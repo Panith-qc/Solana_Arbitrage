@@ -18,6 +18,7 @@ import {
   RiskProfile,
   BASE_GAS_LAMPORTS,
   PRIORITY_FEE_LAMPORTS,
+  TWO_LEG_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
@@ -272,17 +273,16 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     const inputSol = Number(inputLamports) / LAMPORTS_PER_SOL;
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
     const grossProfitSol = outputSol - inputSol;
-    const gasFee = (BASE_GAS_LAMPORTS * 2) / LAMPORTS_PER_SOL;
-    const priorityFee = PRIORITY_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-    const jitoTip = JITO_TIP_LAMPORTS / LAMPORTS_PER_SOL;
-    const totalFeeSol = gasFee + priorityFee + jitoTip;
+    // Single atomic TX: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
+    // No Jito tip — sent via Helius staked connection
+    const totalFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
     const netProfitSol = grossProfitSol - totalFeeSol;
     const solPriceUsd = this.botConfig.solPriceUsd || 0;
     return {
       grossProfitSol, netProfitSol,
       netProfitUsd: solPriceUsd > 0 ? netProfitSol * solPriceUsd : -1,
       totalFeeSol,
-      feeBreakdown: { gasFee, priorityFee, jitoTip },
+      feeBreakdown: { totalFee: TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL },
     };
   }
 

@@ -27,6 +27,7 @@ import {
   BASE_GAS_LAMPORTS,
   PRIORITY_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
+  TWO_LEG_FEE_LAMPORTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -734,19 +735,16 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
     const grossProfitSol = outputSol - inputSol;
 
-    const gasFee = (BASE_GAS_LAMPORTS * 2) / LAMPORTS_PER_SOL;
-    const priorityFee = PRIORITY_FEE_LAMPORTS / LAMPORTS_PER_SOL;
-    const jitoTip = JITO_TIP_LAMPORTS / LAMPORTS_PER_SOL;
-    const safetyBuffer = inputSol * (EXECUTION_SAFETY_BUFFER_BPS / 10_000);
-
-    const totalFeeSol = gasFee + priorityFee + jitoTip + safetyBuffer;
+    // Single atomic TX: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
+    // No Jito tip needed — sent via Helius staked connection
+    const totalFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
     const netProfitSol = grossProfitSol - totalFeeSol;
 
     const solPriceUsd = this.botConfig.solPriceUsd;
     if (!solPriceUsd || solPriceUsd <= 0) {
       return {
         grossProfitSol, netProfitSol: -1, netProfitUsd: -1, totalFeeSol,
-        feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
+        feeBreakdown: { totalFee: TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL },
       };
     }
 
@@ -755,7 +753,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       netProfitSol,
       netProfitUsd: netProfitSol * solPriceUsd,
       totalFeeSol,
-      feeBreakdown: { gasFee, priorityFee, jitoTip, safetyBuffer },
+      feeBreakdown: { totalFee: TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL },
     };
   }
 
