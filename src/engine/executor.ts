@@ -685,7 +685,7 @@ export class Executor {
     }
 
     // Final profitability check before committing.
-    // Single atomic TX = 1 signature + priority fee. No Jito tip.
+    // Single atomic TX = 1 signature + priority fee + Jito tip (for Helius Sender).
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
 
     if (isNaN(reverseOutputLamports) || reverseOutputLamports <= 0) {
@@ -733,24 +733,57 @@ export class Executor {
     // Solana runtime: all instructions succeed or all revert. No partial.
 
     try {
-      // Get optimal priority fee from Helius (cached 10s)
-      const dynamicPriorityFee = await this.connManager.getDynamicPriorityFee();
+      // Get global priority fee estimate first (fast, cached)
+      const globalPriorityFee = await this.connManager.getDynamicPriorityFee();
+
+      // ── STEP 4a: BUILD INITIAL TX (with generous CU for simulation) ─
+      const initialCombined = await combineSwapsWithTokenLedger(
+        forwardSwap.swapTransaction,
+        reverseSwapIxs,
+        wallet,
+        connection,
+        globalPriorityFee,
+        600_000,              // generous CU limit for simulation
+        tipLamports,          // Jito tip for Helius Sender dual-routing
+      );
+
+      // ── STEP 4b: SIMULATE TO GET ACTUAL CU + GATE BAD TXS ─────
+      const simResult = await this.connManager.simulateForCU(initialCombined.transaction);
+
+      if (!simResult.success) {
+        executionLog.warn(
+          { tokenSymbol, simError: simResult.error },
+          'ATOMIC: Simulation FAILED — TX would revert, skipping (saved fees)',
+        );
+        return this.failResult(`ATOMIC: Simulation failed: ${simResult.error}`, startMs);
+      }
+
+      // ── STEP 4c: REBUILD WITH OPTIMAL CU + TX-SPECIFIC PRIORITY FEE ─
+      // Tight CU limit = higher effective priority per CU = faster inclusion
+      const optimalCU = Math.ceil(simResult.unitsConsumed * 1.1); // 10% margin
+      const txBase64 = Buffer.from(initialCombined.transaction.serialize()).toString('base64');
+      const txSpecificFee = await this.connManager.getDynamicPriorityFee(txBase64);
 
       const combined = await combineSwapsWithTokenLedger(
         forwardSwap.swapTransaction,
         reverseSwapIxs,
         wallet,
         connection,
-        dynamicPriorityFee,   // dynamic priority fee from Helius
-        600_000,              // compute units for 2 swaps + token ledger
+        txSpecificFee,        // TX-specific priority fee from Helius
+        optimalCU,            // tight CU from simulation
+        tipLamports,          // Jito tip for Helius Sender
       );
 
       executionLog.info(
-        { tokenSymbol, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
-        'ATOMIC: Combined TX built — sending via Helius staked connection',
+        {
+          tokenSymbol, sizeBytes: combined.sizeBytes,
+          priorityFee: txSpecificFee, computeUnits: optimalCU,
+          simCU: simResult.unitsConsumed, jitoTip: tipLamports,
+        },
+        'ATOMIC: Optimized TX built — sending via Helius Sender (SWQoS + Jito)',
       );
 
-      // ── STEP 5: SEND VIA HELIUS SMART SEND (staked validators) ─
+      // ── STEP 5: SEND VIA HELIUS SENDER (SWQoS + Jito dual-routing) ─
       const rawTx = Buffer.from(combined.transaction.serialize());
       const signature = await this.connManager.sendSmartTransaction(rawTx);
 
@@ -907,7 +940,7 @@ export class Executor {
     }
 
     // ── PROFITABILITY SANITY CHECK ──────────────────────────────
-    // Single atomic TX = 1 signature + priority fee. No Jito tip.
+    // Single atomic TX = 1 signature + priority fee + Jito tip (Helius Sender).
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
     const grossProfitLamports = reverseOutputLamports - inputLamports;
     const totalFeeLamports = TWO_LEG_FEE_LAMPORTS;
@@ -935,24 +968,56 @@ export class Executor {
     // Sent via Helius staked connection with dynamic priority fees.
 
     try {
-      // Get optimal priority fee from Helius (cached 10s, ~0ms when cached)
-      const dynamicPriorityFee = await this.connManager.getDynamicPriorityFee();
+      // Get global priority fee estimate first (fast, cached)
+      const globalPriorityFee = await this.connManager.getDynamicPriorityFee();
+
+      // ── BUILD INITIAL TX (generous CU for simulation) ────────
+      const initialCombined = await combineSwapsWithTokenLedger(
+        forwardSwapTx,
+        reverseSwapIxs,
+        wallet,
+        connection,
+        globalPriorityFee,
+        600_000,              // generous CU for simulation
+        tipLamports,          // Jito tip for Helius Sender
+      );
+
+      // ── SIMULATE TO GATE BAD TXS + GET ACTUAL CU ────────────
+      const simResult = await this.connManager.simulateForCU(initialCombined.transaction);
+
+      if (!simResult.success) {
+        executionLog.warn(
+          { tokenSymbol, simError: simResult.error, ageMs },
+          'FAST: Simulation FAILED — TX would revert, skipping (saved fees)',
+        );
+        return this.failResult(`FAST: Simulation failed: ${simResult.error}`, startMs);
+      }
+
+      // ── REBUILD WITH OPTIMAL CU + TX-SPECIFIC PRIORITY FEE ──
+      const optimalCU = Math.ceil(simResult.unitsConsumed * 1.1);
+      const txBase64 = Buffer.from(initialCombined.transaction.serialize()).toString('base64');
+      const txSpecificFee = await this.connManager.getDynamicPriorityFee(txBase64);
 
       const combined = await combineSwapsWithTokenLedger(
         forwardSwapTx,
         reverseSwapIxs,
         wallet,
         connection,
-        dynamicPriorityFee,   // dynamic priority fee from Helius
-        600_000,              // compute units (2 swaps + token ledger)
+        txSpecificFee,
+        optimalCU,
+        tipLamports,          // Jito tip for Helius Sender
       );
 
       executionLog.info(
-        { tokenSymbol, ageMs, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
-        'FAST: Combined atomic TX built — sending via Helius staked connection',
+        {
+          tokenSymbol, ageMs, sizeBytes: combined.sizeBytes,
+          priorityFee: txSpecificFee, computeUnits: optimalCU,
+          simCU: simResult.unitsConsumed, jitoTip: tipLamports,
+        },
+        'FAST: Optimized TX built — sending via Helius Sender (SWQoS + Jito)',
       );
 
-      // ── SEND VIA HELIUS SMART SEND (staked validators) ────────
+      // ── SEND VIA HELIUS SENDER (SWQoS + Jito dual-routing) ──
       const rawTx = Buffer.from(combined.transaction.serialize());
       const signature = await this.connManager.sendSmartTransaction(rawTx);
 

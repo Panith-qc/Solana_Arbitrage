@@ -12,10 +12,11 @@ export const BASE_GAS_LAMPORTS = 5_000;        // 5000 lamports per signature (S
 export const PRIORITY_FEE_LAMPORTS = 10_000;   // Priority fee for staked connection inclusion
 export const JITO_TIP_LAMPORTS = 10_000;       // Kept for backward compat with config references
 
-// Single atomic TX = 1 signature + priority fee (no Jito tip needed)
-export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS; // 15,000
-// Combined atomic TX: both swaps in one TX = 1 signature + priority fee
-export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS;    // 15,000
+// Single atomic TX = 1 signature + priority fee + Jito tip
+export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 25,000
+// Combined atomic TX: both swaps in one TX = 1 signature + priority fee + Jito tip
+// Jito tip is required for Helius Sender (dual SWQoS + Jito routing)
+export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS;   // 25,000
 
 // ── EXECUTION REALITY CONSTANTS ────────────────────────────────────────────
 // These account for the physical reality of Solana execution latency.

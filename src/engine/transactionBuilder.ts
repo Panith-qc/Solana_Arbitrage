@@ -462,6 +462,7 @@ export async function combineSwapsWithTokenLedger(
   connection: Connection,
   priorityFeeMicroLamports: number = 10_000,
   computeUnitLimit: number = 600_000,
+  jitoTipLamports: number = 0,
 ): Promise<CombinedSwapResult> {
   // ── 1. Deserialize forward swap TX ─────────────────────────────
   const forwardTx = VersionedTransaction.deserialize(
@@ -535,6 +536,18 @@ export async function combineSwapsWithTokenLedger(
     combinedInstructions.push(reverseCleanupIx);
   }
 
+  // ── 5b. Add Jito tip as LAST instruction ──────────────────────
+  // Required for Helius Sender (dual SWQoS + Jito routing).
+  // Tip goes to a random Jito tip account to distribute load.
+  if (jitoTipLamports > 0) {
+    const tipIx = SystemProgram.transfer({
+      fromPubkey: wallet.publicKey,
+      toPubkey: new PublicKey(getRandomTipAccount()),
+      lamports: jitoTipLamports,
+    });
+    combinedInstructions.push(tipIx);
+  }
+
   // ── 6. Get fresh blockhash and compile ─────────────────────────
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
 
@@ -569,8 +582,9 @@ export async function combineSwapsWithTokenLedger(
       hasCleanup: !!reverseCleanupIx,
       lookupTables: allLookupTables.length,
       computeUnitLimit,
+      jitoTipLamports,
     },
-    'Token ledger combined TX built — reverse leg uses dynamic balance',
+    `Token ledger combined TX built — reverse leg uses dynamic balance${jitoTipLamports > 0 ? ` + ${jitoTipLamports} lamport Jito tip` : ''}`,
   );
 
   return { transaction: combinedTx, sizeBytes };

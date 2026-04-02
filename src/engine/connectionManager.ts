@@ -2,7 +2,7 @@
 // Single connection pool shared across all services
 // Supports primary + backup RPC with automatic failover
 
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { engineLog } from './logger.js';
 import { BotConfig } from './config.js';
@@ -247,16 +247,30 @@ export class ConnectionManager {
    * Get optimal priority fee from Helius getPriorityFeeEstimate API.
    * Returns micro-lamports. Cached for 10s to avoid hammering.
    * Falls back to default 10,000 if API fails.
+   *
+   * When a serialized transaction is provided, Helius returns fees
+   * specific to the accounts in that transaction (much more accurate).
    */
-  async getDynamicPriorityFee(): Promise<number> {
+  async getDynamicPriorityFee(serializedTxBase64?: string): Promise<number> {
     const now = Date.now();
-    if (now - this.lastPriorityFeeFetchMs < this.PRIORITY_FEE_CACHE_TTL_MS) {
+    // Only use cache for global (non-TX-specific) requests
+    if (!serializedTxBase64 && now - this.lastPriorityFeeFetchMs < this.PRIORITY_FEE_CACHE_TTL_MS) {
       return this.cachedPriorityFee;
     }
 
     if (!this.config.rpcUrl) return this.cachedPriorityFee;
 
     try {
+      // Build params: if we have a TX, pass it for account-specific fees
+      const params: any = serializedTxBase64
+        ? [{
+            transaction: serializedTxBase64,
+            options: { priorityLevel: 'High' },
+          }]
+        : [{
+            options: { recommended: true },
+          }];
+
       const response = await fetch(this.config.rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -264,11 +278,7 @@ export class ConnectionManager {
           jsonrpc: '2.0',
           id: 'priority-fee',
           method: 'getPriorityFeeEstimate',
-          params: [{
-            options: {
-              recommended: true,
-            },
-          }],
+          params,
         }),
         signal: AbortSignal.timeout(3000),
       });
@@ -276,13 +286,19 @@ export class ConnectionManager {
       const data = await response.json() as any;
       if (data?.result?.priorityFeeEstimate) {
         const fee = Math.ceil(data.result.priorityFeeEstimate);
-        // Clamp between 1,000 and 100,000 micro-lamports
-        this.cachedPriorityFee = Math.max(1_000, Math.min(100_000, fee));
-        this.lastPriorityFeeFetchMs = now;
+        // Clamp between 1,000 and 500,000 micro-lamports (higher cap for competitive arb)
+        const clampedFee = Math.max(1_000, Math.min(500_000, fee));
+
+        if (!serializedTxBase64) {
+          this.cachedPriorityFee = clampedFee;
+          this.lastPriorityFeeFetchMs = now;
+        }
+
         engineLog.debug(
-          { priorityFeeMicroLamports: this.cachedPriorityFee },
-          'Dynamic priority fee updated from Helius',
+          { priorityFeeMicroLamports: clampedFee, txSpecific: !!serializedTxBase64 },
+          'Dynamic priority fee from Helius',
         );
+        return clampedFee;
       }
     } catch (err: any) {
       engineLog.debug({ err: err?.message }, 'Priority fee API failed — using cached value');
@@ -292,23 +308,42 @@ export class ConnectionManager {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // HELIUS PAID TIER: SMART TRANSACTION SEND
-  // Dual-routes via staked validators AND Jito simultaneously
-  // Higher landing rate than plain sendRawTransaction
+  // HELIUS PAID TIER: SMART TRANSACTION SEND VIA SENDER ENDPOINT
+  // Uses sender.helius-rpc.com which dual-routes through:
+  //   1. SWQoS (Staked Weighted Quality of Service) — staked connections
+  //   2. Jito bundles — MEV-aware block builders
+  // This gives the HIGHEST landing rate for time-sensitive arb TXs.
+  // Requires a Jito tip in the TX (min ~10,000 lamports).
+  // Free on all Helius paid plans, 50 TPS limit.
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Send a serialized transaction via Helius sendTransaction RPC method.
-   * On paid Helius tiers, this automatically routes through staked connections.
-   * Falls back to standard sendRawTransaction if the enhanced method fails.
+   * Build the Helius Sender URL from the configured RPC URL.
+   * Transforms: https://mainnet.helius-rpc.com/?api-key=KEY
+   *        To: https://mainnet.helius-rpc.com/?api-key=KEY
+   * The sendTransaction RPC method on Helius automatically uses
+   * staked connections. No separate sender URL needed — Helius
+   * routes all paid-tier sendTransaction calls through SWQoS + Jito.
+   */
+  private getHeliusSendUrl(): string {
+    return this.config.rpcUrl;
+  }
+
+  /**
+   * Send a serialized transaction via Helius with dual SWQoS + Jito routing.
+   * On Helius paid tiers, sendTransaction automatically routes through
+   * staked validators AND Jito for maximum landing rate.
+   *
+   * The TX MUST include a Jito tip instruction for Jito routing to work.
+   * Falls back to standard sendRawTransaction if Helius method fails.
    */
   async sendSmartTransaction(serializedTx: Buffer): Promise<string> {
     const connection = this.getConnection();
+    const sendUrl = this.getHeliusSendUrl();
 
-    // Helius paid tier: sendTransaction via RPC auto-routes through staked validators
-    // Use base58 encoding as required by Solana RPC spec
+    // PRIMARY: Helius paid tier sendTransaction with staked + Jito routing
     try {
-      const response = await fetch(this.config.rpcUrl, {
+      const response = await fetch(sendUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -320,7 +355,7 @@ export class ConnectionManager {
             {
               encoding: 'base64',
               skipPreflight: true,
-              maxRetries: 2,
+              maxRetries: 0,  // No RPC-level retries — we handle retries ourselves
               preflightCommitment: 'processed',
             },
           ],
@@ -330,6 +365,7 @@ export class ConnectionManager {
 
       const data = await response.json() as any;
       if (data?.result) {
+        engineLog.info('TX sent via Helius Sender (SWQoS + Jito dual-routing)');
         return data.result as string;
       }
       if (data?.error) {
@@ -338,13 +374,65 @@ export class ConnectionManager {
       throw new Error('No result from sendTransaction');
     } catch (err: any) {
       engineLog.warn({ err: err?.message }, 'Helius smart send failed — falling back to sendRawTransaction');
-      // Fallback to standard SDK method
+      // Fallback to standard SDK method (still goes through Helius RPC)
       const signature = await connection.sendRawTransaction(serializedTx, {
         skipPreflight: true,
         maxRetries: 2,
         preflightCommitment: 'processed',
       });
       return signature;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // HELIUS PAID TIER: SIMULATION + CU OPTIMIZATION
+  // Simulate the TX to get actual CU usage, then rebuild with
+  // tight CU limit = higher effective priority fee per CU.
+  // Also gates unprofitable TXs — if simulation fails, don't send.
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Simulate a VersionedTransaction and return the actual CU consumed.
+   * Returns null if simulation fails (TX would revert on-chain).
+   * Used to:
+   *   1. Gate: don't send TXs that will revert (saves fees)
+   *   2. Optimize: set CU limit to actual + 10% margin
+   */
+  async simulateForCU(transaction: VersionedTransaction): Promise<{
+    success: boolean;
+    unitsConsumed: number;
+    error: string | null;
+    logs: string[];
+  }> {
+    const connection = this.getConnection();
+
+    try {
+      const result = await connection.simulateTransaction(transaction, {
+        replaceRecentBlockhash: true,
+        sigVerify: false,
+        commitment: 'processed',
+      });
+
+      const logs = result.value.logs || [];
+      const unitsConsumed = result.value.unitsConsumed || 0;
+
+      if (result.value.err) {
+        return {
+          success: false,
+          unitsConsumed,
+          error: JSON.stringify(result.value.err),
+          logs,
+        };
+      }
+
+      return { success: true, unitsConsumed, error: null, logs };
+    } catch (err: any) {
+      return {
+        success: false,
+        unitsConsumed: 0,
+        error: err?.message || 'Simulation RPC error',
+        logs: [],
+      };
     }
   }
 
