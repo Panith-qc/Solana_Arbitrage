@@ -739,38 +739,16 @@ export class Executor {
 
       executionLog.info(
         { tokenSymbol, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
-        'ATOMIC: Combined TX built — simulating before send',
+        'ATOMIC: Combined TX built — sending via Helius staked connection',
       );
 
-      // ── STEP 5: PRE-FLIGHT SIMULATION ──────────────────────────
-      // Simulate combined TX to catch errors before paying TX fees.
-      const simResult = await simulateTransaction(connection, combined.transaction);
-      if (!simResult.success) {
-        const errDetail = this.parseOnChainError(simResult.error || '');
-        executionLog.warn(
-          {
-            tokenSymbol, error: simResult.error,
-            errorCode: errDetail.code, errorProgram: errDetail.program,
-            simLogs: (simResult.logs || []).slice(-8),
-          },
-          `ATOMIC: Simulation FAILED (${errDetail.label}) — falling back to sequential execution`,
-        );
-        // Fall back to sequential execution which handles real token balances
-        return this.executeArbitrageCycle(forwardQuote, tokenMint, tokenSymbol, solPrice);
-      }
-
-      executionLog.info(
-        { tokenSymbol, simUnits: simResult.unitsConsumed },
-        'ATOMIC: Simulation PASSED — sending via Helius staked connection',
-      );
-
-      // ── STEP 6: SEND VIA HELIUS SMART SEND (staked validators) ─
+      // ── STEP 5: SEND VIA HELIUS SMART SEND (staked validators) ─
       const rawTx = Buffer.from(combined.transaction.serialize());
       const signature = await this.connManager.sendSmartTransaction(rawTx);
 
       executionLog.info({ tokenSymbol, signature }, 'ATOMIC: TX sent — confirming');
 
-      // ── STEP 7: CONFIRM ────────────────────────────────────────
+      // ── STEP 6: CONFIRM ────────────────────────────────────────
       const { blockhash: confBlockhash, lastValidBlockHeight: confHeight } =
         await connection.getLatestBlockhash('confirmed');
       const confirmation = await connection.confirmTransaction(
@@ -782,9 +760,13 @@ export class Executor {
 
       if (confirmation.value.err) {
         const errDetail = this.parseOnChainError(JSON.stringify(confirmation.value.err));
-        executionLog.warn(
-          { tokenSymbol, signature, errorCode: errDetail.code, errorLabel: errDetail.label },
-          `ATOMIC: TX reverted despite passing simulation (${errDetail.label})`,
+        executionLog.error(
+          {
+            tokenSymbol, signature,
+            errorCode: errDetail.code, errorLabel: errDetail.label,
+            errorProgram: errDetail.program, instructionIndex: errDetail.instructionIndex,
+          },
+          `ATOMIC: TX reverted on-chain — ${errDetail.label}`,
         );
         return {
           success: false, profitSol: 0, profitUsd: 0,
@@ -794,7 +776,7 @@ export class Executor {
         };
       }
 
-      // ── STEP 8: MEASURE REAL PROFIT ────────────────────────────
+      // ── STEP 7: MEASURE REAL PROFIT ────────────────────────────
       let actualProfitSol: number;
 
       if (preTradeBalanceLamports !== null) {
@@ -959,31 +941,7 @@ export class Executor {
 
       executionLog.info(
         { tokenSymbol, ageMs, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
-        'FAST: Combined atomic TX built — simulating before send',
-      );
-
-      // ── PRE-FLIGHT SIMULATION ────────────────────────────────
-      // Simulate the combined TX against current on-chain state.
-      // This catches errors (insufficient funds, slippage, etc.)
-      // BEFORE sending, saving TX fees on doomed transactions.
-      const simResult = await simulateTransaction(connection, combined.transaction);
-      if (!simResult.success) {
-        const errDetail = this.parseOnChainError(simResult.error || '');
-        executionLog.warn(
-          {
-            tokenSymbol, error: simResult.error,
-            errorCode: errDetail.code, errorProgram: errDetail.program,
-            simLogs: (simResult.logs || []).slice(-8),
-          },
-          `FAST: Simulation FAILED (${errDetail.label}) — skipping send, falling back to sequential`,
-        );
-        // Fall back to sequential execution which uses real token balances
-        return this.executeArbitrageCycle(forwardQuote, tokenMint, tokenSymbol, solPrice);
-      }
-
-      executionLog.info(
-        { tokenSymbol, simUnits: simResult.unitsConsumed },
-        'FAST: Simulation PASSED — sending via Helius staked connection',
+        'FAST: Combined atomic TX built — sending via Helius staked connection',
       );
 
       // ── SEND VIA HELIUS SMART SEND (staked validators) ────────
@@ -1006,9 +964,13 @@ export class Executor {
 
       if (confirmation.value.err) {
         const errDetail = this.parseOnChainError(JSON.stringify(confirmation.value.err));
-        executionLog.warn(
-          { tokenSymbol, signature, errorCode: errDetail.code, errorLabel: errDetail.label },
-          `FAST: TX reverted on-chain despite passing simulation (${errDetail.label})`,
+        executionLog.error(
+          {
+            tokenSymbol, signature,
+            errorCode: errDetail.code, errorLabel: errDetail.label,
+            errorProgram: errDetail.program, instructionIndex: errDetail.instructionIndex,
+          },
+          `FAST: TX reverted on-chain — ${errDetail.label}`,
         );
         return {
           success: false, profitSol: 0, profitUsd: 0,
