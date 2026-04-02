@@ -16,6 +16,7 @@
 import crypto from 'crypto';
 import { BaseStrategy, Opportunity, StrategyConfig } from './baseStrategy.js';
 import { strategyLog } from '../logger.js';
+import { JupiterPool } from '../jupiterPool.js';
 import {
   SOL_MINT,
   LAMPORTS_PER_SOL,
@@ -77,8 +78,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   private botConfig: BotConfig;
   private riskProfile: RiskProfile;
   private lastJupiterCallMs: number = 0;
-  /** Separate rate limiter for second Jupiter endpoint */
-  private lastJupiter2CallMs: number = 0;
+  private jupiterPool: JupiterPool;
   private hotTokens: HotToken[] = [];
 
   constructor(connectionManager: ConnectionManager, config: BotConfig, riskProfile: RiskProfile) {
@@ -95,6 +95,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     this.connectionManager = connectionManager;
     this.botConfig = config;
     this.riskProfile = riskProfile;
+    this.jupiterPool = new JupiterPool(config);
   }
 
   getName(): string {
@@ -173,17 +174,23 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         `Top candidates for Jupiter sell: ${Math.min(ranked.length, MAX_JUPITER_CANDIDATES)}`,
       );
 
-      // ── STEP 3: Jupiter sell for top candidates (1 call each) ────────────
-      // This is the KEY cross-DEX check: Raydium buy price vs Jupiter sell price
+      // ── STEP 3: Jupiter sell for top candidates ────────────────────────
+      // PARALLEL when multiple endpoints available — all sell quotes at once
       const hotCandidates: { token: TokenInfo; spreadBps: number; raydiumBuyAmount: string }[] = [];
+      const topCandidates = ranked.slice(0, MAX_JUPITER_CANDIDATES);
 
-      for (const candidate of ranked.slice(0, MAX_JUPITER_CANDIDATES)) {
-        const { token, buyQuote } = candidate;
+      // Fire all sell quotes in parallel across pool endpoints
+      const sellQuoteRequests = topCandidates.map(c => ({
+        inputMint: c.token.mint,
+        outputMint: SOL_MINT,
+        amount: c.buyQuote.outputAmount,
+        slippageBps: this.config.slippageBps,
+      }));
+      const jupSellResults = await this.jupiterPool.getQuotesParallel(sellQuoteRequests);
 
-        await this.jupiterRateLimit();
-        const jupSell = await this.getJupiterQuote(
-          token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
-        );
+      for (let i = 0; i < topCandidates.length; i++) {
+        const { token, buyQuote } = topCandidates[i];
+        const jupSell = jupSellResults[i];
 
         if (!jupSell) {
           strategyLog.debug({ token: token.symbol }, 'No Jupiter sell quote');
@@ -220,40 +227,45 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         // Track for hot tokens
         hotCandidates.push({ token, spreadBps, raydiumBuyAmount: buyQuote.outputAmount });
 
-        // PROFITABLE? Use the quotes we already have — NO re-verify (saves ~1s)
-        // The executor's profitability sanity check protects against stale quotes
         if (profitAnalysis.netProfitUsd > 0) {
           strategyLog.warn(
             { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
             `🚀 PROFITABLE: ${token.symbol} ray→jup — fetching swap TXs NOW`,
           );
 
-          // Use the existing Raydium buy quote as forward, Jupiter sell as reverse
-          // Skip the re-quote+re-verify cycle (was 2 extra Jupiter calls = ~1s wasted)
-          // We already have: buyQuote (Raydium) and jupSell (Jupiter)
-          // Need Jupiter buy quote for the swap TX (1 call)
-          await this.jupiterRateLimit();
-          const jupBuy = await this.getJupiterQuote(
-            SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
+          const walletPubkey = this.connectionManager.getPublicKey().toString();
+          const poolSize = this.jupiterPool.size;
+
+          // STEP A: Buy quote (need this before forward swap TX)
+          // If 4 endpoints: use endpoint 3 (0,1,2 were used for sell quotes)
+          const buyQuoteEp = Math.min(poolSize - 1, 3);
+          const jupBuy = await this.jupiterPool.getQuote(
+            buyQuoteEp, SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
           );
           if (!jupBuy?.raw?.routePlan) continue;
 
-          // Fetch swap TXs using jupBuy + existing jupSell (skip re-verify sell)
-          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+          // STEP B: Forward + Reverse swap TXs in PARALLEL (different endpoints)
+          const fwdEp = 0 % poolSize;
+          const revEp = Math.min(1, poolSize - 1) % poolSize;
+          const swapTxs = await this.jupiterPool.fetchSwapTxPairParallel(
+            jupBuy.raw, jupSell.raw, walletPubkey, fwdEp, revEp,
+          );
 
           const now = Date.now();
           const opp = this.buildOpportunity(
             token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, now,
           );
 
-          // Attach pre-fetched swap TXs so executor skips the re-quote cycle
           if (swapTxs) {
             opp.metadata.forwardSwapTx = swapTxs.forwardSwapTx;
             opp.metadata.reverseSwapTx = swapTxs.reverseSwapTx;
             opp.metadata.forwardQuote = jupBuy.raw;
             opp.metadata.reverseQuote = jupSell.raw;
             opp.metadata.scanTimestamp = now;
-            strategyLog.info({ token: token.symbol }, 'FAST PATH: Swap TXs pre-fetched');
+            strategyLog.info(
+              { token: token.symbol, endpoints: poolSize },
+              `FAST PATH: Swap TXs pre-fetched (${poolSize} endpoints)`,
+            );
           }
 
           // IMMEDIATE EXECUTE: Don't wait for scan to finish — quotes expire
@@ -312,9 +324,8 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       const buyQuote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
       if (!buyQuote) continue;
 
-      // Jupiter sell quote (1 call)
-      await this.jupiterRateLimit();
-      const jupSell = await this.getJupiterQuote(
+      // Jupiter sell quote via pool
+      const jupSell = await this.jupiterPool.getQuoteRoundRobin(
         token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
       );
       if (!jupSell) continue;
@@ -347,15 +358,22 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           `⚡ WS PROFITABLE: ${token.symbol} — fetching swap TXs NOW`,
         );
 
-        // Jupiter buy quote for swap TX (1 call)
-        await this.jupiterRateLimit();
-        const jupBuy = await this.getJupiterQuote(
-          SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
+        const walletPubkey = this.connectionManager.getPublicKey().toString();
+        const poolSize = this.jupiterPool.size;
+
+        // Buy quote via pool
+        const jupBuy = await this.jupiterPool.getQuote(
+          1 % poolSize, SOL_MINT, token.mint, scanAmountStr, this.config.slippageBps,
         );
         if (!jupBuy?.raw?.routePlan) continue;
 
-        // Pre-fetch swap TXs
-        const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+        // Forward + Reverse swap TXs in PARALLEL
+        const fwdEp = 2 % poolSize;
+        const revEp = 3 % poolSize;
+        const swapTxs = await this.jupiterPool.fetchSwapTxPairParallel(
+          jupBuy.raw, jupSell.raw, walletPubkey, fwdEp, revEp,
+        );
+
         const now = Date.now();
         const opp = this.buildOpportunity(
           token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, now,
@@ -368,7 +386,10 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           opp.metadata.reverseQuote = jupSell.raw;
           opp.metadata.scanTimestamp = now;
           opp.metadata.wsTriggered = true;
-          strategyLog.info({ token: token.symbol }, '⚡ WS FAST PATH: Swap TXs pre-fetched');
+          strategyLog.info(
+            { token: token.symbol, endpoints: poolSize },
+            `⚡ WS FAST PATH: Swap TXs pre-fetched (${poolSize} endpoints)`,
+          );
         }
 
         if (this.onImmediateExecute) {
@@ -435,9 +456,8 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         const rayBuy = await this.getRaydiumSwapQuote(SOL_MINT, hot.token.mint, scanAmountStr);
         if (!rayBuy) continue;
 
-        // Jupiter sell (1 call)
-        await this.jupiterRateLimit();
-        const jupSell = await this.getJupiterQuote(
+        // Jupiter sell via pool
+        const jupSell = await this.jupiterPool.getQuoteRoundRobin(
           hot.token.mint, SOL_MINT, rayBuy.outputAmount, this.config.slippageBps,
         );
         if (!jupSell) continue;
@@ -470,16 +490,19 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
             `🚀 HOT TOKEN PROFITABLE: ${hot.token.symbol} — fetching swap TXs`,
           );
 
-          // Get Jupiter buy quote (1 call) — skip re-verify sell (saves ~1s)
-          // The executor's profitability sanity check protects against stale quotes
-          await this.jupiterRateLimit();
-          const jupBuy = await this.getJupiterQuote(
-            SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
+          const walletPubkey = this.connectionManager.getPublicKey().toString();
+          const poolSize = this.jupiterPool.size;
+
+          // Buy quote via pool
+          const jupBuy = await this.jupiterPool.getQuote(
+            1 % poolSize, SOL_MINT, hot.token.mint, scanAmountStr, this.config.slippageBps,
           );
           if (!jupBuy?.raw?.routePlan) continue;
 
-          // Pre-fetch swap TXs using jupBuy + existing jupSell (skip re-verify)
-          const swapTxs = await this.fetchSwapTxPair(jupBuy.raw, jupSell.raw);
+          // Forward + Reverse swap TXs in PARALLEL
+          const swapTxs = await this.jupiterPool.fetchSwapTxPairParallel(
+            jupBuy.raw, jupSell.raw, walletPubkey, 2 % poolSize, 3 % poolSize,
+          );
           const opp = this.buildOpportunity(
             hot.token, scanSol, scanAmountLamports, jupBuy, jupSell, profitAnalysis, spreadBps, Date.now(),
           );
@@ -662,109 +685,6 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       }
     }
     return null;
-  }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // SWAP TX PRE-FETCH (for fast execution path)
-  // ────────────────────────────────────────────────────────────────────────────
-
-  private async fetchSwapTxPair(
-    forwardQuote: any, reverseQuote: any,
-  ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
-    try {
-      const walletPubkey = this.connectionManager.getPublicKey().toString();
-      const primaryUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
-      const secondaryUrl = this.botConfig.jupiterApiUrl2
-        ? `${this.botConfig.jupiterApiUrl2}/swap/v1/swap`
-        : null;
-
-      const makeBody = (quote: any) => ({
-        quoteResponse: quote,
-        userPublicKey: walletPubkey,
-        wrapAndUnwrapSol: true,
-        dynamicComputeUnitLimit: true,
-        dynamicSlippage: false,
-        prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
-      });
-
-      let fwdData: any;
-      let revData: any;
-
-      if (secondaryUrl) {
-        // PARALLEL: Forward on primary endpoint, Reverse on secondary endpoint
-        // Each endpoint has its own rate limit — no conflict
-        await this.jupiterRateLimit();
-
-        const [fwdResp, revResp] = await Promise.all([
-          fetch(primaryUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(makeBody(forwardQuote)),
-            signal: AbortSignal.timeout(10000),
-          }),
-          fetch(secondaryUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(makeBody(reverseQuote)),
-            signal: AbortSignal.timeout(10000),
-          }),
-        ]);
-
-        if (!fwdResp.ok) {
-          strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
-          return null;
-        }
-        if (!revResp.ok) {
-          strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
-          return null;
-        }
-
-        [fwdData, revData] = await Promise.all([fwdResp.json(), revResp.json()]);
-
-        // Update both rate limit trackers
-        this.lastJupiterCallMs = Date.now();
-        this.lastJupiter2CallMs = Date.now();
-
-        strategyLog.debug('Swap TX pair fetched in PARALLEL (dual endpoints)');
-      } else {
-        // SEQUENTIAL: Single endpoint, respect rate limit between calls
-        await this.jupiterRateLimit();
-        const fwdResp = await fetch(primaryUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(makeBody(forwardQuote)),
-          signal: AbortSignal.timeout(10000),
-        });
-        if (!fwdResp.ok) {
-          strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
-          return null;
-        }
-        fwdData = await fwdResp.json();
-
-        await this.jupiterRateLimit();
-        const revResp = await fetch(primaryUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(makeBody(reverseQuote)),
-          signal: AbortSignal.timeout(10000),
-        });
-        if (!revResp.ok) {
-          strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
-          return null;
-        }
-        revData = await revResp.json();
-      }
-
-      if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
-
-      return {
-        forwardSwapTx: fwdData.swapTransaction,
-        reverseSwapTx: revData.swapTransaction,
-      };
-    } catch (err) {
-      strategyLog.warn({ err }, 'Failed to pre-fetch swap TX pair');
-      return null;
-    }
   }
 
   // ────────────────────────────────────────────────────────────────────────────
