@@ -46,8 +46,10 @@ const SIMULATION_ERROR_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /invalid account data/i, label: 'INVALID_ACCOUNT_DATA' },
   { pattern: /Program failed to complete/i, label: 'PROGRAM_FAILED' },
   { pattern: /SlippageToleranceExceeded/i, label: 'SLIPPAGE_EXCEEDED' },
-  { pattern: /0x1771/i, label: 'SLIPPAGE_EXCEEDED' }, // Jupiter slippage error code
+  { pattern: /0x1771/i, label: 'SLIPPAGE_EXCEEDED' }, // Jupiter error 6001
   { pattern: /0x1786/i, label: 'SWAP_AMOUNT_MISMATCH' },
+  { pattern: /Custom.{0,5}6024/i, label: 'ZERO_AMOUNT_OR_INSUFFICIENT_FUNDS' }, // Raydium CLMM ZeroAmountSpecified or Jupiter InsufficientFunds
+  { pattern: /0x1788/i, label: 'ZERO_AMOUNT_OR_INSUFFICIENT_FUNDS' }, // 6024 in hex
 ];
 
 // ═══════════════════════════════════════════════════════════════════

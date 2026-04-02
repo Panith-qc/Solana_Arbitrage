@@ -1462,11 +1462,17 @@ export class Executor {
     const code = customMatch ? parseInt(customMatch[1], 10) : -1;
     const instructionIndex = ixMatch ? parseInt(ixMatch[1], 10) : -1;
 
-    // Anchor custom errors start at 6000. Map known codes:
-    // Jupiter v6: 6001=SlippageToleranceExceeded, 6024=InsufficientFunds (unconfirmed for CPI'd programs)
-    // Raydium CLMM: 6024 could be AmountSlippageExceed
-    // Meteora DLMM: 6024 could be ExceedAmountSlippageTolerance
-    // The actual meaning depends on which program threw it — we log both for diagnosis.
+    // Anchor custom errors start at 6000 (index 0 = 6000). Error code = 6000 + enum index.
+    // Error 6024 = enum index 24. The meaning depends on WHICH program threw it:
+    //
+    // Jupiter V6:    6001=SlippageToleranceExceeded, 6024=InsufficientFunds
+    // Raydium CLMM:  6021=PriceSlippageCheck, 6022=TooLittleOutputReceived,
+    //                6023=TooMuchInputPaid, 6024=ZeroAmountSpecified
+    // Meteora DLMM:  6003=ExceededAmountSlippageTolerance, 6024=IdenticalFunder (unrelated)
+    //
+    // In combined atomic TXs, error 6024 most likely means:
+    //   - Raydium CLMM: ZeroAmountSpecified — reverse leg received 0 tokens from forward
+    //   - Jupiter: InsufficientFunds — reverse leg needs more tokens than forward produced
     let label = `CustomError(${code})`;
     let program = 'unknown';
 
@@ -1474,12 +1480,23 @@ export class Executor {
       label = 'SlippageToleranceExceeded(6001)';
       program = 'jupiter';
     } else if (code === 6024) {
-      // Could be InsufficientFunds (Jupiter) or SlippageExceeded (Raydium/Meteora)
-      label = 'InsufficientFundsOrSlippage(6024)';
-      program = 'jupiter-or-dex';
-    } else if (code === 6022 || code === 6023) {
-      label = `DEXSlippage(${code})`;
-      program = 'dex';
+      label = 'ZeroAmountOrInsufficientFunds(6024)';
+      program = 'raydium-clmm-or-jupiter';
+    } else if (code === 6021) {
+      label = 'PriceSlippageCheck(6021)';
+      program = 'raydium-clmm';
+    } else if (code === 6022) {
+      label = 'TooLittleOutputReceived(6022)';
+      program = 'raydium-clmm';
+    } else if (code === 6023) {
+      label = 'TooMuchInputPaid(6023)';
+      program = 'raydium-clmm';
+    } else if (code === 6003) {
+      label = 'ExceededAmountSlippageTolerance(6003)';
+      program = 'meteora-dlmm';
+    } else if (code === 6004) {
+      label = 'ExceededBinSlippageTolerance(6004)';
+      program = 'meteora-dlmm';
     } else if (code >= 6000 && code < 6100) {
       label = `AnchorCustom(${code})`;
       program = 'anchor-program';

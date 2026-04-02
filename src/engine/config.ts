@@ -40,13 +40,14 @@ export const EXECUTION_SLIPPAGE_BPS = 5;
  *  a failed trade is ~$0.002 in TX fees. */
 export const MIN_VIABLE_PROFIT_USD = 0;
 
-/** Slippage tolerance for the REVERSE leg of a combined atomic TX, in bps.
- *  Must be higher than forward slippage because:
- *  1. Forward swap moves the pool price (self-impact)
- *  2. Forward swap may produce slightly fewer tokens than quoted
- *  3. Reverse swap's input amount was set from forward's QUOTED output
- *  The executor's pre-flight profit check still ensures net profitability.
- *  Higher tolerance here just prevents unnecessary on-chain reverts (error 6024). */
+/** Slippage tolerance for the REVERSE leg quotes, in bps.
+ *  Higher than forward slippage because the reverse quote is based on
+ *  the forward's EXPECTED output, not actual. In combined atomic TXs,
+ *  error 6024 is NOT slippage — it's ZeroAmountSpecified (Raydium CLMM)
+ *  or InsufficientFunds (Jupiter), caused by the forward leg producing
+ *  fewer tokens than the reverse leg's instruction expects.
+ *  The executor now simulates combined TXs and falls back to sequential
+ *  execution (which uses real token balances) when simulation fails. */
 export const REVERSE_LEG_SLIPPAGE_BPS = 300;
 
 // Token list for scanning
