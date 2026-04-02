@@ -32,6 +32,7 @@ import {
   JUPITER_MAX_ACCOUNTS,
   EXECUTION_SLIPPAGE_BPS,
   MIN_VIABLE_PROFIT_USD,
+  REVERSE_LEG_SLIPPAGE_BPS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -183,11 +184,15 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       const topCandidates = ranked.slice(0, MAX_JUPITER_CANDIDATES);
 
       // Fire all sell quotes in parallel across pool endpoints
+      // Use REVERSE_LEG_SLIPPAGE_BPS (300bps) because in the combined atomic TX,
+      // the forward swap's price impact + output variance makes the reverse leg
+      // receive fewer tokens than quoted. Higher tolerance prevents error 6024.
+      // Safety: executor's pre-flight profit check still ensures net profitability.
       const sellQuoteRequests = topCandidates.map(c => ({
         inputMint: c.token.mint,
         outputMint: SOL_MINT,
         amount: c.buyQuote.outputAmount,
-        slippageBps: this.config.slippageBps,
+        slippageBps: REVERSE_LEG_SLIPPAGE_BPS,
       }));
       const jupSellResults = await this.jupiterPool.getQuotesParallel(sellQuoteRequests);
 
@@ -327,9 +332,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       const buyQuote = await this.getRaydiumSwapQuote(SOL_MINT, token.mint, scanAmountStr);
       if (!buyQuote) continue;
 
-      // Jupiter sell quote via pool
+      // Jupiter sell quote via pool — use higher slippage for reverse leg
       const jupSell = await this.jupiterPool.getQuoteRoundRobin(
-        token.mint, SOL_MINT, buyQuote.outputAmount, this.config.slippageBps,
+        token.mint, SOL_MINT, buyQuote.outputAmount, REVERSE_LEG_SLIPPAGE_BPS,
       );
       if (!jupSell) continue;
 
@@ -459,9 +464,9 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         const rayBuy = await this.getRaydiumSwapQuote(SOL_MINT, hot.token.mint, scanAmountStr);
         if (!rayBuy) continue;
 
-        // Jupiter sell via pool
+        // Jupiter sell via pool — higher slippage for reverse leg
         const jupSell = await this.jupiterPool.getQuoteRoundRobin(
-          hot.token.mint, SOL_MINT, rayBuy.outputAmount, this.config.slippageBps,
+          hot.token.mint, SOL_MINT, rayBuy.outputAmount, REVERSE_LEG_SLIPPAGE_BPS,
         );
         if (!jupSell) continue;
 

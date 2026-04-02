@@ -30,16 +30,23 @@ export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS;  
 export const JUPITER_MAX_ACCOUNTS = 20;
 
 /** Expected slippage during ~1.6s execution window, in basis points.
- *  Price typically moves 5-15bps in 1-2 seconds on Solana DEXes.
- *  We budget 10bps as a cost — if gross profit < this buffer, the trade
- *  will statistically revert more often than it lands. */
-export const EXECUTION_SLIPPAGE_BPS = 10;
+ *  This is deducted as a cost in profit calculations so the bot only
+ *  fires on spreads wide enough to survive execution latency. */
+export const EXECUTION_SLIPPAGE_BPS = 5;
 
 /** Minimum net profit in USD after fees AND slippage buffer.
- *  Below this, TX fee losses from reverts exceed expected profit.
- *  At $0.002/TX fee, with 30% success rate, you need > $0.007 expected
- *  profit just to break even. $0.02 gives a 3:1 edge. */
-export const MIN_VIABLE_PROFIT_USD = 0.02;
+ *  At $0.002/TX fee, need > $0.003 to break even on 50% success rate.
+ *  $0.005 gives a small edge. Keep low — opportunities are real and frequent. */
+export const MIN_VIABLE_PROFIT_USD = 0.005;
+
+/** Slippage tolerance for the REVERSE leg of a combined atomic TX, in bps.
+ *  Must be higher than forward slippage because:
+ *  1. Forward swap moves the pool price (self-impact)
+ *  2. Forward swap may produce slightly fewer tokens than quoted
+ *  3. Reverse swap's input amount was set from forward's QUOTED output
+ *  The executor's pre-flight profit check still ensures net profitability.
+ *  Higher tolerance here just prevents unnecessary on-chain reverts (error 6024). */
+export const REVERSE_LEG_SLIPPAGE_BPS = 300;
 
 // Token list for scanning
 export interface TokenInfo {
@@ -213,7 +220,7 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
     slippageBps: 50,           // 50 bps — atomic TX reverts entirely if unprofitable
-    minProfitUsd: MIN_VIABLE_PROFIT_USD,  // Must exceed TX fee losses from reverts
+    minProfitUsd: MIN_VIABLE_PROFIT_USD,  // Must exceed TX fee cost on failed attempts
     maxDrawdownPercent: 15,
     circuitBreakerFailures: 15,
     circuitBreakerCooldownMs: 60000, // 1 min

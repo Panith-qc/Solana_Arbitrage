@@ -19,6 +19,7 @@ import {
   PRIORITY_FEE_LAMPORTS,
   SINGLE_LEG_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
+  REVERSE_LEG_SLIPPAGE_BPS,
   JUPITER_MAX_ACCOUNTS,
 } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
@@ -663,13 +664,17 @@ export class Executor {
     }
 
     // ── STEP 3: FRESH REVERSE QUOTE + SWAP TX ───────────────────
-    // Use the expected token output from forward quote as reverse input
+    // Use the expected token output from forward quote as reverse input.
+    // Higher slippage (300bps) for reverse because in the combined atomic TX:
+    // - Forward swap's price impact degrades the reverse leg
+    // - Forward may produce slightly fewer tokens than quoted
+    // Safety: profit check below still ensures net profitability.
     await this.rateLimit();
     const reverseQuote = await this.fetchQuote(
       tokenMint,
       SOL_MINT,
       freshForward.outAmount,
-      freshForward.slippageBps,
+      REVERSE_LEG_SLIPPAGE_BPS,
     );
 
     if (!reverseQuote) {

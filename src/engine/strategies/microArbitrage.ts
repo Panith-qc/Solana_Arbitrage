@@ -23,6 +23,7 @@ import {
   JUPITER_MAX_ACCOUNTS,
   EXECUTION_SLIPPAGE_BPS,
   MIN_VIABLE_PROFIT_USD,
+  REVERSE_LEG_SLIPPAGE_BPS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -110,10 +111,10 @@ export class MicroArbitrageStrategy extends BaseStrategy {
           );
           if (!leg1) continue;
 
-          // Leg 2: Token -> SOL
+          // Leg 2: Token -> SOL — higher slippage for reverse leg in combined atomic TX
           await this.jupiterRateLimit();
           const leg2 = await this.getJupiterQuote(
-            token.mint, SOL_MINT, leg1.outputAmount, this.config.slippageBps,
+            token.mint, SOL_MINT, leg1.outputAmount, REVERSE_LEG_SLIPPAGE_BPS,
           );
           if (!leg2) continue;
 
