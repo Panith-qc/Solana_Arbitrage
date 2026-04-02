@@ -10,13 +10,15 @@ export const USDC_DECIMALS = 6;
 // These are the REAL Solana protocol fees — never duplicate these values elsewhere.
 export const BASE_GAS_LAMPORTS = 5_000;        // 5000 lamports per signature (Solana protocol fixed)
 export const PRIORITY_FEE_LAMPORTS = 10_000;   // Priority fee for staked connection inclusion
-export const JITO_TIP_LAMPORTS = 10_000;       // Kept for backward compat with config references
+// Minimum Jito tip for Helius Sender dual-routing (SWQoS + Jito).
+// Below 200,000 lamports, Sender only uses SWQoS (no Jito auction).
+export const JITO_TIP_LAMPORTS = 200_000;
 
 // Single atomic TX = 1 signature + priority fee + Jito tip
-export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 25,000
+export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 215,000
 // Combined atomic TX: both swaps in one TX = 1 signature + priority fee + Jito tip
-// Jito tip is required for Helius Sender (dual SWQoS + Jito routing)
-export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS;   // 25,000
+// Jito tip (200k lamports = 0.0002 SOL) required for Helius Sender dual SWQoS + Jito routing
+export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS;   // 215,000
 
 // ── EXECUTION REALITY CONSTANTS ────────────────────────────────────────────
 // These account for the physical reality of Solana execution latency.
@@ -116,7 +118,8 @@ export const JITO_BLOCK_ENGINES = [
   'https://tokyo.mainnet.block-engine.jito.wtf',
 ];
 
-// Jito tip accounts for bundle tips
+// Jito tip accounts — these are the official addresses recognized by
+// Helius Sender and Jito block engine for tip routing.
 export const JITO_TIP_ACCOUNTS = [
   '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
   'HFqU5x63VTqvQss8hp11i4bPg2HbkAsfBf5q6rxjR4um',
@@ -315,9 +318,9 @@ export function loadConfig(): BotConfig {
     jupiterApiKey4: process.env.JUPITER_API_KEY_4 || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
     jitoEnabled: process.env.JITO_ENABLED !== 'false',
-    // CRITICAL: Must match JITO_TIP_LAMPORTS (10,000) used in profit calculations.
-    // 100k default was eating ALL profit. 10k is the minimum viable Jito tip.
-    jitoTipLamports: parseInt(process.env.JITO_TIP_LAMPORTS || '10000'),
+    // CRITICAL: Must match JITO_TIP_LAMPORTS (200,000) used in profit calculations.
+    // 200k lamports = 0.0002 SOL = minimum for Helius Sender dual routing (SWQoS + Jito).
+    jitoTipLamports: parseInt(process.env.JITO_TIP_LAMPORTS || '200000'),
     jitoMaxTipLamports: parseInt(process.env.JITO_MAX_TIP_LAMPORTS || '500000'),
     geyserUrl: process.env.GEYSER_URL || '',
     geyserToken: process.env.GEYSER_TOKEN || '',

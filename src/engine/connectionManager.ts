@@ -265,7 +265,10 @@ export class ConnectionManager {
       const params: any = serializedTxBase64
         ? [{
             transaction: serializedTxBase64,
-            options: { priorityLevel: 'High' },
+            options: {
+              priorityLevel: 'High',
+              transactionEncoding: 'base64',
+            },
           }]
         : [{
             options: { recommended: true },
@@ -308,42 +311,92 @@ export class ConnectionManager {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // HELIUS PAID TIER: SMART TRANSACTION SEND VIA SENDER ENDPOINT
-  // Uses sender.helius-rpc.com which dual-routes through:
+  // HELIUS PAID TIER: SEND VIA SENDER ENDPOINT
+  // sender.helius-rpc.com/fast is a SEPARATE endpoint from regular RPC.
+  // It dual-routes through:
   //   1. SWQoS (Staked Weighted Quality of Service) — staked connections
-  //   2. Jito bundles — MEV-aware block builders
+  //   2. Jito auction — MEV-aware block builders
   // This gives the HIGHEST landing rate for time-sensitive arb TXs.
-  // Requires a Jito tip in the TX (min ~10,000 lamports).
-  // Free on all Helius paid plans, 50 TPS limit.
+  // Requires a Jito tip in the TX (min 200,000 lamports = 0.0002 SOL).
+  // Free on all Helius paid plans, 50 TPS default limit.
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Build the Helius Sender URL from the configured RPC URL.
-   * Transforms: https://mainnet.helius-rpc.com/?api-key=KEY
-   *        To: https://mainnet.helius-rpc.com/?api-key=KEY
-   * The sendTransaction RPC method on Helius automatically uses
-   * staked connections. No separate sender URL needed — Helius
-   * routes all paid-tier sendTransaction calls through SWQoS + Jito.
+   * Build the Helius Sender URL.
+   * This is a DEDICATED send endpoint, separate from the RPC URL.
+   * Format: https://sender.helius-rpc.com/fast?api-key=KEY
+   * The API key is extracted from the configured Helius RPC URL.
    */
-  private getHeliusSendUrl(): string {
-    return this.config.rpcUrl;
+  private getHeliusSenderUrl(): string {
+    // Extract API key from RPC URL (e.g., https://mainnet.helius-rpc.com/?api-key=abc123)
+    const apiKey = this.config.heliusApiKey;
+    if (apiKey) {
+      return `https://sender.helius-rpc.com/fast?api-key=${apiKey}`;
+    }
+    // Try to extract from RPC URL query params
+    try {
+      const url = new URL(this.config.rpcUrl);
+      const key = url.searchParams.get('api-key') || url.pathname.slice(1);
+      if (key && key.length > 10) {
+        return `https://sender.helius-rpc.com/fast?api-key=${key}`;
+      }
+    } catch {}
+    // Fallback: no Sender available, will use regular RPC
+    return '';
   }
 
   /**
-   * Send a serialized transaction via Helius with dual SWQoS + Jito routing.
-   * On Helius paid tiers, sendTransaction automatically routes through
-   * staked validators AND Jito for maximum landing rate.
+   * Send a serialized transaction via Helius Sender (sender.helius-rpc.com/fast).
+   * Dual-routes through SWQoS + Jito simultaneously for maximum landing rate.
    *
-   * The TX MUST include a Jito tip instruction for Jito routing to work.
-   * Falls back to standard sendRawTransaction if Helius method fails.
+   * The TX MUST include a Jito tip >= 200,000 lamports (0.0002 SOL) for
+   * dual routing. Without it, only SWQoS is used.
+   *
+   * Falls back to regular RPC sendTransaction if Sender is unavailable.
    */
   async sendSmartTransaction(serializedTx: Buffer): Promise<string> {
     const connection = this.getConnection();
-    const sendUrl = this.getHeliusSendUrl();
+    const senderUrl = this.getHeliusSenderUrl();
 
-    // PRIMARY: Helius paid tier sendTransaction with staked + Jito routing
+    // PRIMARY: Helius Sender endpoint (SWQoS + Jito dual-routing)
+    if (senderUrl) {
+      try {
+        const response = await fetch(senderUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'send-tx',
+            method: 'sendTransaction',
+            params: [
+              Buffer.from(serializedTx).toString('base64'),
+              {
+                encoding: 'base64',
+                skipPreflight: true,
+                maxRetries: 0,  // Sender requires 0 — we handle retries ourselves
+              },
+            ],
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+
+        const data = await response.json() as any;
+        if (data?.result) {
+          engineLog.info('TX sent via Helius Sender (sender.helius-rpc.com/fast — SWQoS + Jito)');
+          return data.result as string;
+        }
+        if (data?.error) {
+          throw new Error(`Helius Sender: ${JSON.stringify(data.error)}`);
+        }
+        throw new Error('No result from Sender');
+      } catch (err: any) {
+        engineLog.warn({ err: err?.message }, 'Helius Sender failed — falling back to regular RPC');
+      }
+    }
+
+    // FALLBACK: Regular Helius RPC sendTransaction (still has staked connections on paid tier)
     try {
-      const response = await fetch(sendUrl, {
+      const response = await fetch(this.config.rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -355,7 +408,7 @@ export class ConnectionManager {
             {
               encoding: 'base64',
               skipPreflight: true,
-              maxRetries: 0,  // No RPC-level retries — we handle retries ourselves
+              maxRetries: 2,
               preflightCommitment: 'processed',
             },
           ],
@@ -365,23 +418,23 @@ export class ConnectionManager {
 
       const data = await response.json() as any;
       if (data?.result) {
-        engineLog.info('TX sent via Helius Sender (SWQoS + Jito dual-routing)');
+        engineLog.info('TX sent via Helius RPC fallback');
         return data.result as string;
       }
       if (data?.error) {
-        throw new Error(`Helius sendTransaction: ${JSON.stringify(data.error)}`);
+        throw new Error(`Helius RPC: ${JSON.stringify(data.error)}`);
       }
-      throw new Error('No result from sendTransaction');
     } catch (err: any) {
-      engineLog.warn({ err: err?.message }, 'Helius smart send failed — falling back to sendRawTransaction');
-      // Fallback to standard SDK method (still goes through Helius RPC)
-      const signature = await connection.sendRawTransaction(serializedTx, {
-        skipPreflight: true,
-        maxRetries: 2,
-        preflightCommitment: 'processed',
-      });
-      return signature;
+      engineLog.warn({ err: err?.message }, 'Helius RPC send failed — falling back to SDK');
     }
+
+    // LAST RESORT: Standard SDK sendRawTransaction
+    const signature = await connection.sendRawTransaction(serializedTx, {
+      skipPreflight: true,
+      maxRetries: 2,
+      preflightCommitment: 'processed',
+    });
+    return signature;
   }
 
   // ═══════════════════════════════════════════════════════════════
