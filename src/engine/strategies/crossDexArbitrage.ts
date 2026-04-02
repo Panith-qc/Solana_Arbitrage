@@ -29,6 +29,9 @@ import {
   PRIORITY_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
+  JUPITER_MAX_ACCOUNTS,
+  EXECUTION_SLIPPAGE_BPS,
+  MIN_VIABLE_PROFIT_USD,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -86,7 +89,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       name: 'cross-dex-arbitrage',
       enabled: riskProfile.strategies.crossDexArbitrage,
       scanIntervalMs: 3_000,
-      minProfitUsd: 0,  // ANY positive net profit triggers execution (Jito atomic = safe)
+      minProfitUsd: MIN_VIABLE_PROFIT_USD,  // Must exceed TX fee losses from reverts
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
     };
@@ -209,7 +212,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           grossProfitSol: profitAnalysis.grossProfitSol,
           netProfitUsd: profitAnalysis.netProfitUsd,
           fees: profitAnalysis.totalFeeSol,
-          profitable: profitAnalysis.netProfitUsd > 0,
+          profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
         });
 
         const emoji = profitAnalysis.grossProfitSol > 0 ? '🟢' : '🔴';
@@ -227,7 +230,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         // Track for hot tokens
         hotCandidates.push({ token, spreadBps, raydiumBuyAmount: buyQuote.outputAmount });
 
-        if (profitAnalysis.netProfitUsd > 0) {
+        if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
           strategyLog.warn(
             { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
             `🚀 PROFITABLE: ${token.symbol} ray→jup — fetching swap TXs NOW`,
@@ -341,7 +344,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         grossProfitSol: profitAnalysis.grossProfitSol,
         netProfitUsd: profitAnalysis.netProfitUsd,
         fees: profitAnalysis.totalFeeSol,
-        profitable: profitAnalysis.netProfitUsd > 0,
+        profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
       });
 
       strategyLog.info(
@@ -352,7 +355,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         `⚡ WS ${token.symbol}@${scanSol} ray→jup ${spreadBps.toFixed(1)}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
       );
 
-      if (profitAnalysis.netProfitUsd > 0) {
+      if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
         strategyLog.warn(
           { token: token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
           `⚡ WS PROFITABLE: ${token.symbol} — fetching swap TXs NOW`,
@@ -476,7 +479,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           grossProfitSol: profitAnalysis.grossProfitSol,
           netProfitUsd: profitAnalysis.netProfitUsd,
           fees: profitAnalysis.totalFeeSol,
-          profitable: profitAnalysis.netProfitUsd > 0,
+          profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
         });
 
         strategyLog.info(
@@ -484,7 +487,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
           `HOT re-check: ${hot.token.symbol} ${spreadBps.toFixed(1)}bps`,
         );
 
-        if (profitAnalysis.netProfitUsd > 0) {
+        if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
           strategyLog.warn(
             { token: hot.token.symbol, netUsd: profitAnalysis.netProfitUsd.toFixed(4), spreadBps: spreadBps.toFixed(1) },
             `🚀 HOT TOKEN PROFITABLE: ${hot.token.symbol} — fetching swap TXs`,
@@ -590,6 +593,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
     try {
       const response = await fetch(url.toString(), {
@@ -628,6 +632,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
     url.searchParams.set('dexes', dexes);
 
     try {
@@ -707,16 +712,23 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
     const grossProfitSol = outputSol - inputSol;
 
-    // Single atomic TX: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
-    // No Jito tip needed — sent via Helius staked connection
-    const totalFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
+    // ── REAL COST CALCULATION ─────────────────────────────────────
+    // 1. TX fees: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
+    const txFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
+
+    // 2. Expected slippage: price moves ~10bps during 1.6s execution window.
+    //    This is not "tolerance" — it's the statistical cost of latency.
+    //    If gross profit < slippage budget, the trade will revert most of the time.
+    const slippageBudgetSol = inputSol * (EXECUTION_SLIPPAGE_BPS / 10_000);
+
+    const totalFeeSol = txFeeSol + slippageBudgetSol;
     const netProfitSol = grossProfitSol - totalFeeSol;
 
     const solPriceUsd = this.botConfig.solPriceUsd;
     if (!solPriceUsd || solPriceUsd <= 0) {
       return {
         grossProfitSol, netProfitSol: -1, netProfitUsd: -1, totalFeeSol,
-        feeBreakdown: { totalFee: TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL },
+        feeBreakdown: { txFee: txFeeSol, slippageBudget: slippageBudgetSol },
       };
     }
 
@@ -725,7 +737,7 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       netProfitSol,
       netProfitUsd: netProfitSol * solPriceUsd,
       totalFeeSol,
-      feeBreakdown: { totalFee: TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL },
+      feeBreakdown: { txFee: txFeeSol, slippageBudget: slippageBudgetSol },
     };
   }
 

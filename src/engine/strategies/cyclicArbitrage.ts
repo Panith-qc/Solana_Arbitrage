@@ -16,6 +16,7 @@ import {
   BASE_GAS_LAMPORTS,
   PRIORITY_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
+  JUPITER_MAX_ACCOUNTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -204,6 +205,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
     try {
       const response = await fetch(url.toString(), { headers: this.jupiterApiHeaders() });

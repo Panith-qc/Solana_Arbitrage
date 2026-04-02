@@ -17,6 +17,30 @@ export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS
 // Combined atomic TX: both swaps in one TX = 1 signature + priority fee
 export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS;    // 15,000
 
+// ── EXECUTION REALITY CONSTANTS ────────────────────────────────────────────
+// These account for the physical reality of Solana execution latency.
+// From quote to on-chain confirmation takes ~1.5-2s. During that window,
+// the market moves. If the profit margin is thinner than typical movement,
+// the TX will always revert (slippage error 6024) and you burn TX fees.
+
+/** Maximum accounts Jupiter can use per quote — keeps routes simple enough
+ *  to combine 2 swaps into 1 atomic TX within Solana's 1232-byte limit.
+ *  Without this, complex tokens (wBTC, wETH) produce 30+ account routes
+ *  that overflow when combined. 20 accounts × 2 swaps = 40, fits with ALTs. */
+export const JUPITER_MAX_ACCOUNTS = 20;
+
+/** Expected slippage during ~1.6s execution window, in basis points.
+ *  Price typically moves 5-15bps in 1-2 seconds on Solana DEXes.
+ *  We budget 10bps as a cost — if gross profit < this buffer, the trade
+ *  will statistically revert more often than it lands. */
+export const EXECUTION_SLIPPAGE_BPS = 10;
+
+/** Minimum net profit in USD after fees AND slippage buffer.
+ *  Below this, TX fee losses from reverts exceed expected profit.
+ *  At $0.002/TX fee, with 30% success rate, you need > $0.007 expected
+ *  profit just to break even. $0.02 gives a 3:1 edge. */
+export const MIN_VIABLE_PROFIT_USD = 0.02;
+
 // Token list for scanning
 export interface TokenInfo {
   mint: string;
@@ -188,8 +212,8 @@ export const RISK_PROFILES: Record<RiskLevel, RiskProfile> = {
     maxDailyLossPercent: 15,
     maxConcurrentTrades: 3,
     stopLossPercent: 3.0,
-    slippageBps: 50,           // 50 bps — atomic bundles revert entirely if unprofitable, so slippage tolerance is safe
-    minProfitUsd: 0,           // ANY positive profit triggers execution
+    slippageBps: 50,           // 50 bps — atomic TX reverts entirely if unprofitable
+    minProfitUsd: MIN_VIABLE_PROFIT_USD,  // Must exceed TX fee losses from reverts
     maxDrawdownPercent: 15,
     circuitBreakerFailures: 15,
     circuitBreakerCooldownMs: 60000, // 1 min

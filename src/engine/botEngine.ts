@@ -4,7 +4,7 @@
 // Every trade: SOL → [route] → SOL
 
 import { engineLog, tradeLogger } from './logger.js';
-import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT } from './config.js';
+import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { BotDatabase } from './database.js';
 import { Executor, ExecutionResult } from './executor.js';
@@ -1302,6 +1302,7 @@ export class BotEngine {
         quoteUrl.searchParams.set('outputMint', 'So11111111111111111111111111111111111111112');
         quoteUrl.searchParams.set('amount', balance.toString());
         quoteUrl.searchParams.set('slippageBps', recoverySlippageBps.toString());
+        quoteUrl.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
         const quoteResp = await fetch(quoteUrl.toString(), {
           headers: this.jupiterApiHeaders(),
@@ -1384,6 +1385,7 @@ export class BotEngine {
       url.searchParams.set('outputMint', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
       url.searchParams.set('amount', '1000000000'); // 1 SOL
       url.searchParams.set('slippageBps', '50');
+      url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
       const resp = await fetch(url.toString(), {
         headers: this.jupiterApiHeaders(),

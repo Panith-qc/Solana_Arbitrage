@@ -15,7 +15,7 @@
 import crypto from 'crypto';
 import { Connection, Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { strategyLog } from '../logger.js';
-import { BotConfig, SOL_MINT, LAMPORTS_PER_SOL } from '../config.js';
+import { BotConfig, SOL_MINT, LAMPORTS_PER_SOL, JUPITER_MAX_ACCOUNTS } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -490,6 +490,7 @@ export class SnipeExecutor {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', SNIPE_SLIPPAGE_BPS.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
     try {
       const resp = await fetch(url.toString(), {

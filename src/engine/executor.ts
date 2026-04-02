@@ -19,6 +19,7 @@ import {
   PRIORITY_FEE_LAMPORTS,
   SINGLE_LEG_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
+  JUPITER_MAX_ACCOUNTS,
 } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import {
@@ -813,13 +814,19 @@ export class Executor {
       };
 
     } catch (err: any) {
+      const msg = err.message || String(err);
       if (err instanceof TxTooLargeError) {
         executionLog.warn(
           { tokenSymbol, sizeBytes: err.sizeBytes },
-          'ATOMIC: Combined TX too large — aborting (route too complex)',
+          'ATOMIC: Combined TX too large — route too complex even with maxAccounts',
+        );
+      } else if (msg.includes('encoding overruns') || msg.includes('Uint8Array') || msg.includes('deserialize')) {
+        executionLog.warn(
+          { tokenSymbol, error: msg },
+          'ATOMIC: Swap TX deserialization failed — route too complex',
         );
       }
-      return this.failResult(`ATOMIC: ${err.message}`, startMs);
+      return this.failResult(`ATOMIC: ${msg}`, startMs);
     }
   }
 
@@ -1144,6 +1151,7 @@ export class Executor {
         amount,
         slippageBps: slippageBps.toString(),
         swapMode: 'ExactIn',
+        maxAccounts: JUPITER_MAX_ACCOUNTS.toString(),
       });
 
       const response = await fetchWithTimeout(

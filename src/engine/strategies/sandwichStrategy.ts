@@ -14,6 +14,7 @@ import {
   SCAN_TOKENS,
   BotConfig,
   RiskProfile,
+  JUPITER_MAX_ACCOUNTS,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -324,6 +325,7 @@ export class SandwichStrategy extends BaseStrategy {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
     try {
       const response = await fetch(url.toString(), { headers: this.jupiterApiHeaders() });

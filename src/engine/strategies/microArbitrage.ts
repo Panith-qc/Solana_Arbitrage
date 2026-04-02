@@ -20,6 +20,9 @@ import {
   PRIORITY_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
+  JUPITER_MAX_ACCOUNTS,
+  EXECUTION_SLIPPAGE_BPS,
+  MIN_VIABLE_PROFIT_USD,
 } from '../config.js';
 import { ConnectionManager } from '../connectionManager.js';
 
@@ -60,7 +63,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
       name: 'micro-arbitrage',
       enabled: true,
       scanIntervalMs: 6_000,
-      minProfitUsd: 0,
+      minProfitUsd: MIN_VIABLE_PROFIT_USD,
       maxPositionSol: riskProfile.maxPositionSol,
       slippageBps: riskProfile.slippageBps,
     };
@@ -125,7 +128,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
             grossProfitSol: profitAnalysis.grossProfitSol,
             netProfitUsd: profitAnalysis.netProfitUsd,
             fees: profitAnalysis.totalFeeSol,
-            profitable: profitAnalysis.netProfitUsd > 0,
+            profitable: profitAnalysis.netProfitUsd >= this.config.minProfitUsd,
           });
 
           strategyLog.info(
@@ -137,7 +140,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
             `MICRO ${token.symbol}@${amountSol} ${spreadBps.toFixed(1)}bps | net $${profitAnalysis.netProfitUsd.toFixed(4)}`,
           );
 
-          if (profitAnalysis.netProfitUsd > 0) {
+          if (profitAnalysis.netProfitUsd >= this.config.minProfitUsd) {
             strategyLog.warn(
               { token: token.symbol, amountSol, netUsd: profitAnalysis.netProfitUsd.toFixed(4) },
               `MICRO OPPORTUNITY: ${token.symbol}@${amountSol} — fetching swap TXs`,
@@ -209,6 +212,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
     try {
       const response = await fetch(url.toString(), {
         headers: this.jupiterApiHeaders(),
@@ -307,16 +311,19 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     const inputSol = Number(inputLamports) / LAMPORTS_PER_SOL;
     const outputSol = Number(outputLamports) / LAMPORTS_PER_SOL;
     const grossProfitSol = outputSol - inputSol;
-    // Single atomic TX: 1 signature (5,000) + priority fee (10,000) = 15,000 lamports
-    // No Jito tip — sent via Helius staked connection
-    const totalFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
+
+    // Real costs: TX fees + expected slippage during execution window
+    const txFeeSol = TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL;
+    const slippageBudgetSol = inputSol * (EXECUTION_SLIPPAGE_BPS / 10_000);
+    const totalFeeSol = txFeeSol + slippageBudgetSol;
     const netProfitSol = grossProfitSol - totalFeeSol;
+
     const solPriceUsd = this.botConfig.solPriceUsd || 0;
     return {
       grossProfitSol, netProfitSol,
       netProfitUsd: solPriceUsd > 0 ? netProfitSol * solPriceUsd : -1,
       totalFeeSol,
-      feeBreakdown: { totalFee: TWO_LEG_FEE_LAMPORTS / LAMPORTS_PER_SOL },
+      feeBreakdown: { txFee: txFeeSol, slippageBudget: slippageBudgetSol },
     };
   }
 

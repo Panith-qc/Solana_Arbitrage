@@ -5,7 +5,7 @@
 // to maximize parallelism without 429 errors.
 
 import { strategyLog } from './logger.js';
-import { BotConfig, PRIORITY_FEE_LAMPORTS } from './config.js';
+import { BotConfig, PRIORITY_FEE_LAMPORTS, JUPITER_MAX_ACCOUNTS } from './config.js';
 
 export interface JupiterEndpoint {
   /** Base URL (same for all: https://lite-api.jup.ag) */
@@ -113,6 +113,7 @@ export class JupiterPool {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
+    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
     try {
       const response = await fetch(url.toString(), {
