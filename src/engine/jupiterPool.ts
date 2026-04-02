@@ -104,6 +104,7 @@ export class JupiterPool {
     outputMint: string,
     amount: string,
     slippageBps: number,
+    maxAccounts?: number,
   ): Promise<DexQuote | null> {
     const ep = this.endpoints[endpointIndex % this.endpoints.length];
     await this.rateLimitEndpoint(ep);
@@ -113,7 +114,7 @@ export class JupiterPool {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
-    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
+    if (maxAccounts) url.searchParams.set('maxAccounts', maxAccounts.toString());
 
     try {
       const response = await fetch(url.toString(), {

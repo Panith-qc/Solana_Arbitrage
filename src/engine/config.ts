@@ -35,9 +35,10 @@ export const JUPITER_MAX_ACCOUNTS = 20;
 export const EXECUTION_SLIPPAGE_BPS = 5;
 
 /** Minimum net profit in USD after TX fees.
- *  At $0.002/TX fee, need > $0.003 to break even on 50% success rate.
- *  $0.003 keeps the bot active on the frequent micro-spreads. */
-export const MIN_VIABLE_PROFIT_USD = 0.003;
+ *  Set to 0 — any positive profit triggers execution.
+ *  Atomic TX reverts safely if unprofitable, so the only cost of
+ *  a failed trade is ~$0.002 in TX fees. */
+export const MIN_VIABLE_PROFIT_USD = 0;
 
 /** Slippage tolerance for the REVERSE leg of a combined atomic TX, in bps.
  *  Must be higher than forward slippage because:

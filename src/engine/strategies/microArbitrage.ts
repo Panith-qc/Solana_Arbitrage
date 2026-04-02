@@ -20,7 +20,6 @@ import {
   PRIORITY_FEE_LAMPORTS,
   TWO_LEG_FEE_LAMPORTS,
   JITO_TIP_LAMPORTS,
-  JUPITER_MAX_ACCOUNTS,
   MIN_VIABLE_PROFIT_USD,
   REVERSE_LEG_SLIPPAGE_BPS,
 } from '../config.js';
@@ -212,7 +211,6 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
-    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
     try {
       const response = await fetch(url.toString(), {
         headers: this.jupiterApiHeaders(),

@@ -1302,7 +1302,6 @@ export class BotEngine {
         quoteUrl.searchParams.set('outputMint', 'So11111111111111111111111111111111111111112');
         quoteUrl.searchParams.set('amount', balance.toString());
         quoteUrl.searchParams.set('slippageBps', recoverySlippageBps.toString());
-        quoteUrl.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
         const quoteResp = await fetch(quoteUrl.toString(), {
           headers: this.jupiterApiHeaders(),
@@ -1385,7 +1384,6 @@ export class BotEngine {
       url.searchParams.set('outputMint', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
       url.searchParams.set('amount', '1000000000'); // 1 SOL
       url.searchParams.set('slippageBps', '50');
-      url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
       const resp = await fetch(url.toString(), {
         headers: this.jupiterApiHeaders(),

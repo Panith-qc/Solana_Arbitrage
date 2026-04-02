@@ -490,7 +490,6 @@ export class SnipeExecutor {
     url.searchParams.set('outputMint', outputMint);
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', SNIPE_SLIPPAGE_BPS.toString());
-    url.searchParams.set('maxAccounts', JUPITER_MAX_ACCOUNTS.toString());
 
     try {
       const resp = await fetch(url.toString(), {
