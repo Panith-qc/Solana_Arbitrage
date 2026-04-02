@@ -548,7 +548,7 @@ export function createRoutes(deps: RouteDependencies): Router {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          ...(config.jupiterApiKey ? { 'Authorization': `Bearer ${config.jupiterApiKey}` } : {}),
+          ...(config.jupiterApiKey ? { 'x-api-key': config.jupiterApiKey } : {}),
         },
       });
 

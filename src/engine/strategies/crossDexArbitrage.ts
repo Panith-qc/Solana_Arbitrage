@@ -592,7 +592,10 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('slippageBps', slippageBps.toString());
 
     try {
-      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url.toString(), {
+        headers: this.jupiterApiHeaders(),
+        signal: AbortSignal.timeout(5000),
+      });
 
       if (!response.ok) {
         if (response.status === 429) {
@@ -628,7 +631,10 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('dexes', dexes);
 
     try {
-      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url.toString(), {
+        headers: this.jupiterApiHeaders(),
+        signal: AbortSignal.timeout(5000),
+      });
 
       if (!response.ok) {
         if (response.status === 429) {
@@ -736,5 +742,11 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
       await new Promise(r => setTimeout(r, minDelay - elapsed));
     }
     this.lastJupiterCallMs = Date.now();
+  }
+
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.botConfig.jupiterApiKey) headers['x-api-key'] = this.botConfig.jupiterApiKey;
+    return headers;
   }
 }

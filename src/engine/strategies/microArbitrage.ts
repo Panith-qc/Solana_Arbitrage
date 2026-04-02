@@ -210,7 +210,10 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
     try {
-      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url.toString(), {
+        headers: this.jupiterApiHeaders(),
+        signal: AbortSignal.timeout(5000),
+      });
       if (!response.ok) {
         if (response.status === 429) await new Promise(r => setTimeout(r, 5000));
         return null;
@@ -232,9 +235,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     try {
       const walletPubkey = this.connectionManager.getPublicKey().toString();
       const primaryUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
-      const secondaryUrl = this.botConfig.jupiterApiUrl2
-        ? `${this.botConfig.jupiterApiUrl2}/swap/v1/swap`
-        : null;
+      const hasSecondKey = !!this.botConfig.jupiterApiKey2;
 
       const makeBody = (quote: any) => ({
         quoteResponse: quote,
@@ -248,19 +249,24 @@ export class MicroArbitrageStrategy extends BaseStrategy {
       let fwdData: any;
       let revData: any;
 
-      if (secondaryUrl) {
-        // PARALLEL: Forward on primary, Reverse on secondary
+      const primaryHeaders = this.jupiterApiHeaders(true);
+      const secondaryHeaders = hasSecondKey
+        ? { 'Content-Type': 'application/json', 'x-api-key': this.botConfig.jupiterApiKey2 }
+        : primaryHeaders;
+
+      if (hasSecondKey) {
+        // PARALLEL: Forward on key1, Reverse on key2
         await this.jupiterRateLimit();
         const [fwdResp, revResp] = await Promise.all([
           fetch(primaryUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: primaryHeaders,
             body: JSON.stringify(makeBody(forwardQuote)),
             signal: AbortSignal.timeout(10000),
           }),
-          fetch(secondaryUrl, {
+          fetch(primaryUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: secondaryHeaders,
             body: JSON.stringify(makeBody(reverseQuote)),
             signal: AbortSignal.timeout(10000),
           }),
@@ -268,11 +274,11 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         if (!fwdResp.ok || !revResp.ok) return null;
         [fwdData, revData] = await Promise.all([fwdResp.json(), revResp.json()]);
       } else {
-        // SEQUENTIAL: Single endpoint
+        // SEQUENTIAL: Single key
         await this.jupiterRateLimit();
         const fwdResp = await fetch(primaryUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: primaryHeaders,
           body: JSON.stringify(makeBody(forwardQuote)),
           signal: AbortSignal.timeout(10000),
         });
@@ -282,7 +288,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         await this.jupiterRateLimit();
         const revResp = await fetch(primaryUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: primaryHeaders,
           body: JSON.stringify(makeBody(reverseQuote)),
           signal: AbortSignal.timeout(10000),
         });
@@ -325,5 +331,12 @@ export class MicroArbitrageStrategy extends BaseStrategy {
     const minDelay = Math.max(1000, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
     if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
     this.lastJupiterCallMs = Date.now();
+  }
+
+  private jupiterApiHeaders(json = false): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (json) headers['Content-Type'] = 'application/json';
+    if (this.botConfig.jupiterApiKey) headers['x-api-key'] = this.botConfig.jupiterApiKey;
+    return headers;
   }
 }

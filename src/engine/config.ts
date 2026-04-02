@@ -228,10 +228,10 @@ export interface BotConfig {
   // API
   jupiterApiUrl: string;
   jupiterApiKey: string;
-  /** Additional Jupiter endpoints (free tier accounts) for parallel calls */
-  jupiterApiUrl2: string;
-  jupiterApiUrl3: string;
-  jupiterApiUrl4: string;
+  /** Additional Jupiter API keys (free tier accounts) for parallel calls */
+  jupiterApiKey2: string;
+  jupiterApiKey3: string;
+  jupiterApiKey4: string;
   heliusApiKey: string;
 
   // Jito
@@ -275,10 +275,10 @@ export function loadConfig(): BotConfig {
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
     scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '1.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
-    jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
-    jupiterApiUrl2: process.env.JUPITER_API_URL_2 || '',
-    jupiterApiUrl3: process.env.JUPITER_API_URL_3 || '',
-    jupiterApiUrl4: process.env.JUPITER_API_URL_4 || '',
+    jupiterApiKey: process.env.JUPITER_API_KEY || '',
+    jupiterApiKey2: process.env.JUPITER_API_KEY_2 || '',
+    jupiterApiKey3: process.env.JUPITER_API_KEY_3 || '',
+    jupiterApiKey4: process.env.JUPITER_API_KEY_4 || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
     jitoEnabled: process.env.JITO_ENABLED !== 'false',
     // CRITICAL: Must match JITO_TIP_LAMPORTS (10,000) used in profit calculations.
@@ -297,4 +297,15 @@ export function loadConfig(): BotConfig {
     snipeAmountSol: parseFloat(process.env.SNIPE_AMOUNT_SOL || '0.5'),
     solPriceUsd: 0,
   };
+}
+
+/**
+ * Build headers for Jupiter API calls.
+ * Includes x-api-key if configured. Pass json=true for POST requests.
+ */
+export function jupiterHeaders(config: BotConfig, json = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (json) headers['Content-Type'] = 'application/json';
+  if (config.jupiterApiKey) headers['x-api-key'] = config.jupiterApiKey;
+  return headers;
 }

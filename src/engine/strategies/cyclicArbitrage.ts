@@ -206,7 +206,7 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('slippageBps', slippageBps.toString());
 
     try {
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), { headers: this.jupiterApiHeaders() });
 
       if (!response.ok) {
         strategyLog.warn(
@@ -309,6 +309,12 @@ export class CyclicArbitrageStrategy extends BaseStrategy {
   // ────────────────────────────────────────────────────────────────────────────
   // RATE LIMITER
   // ────────────────────────────────────────────────────────────────────────────
+
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.botConfig.jupiterApiKey) headers['x-api-key'] = this.botConfig.jupiterApiKey;
+    return headers;
+  }
 
   private async rateLimit(): Promise<void> {
     const delayMs = Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond);

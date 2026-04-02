@@ -242,7 +242,7 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('amount', amount);
     url.searchParams.set('slippageBps', slippageBps.toString());
     try {
-      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url.toString(), { headers: this.jupiterApiHeaders(), signal: AbortSignal.timeout(5000) });
       if (!response.ok) {
         if (response.status === 429) await new Promise(r => setTimeout(r, 5000));
         return null;
@@ -287,5 +287,11 @@ export class LongTailArbitrageStrategy extends BaseStrategy {
     const minDelay = Math.max(1000, Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond));
     if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
     this.lastJupiterCallMs = Date.now();
+  }
+
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.botConfig.jupiterApiKey) headers['x-api-key'] = this.botConfig.jupiterApiKey;
+    return headers;
   }
 }

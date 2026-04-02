@@ -472,6 +472,12 @@ export class SnipeExecutor {
     this.emitUpdate(position);
   }
 
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.config.jupiterApiKey) headers['x-api-key'] = this.config.jupiterApiKey;
+    return headers;
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // JUPITER HELPERS
   // ═══════════════════════════════════════════════════════════════
@@ -486,7 +492,9 @@ export class SnipeExecutor {
     url.searchParams.set('slippageBps', SNIPE_SLIPPAGE_BPS.toString());
 
     try {
-      const resp = await fetch(url.toString());
+      const resp = await fetch(url.toString(), {
+        headers: this.jupiterApiHeaders(),
+      });
       if (!resp.ok) return null;
       return await resp.json();
     } catch {
@@ -499,7 +507,7 @@ export class SnipeExecutor {
       const wallet = this.connectionManager.getWallet();
       const resp = await fetch(`${this.config.jupiterApiUrl}/swap/v1/swap`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...this.jupiterApiHeaders() },
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: wallet.publicKey.toString(),

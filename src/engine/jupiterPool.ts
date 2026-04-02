@@ -1,6 +1,6 @@
 // JUPITER ENDPOINT POOL
-// Manages multiple Jupiter free-tier accounts (each 1 RPS) for parallel API calls.
-// Each endpoint has its own independent rate limiter.
+// Manages multiple Jupiter API keys (each with its own rate limit) for parallel API calls.
+// Each endpoint has its own independent rate limiter and API key.
 // Strategies request endpoints by role (scan, buy-quote, forward-tx, reverse-tx)
 // to maximize parallelism without 429 errors.
 
@@ -8,8 +8,10 @@ import { strategyLog } from './logger.js';
 import { BotConfig, PRIORITY_FEE_LAMPORTS } from './config.js';
 
 export interface JupiterEndpoint {
-  /** Base URL (e.g. https://lite-api.jup.ag) */
+  /** Base URL (same for all: https://lite-api.jup.ag) */
   baseUrl: string;
+  /** API key for this endpoint (each free-tier account has its own key) */
+  apiKey: string;
   /** Label for logging */
   label: string;
   /** Timestamp of last API call (for rate limiting) */
@@ -32,26 +34,36 @@ export interface DexQuote {
 
 /**
  * Pool of Jupiter API endpoints for parallel calls.
- * With N endpoints, the bot can make N simultaneous Jupiter calls
- * without hitting any single endpoint's rate limit.
+ * Each endpoint uses the SAME base URL but a DIFFERENT API key.
+ * With N keys, the bot can make N simultaneous Jupiter calls
+ * without hitting any single key's rate limit.
  */
 export class JupiterPool {
   private endpoints: JupiterEndpoint[] = [];
   private roundRobinIndex = 0;
 
   constructor(config: BotConfig) {
-    const urls = [
-      config.jupiterApiUrl,
-      config.jupiterApiUrl2,
-      config.jupiterApiUrl3,
-      config.jupiterApiUrl4,
-    ].filter(u => u && u.length > 0);
+    const baseUrl = config.jupiterApiUrl || 'https://lite-api.jup.ag';
+
+    // Collect all API keys — first key is required, rest are optional
+    const keys = [
+      config.jupiterApiKey,
+      config.jupiterApiKey2,
+      config.jupiterApiKey3,
+      config.jupiterApiKey4,
+    ].filter(k => k && k.length > 0);
+
+    // If no keys at all, still create one endpoint (no auth, public rate limit)
+    if (keys.length === 0) {
+      keys.push('');
+    }
 
     const minInterval = Math.max(1000, Math.ceil(1000 / config.maxRequestsPerSecond));
 
-    for (let i = 0; i < urls.length; i++) {
+    for (let i = 0; i < keys.length; i++) {
       this.endpoints.push({
-        baseUrl: urls[i],
+        baseUrl,
+        apiKey: keys[i],
         label: `jup-${i + 1}`,
         lastCallMs: 0,
         minIntervalMs: minInterval,
@@ -60,14 +72,22 @@ export class JupiterPool {
     }
 
     strategyLog.info(
-      { endpoints: this.endpoints.length, urls: this.endpoints.map(e => e.label) },
-      `Jupiter pool initialized — ${this.endpoints.length} endpoint(s)`,
+      { endpoints: this.endpoints.length, labels: this.endpoints.map(e => e.label) },
+      `Jupiter pool initialized — ${this.endpoints.length} endpoint(s) with API keys`,
     );
   }
 
   /** Number of available endpoints */
   get size(): number {
     return this.endpoints.length;
+  }
+
+  /** Build headers for an endpoint — includes API key if present */
+  private buildHeaders(ep: JupiterEndpoint, json = false): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (json) headers['Content-Type'] = 'application/json';
+    if (ep.apiKey) headers['x-api-key'] = ep.apiKey;
+    return headers;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -95,7 +115,10 @@ export class JupiterPool {
     url.searchParams.set('slippageBps', slippageBps.toString());
 
     try {
-      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(url.toString(), {
+        headers: this.buildHeaders(ep),
+        signal: AbortSignal.timeout(5000),
+      });
       if (!response.ok) {
         if (response.status === 429) {
           ep.throttleCount++;
@@ -181,7 +204,7 @@ export class JupiterPool {
     try {
       const response = await fetch(swapUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildHeaders(ep, true),
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(10000),
       });

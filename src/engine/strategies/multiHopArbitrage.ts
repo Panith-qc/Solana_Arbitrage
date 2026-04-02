@@ -247,7 +247,7 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
     url.searchParams.set('slippageBps', slippageBps.toString());
 
     try {
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), { headers: this.jupiterApiHeaders() });
       if (!response.ok) {
         strategyLog.warn({ status: response.status, inputMint, outputMint }, 'Quote failed');
         return null;
@@ -323,6 +323,12 @@ export class MultiHopArbitrageStrategy extends BaseStrategy {
   // ────────────────────────────────────────────────────────────────────────────
   // RATE LIMITER
   // ────────────────────────────────────────────────────────────────────────────
+
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.botConfig.jupiterApiKey) headers['x-api-key'] = this.botConfig.jupiterApiKey;
+    return headers;
+  }
 
   private async rateLimit(): Promise<void> {
     const delayMs = Math.ceil(1_000 / this.botConfig.maxRequestsPerSecond);

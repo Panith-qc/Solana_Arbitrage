@@ -1303,7 +1303,9 @@ export class BotEngine {
         quoteUrl.searchParams.set('amount', balance.toString());
         quoteUrl.searchParams.set('slippageBps', recoverySlippageBps.toString());
 
-        const quoteResp = await fetch(quoteUrl.toString());
+        const quoteResp = await fetch(quoteUrl.toString(), {
+          headers: this.jupiterApiHeaders(),
+        });
         if (!quoteResp.ok) {
           engineLog.warn({ symbol: stuck.symbol, status: quoteResp.status }, 'Failed to get recovery quote');
           continue;
@@ -1383,7 +1385,9 @@ export class BotEngine {
       url.searchParams.set('amount', '1000000000'); // 1 SOL
       url.searchParams.set('slippageBps', '50');
 
-      const resp = await fetch(url.toString());
+      const resp = await fetch(url.toString(), {
+        headers: this.jupiterApiHeaders(),
+      });
       if (!resp.ok) throw new Error(`Quote failed: ${resp.status}`);
       const quote = await resp.json();
       const price = parseInt(quote.outAmount) / 1e6;
@@ -1406,6 +1410,12 @@ export class BotEngine {
         this.config.solPriceUsd = 0;
       }
     }
+  }
+
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.config.jupiterApiKey) headers['x-api-key'] = this.config.jupiterApiKey;
+    return headers;
   }
 
   // ═══════════════════════════════════════════════════════════════

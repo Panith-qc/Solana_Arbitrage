@@ -277,12 +277,18 @@ export class FrontrunStrategy extends BaseStrategy {
     url.searchParams.set('slippageBps', slippageBps.toString());
 
     try {
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), { headers: this.jupiterApiHeaders() });
       if (!response.ok) return null;
       return await response.json();
     } catch (err) {
       strategyLog.error({ err, inputMint, outputMint }, 'Quote fetch error');
       return null;
     }
+  }
+
+  private jupiterApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.botConfig.jupiterApiKey) headers['x-api-key'] = this.botConfig.jupiterApiKey;
+    return headers;
   }
 }
