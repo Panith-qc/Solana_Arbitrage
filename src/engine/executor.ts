@@ -739,16 +739,38 @@ export class Executor {
 
       executionLog.info(
         { tokenSymbol, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
-        'ATOMIC: Combined TX built — sending via Helius staked connection',
+        'ATOMIC: Combined TX built — simulating before send',
       );
 
-      // ── STEP 5: SEND VIA HELIUS SMART SEND (staked validators) ─
+      // ── STEP 5: PRE-FLIGHT SIMULATION ──────────────────────────
+      // Simulate combined TX to catch errors before paying TX fees.
+      const simResult = await simulateTransaction(connection, combined.transaction);
+      if (!simResult.success) {
+        const errDetail = this.parseOnChainError(simResult.error || '');
+        executionLog.warn(
+          {
+            tokenSymbol, error: simResult.error,
+            errorCode: errDetail.code, errorProgram: errDetail.program,
+            simLogs: (simResult.logs || []).slice(-8),
+          },
+          `ATOMIC: Simulation FAILED (${errDetail.label}) — falling back to sequential execution`,
+        );
+        // Fall back to sequential execution which handles real token balances
+        return this.executeArbitrageCycle(forwardQuote, tokenMint, tokenSymbol, solPrice);
+      }
+
+      executionLog.info(
+        { tokenSymbol, simUnits: simResult.unitsConsumed },
+        'ATOMIC: Simulation PASSED — sending via Helius staked connection',
+      );
+
+      // ── STEP 6: SEND VIA HELIUS SMART SEND (staked validators) ─
       const rawTx = Buffer.from(combined.transaction.serialize());
       const signature = await this.connManager.sendSmartTransaction(rawTx);
 
       executionLog.info({ tokenSymbol, signature }, 'ATOMIC: TX sent — confirming');
 
-      // ── STEP 6: CONFIRM ────────────────────────────────────────
+      // ── STEP 7: CONFIRM ────────────────────────────────────────
       const { blockhash: confBlockhash, lastValidBlockHeight: confHeight } =
         await connection.getLatestBlockhash('confirmed');
       const confirmation = await connection.confirmTransaction(
@@ -759,15 +781,20 @@ export class Executor {
       const elapsed = Date.now() - startMs;
 
       if (confirmation.value.err) {
+        const errDetail = this.parseOnChainError(JSON.stringify(confirmation.value.err));
+        executionLog.warn(
+          { tokenSymbol, signature, errorCode: errDetail.code, errorLabel: errDetail.label },
+          `ATOMIC: TX reverted despite passing simulation (${errDetail.label})`,
+        );
         return {
           success: false, profitSol: 0, profitUsd: 0,
           signatures: [signature], gasUsed: 0, jitoTip: 0,
-          error: `ATOMIC: TX reverted: ${JSON.stringify(confirmation.value.err)}`,
+          error: `ATOMIC: TX reverted: ${errDetail.label} (code ${errDetail.code})`,
           stuckToken: null, executionTimeMs: elapsed,
         };
       }
 
-      // ── STEP 7: MEASURE REAL PROFIT ────────────────────────────
+      // ── STEP 8: MEASURE REAL PROFIT ────────────────────────────
       let actualProfitSol: number;
 
       if (preTradeBalanceLamports !== null) {
@@ -932,7 +959,31 @@ export class Executor {
 
       executionLog.info(
         { tokenSymbol, ageMs, sizeBytes: combined.sizeBytes, priorityFee: dynamicPriorityFee },
-        'FAST: Combined atomic TX built — sending via Helius staked connection',
+        'FAST: Combined atomic TX built — simulating before send',
+      );
+
+      // ── PRE-FLIGHT SIMULATION ────────────────────────────────
+      // Simulate the combined TX against current on-chain state.
+      // This catches errors (insufficient funds, slippage, etc.)
+      // BEFORE sending, saving TX fees on doomed transactions.
+      const simResult = await simulateTransaction(connection, combined.transaction);
+      if (!simResult.success) {
+        const errDetail = this.parseOnChainError(simResult.error || '');
+        executionLog.warn(
+          {
+            tokenSymbol, error: simResult.error,
+            errorCode: errDetail.code, errorProgram: errDetail.program,
+            simLogs: (simResult.logs || []).slice(-8),
+          },
+          `FAST: Simulation FAILED (${errDetail.label}) — skipping send, falling back to sequential`,
+        );
+        // Fall back to sequential execution which uses real token balances
+        return this.executeArbitrageCycle(forwardQuote, tokenMint, tokenSymbol, solPrice);
+      }
+
+      executionLog.info(
+        { tokenSymbol, simUnits: simResult.unitsConsumed },
+        'FAST: Simulation PASSED — sending via Helius staked connection',
       );
 
       // ── SEND VIA HELIUS SMART SEND (staked validators) ────────
@@ -954,10 +1005,15 @@ export class Executor {
       const elapsed = Date.now() - startMs;
 
       if (confirmation.value.err) {
+        const errDetail = this.parseOnChainError(JSON.stringify(confirmation.value.err));
+        executionLog.warn(
+          { tokenSymbol, signature, errorCode: errDetail.code, errorLabel: errDetail.label },
+          `FAST: TX reverted on-chain despite passing simulation (${errDetail.label})`,
+        );
         return {
           success: false, profitSol: 0, profitUsd: 0,
           signatures: [signature], gasUsed: 0, jitoTip: 0,
-          error: `FAST: TX reverted on-chain: ${JSON.stringify(confirmation.value.err)}`,
+          error: `FAST: TX reverted: ${errDetail.label} (code ${errDetail.code})`,
           stuckToken: null, executionTimeMs: elapsed,
         };
       }
@@ -1217,12 +1273,10 @@ export class Executor {
         userPublicKey: wallet.publicKey.toString(),
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
-        // DYNAMIC SLIPPAGE: Let Jupiter compute per-hop optimal slippage tolerances
-        // based on each pool's liquidity depth. Critical for combined atomic TXs where
-        // the forward leg changes pool state before the reverse leg executes.
-        // maxBps caps the per-hop tolerance; the executor's pre-flight profit check
-        // still ensures we only send net-profitable trades.
-        dynamicSlippage: { maxBps: 1000 },
+        // dynamicSlippage: false means use the slippageBps from the quote as-is.
+        // Combined atomic TXs rely on pre-flight simulation to catch failures,
+        // NOT on wide slippage tolerance (which leaks value to MEV).
+        dynamicSlippage: false,
         // CRITICAL: Set explicit priority fee matching our profit calculation.
         // 'auto' would let Jupiter set 100k-500k lamports, eating all profit.
         // We use Jito for block inclusion, so priority fee can be minimal.
@@ -1395,6 +1449,48 @@ export class Executor {
   /**
    * Construct a failure ExecutionResult.
    */
+  /**
+   * Parse an on-chain error to extract the Custom error code, instruction index,
+   * and provide a human-readable label. Helps diagnose whether errors come from
+   * Jupiter, Raydium, Meteora, or other programs.
+   */
+  private parseOnChainError(errorStr: string): { code: number; label: string; program: string; instructionIndex: number } {
+    // Try to extract Custom error code: {"InstructionError":[8,{"Custom":6024}]}
+    const customMatch = errorStr.match(/Custom["\s:]+(\d+)/i);
+    const ixMatch = errorStr.match(/InstructionError["\s:[\]]+(\d+)/i);
+
+    const code = customMatch ? parseInt(customMatch[1], 10) : -1;
+    const instructionIndex = ixMatch ? parseInt(ixMatch[1], 10) : -1;
+
+    // Anchor custom errors start at 6000. Map known codes:
+    // Jupiter v6: 6001=SlippageToleranceExceeded, 6024=InsufficientFunds (unconfirmed for CPI'd programs)
+    // Raydium CLMM: 6024 could be AmountSlippageExceed
+    // Meteora DLMM: 6024 could be ExceedAmountSlippageTolerance
+    // The actual meaning depends on which program threw it — we log both for diagnosis.
+    let label = `CustomError(${code})`;
+    let program = 'unknown';
+
+    if (code === 6001) {
+      label = 'SlippageToleranceExceeded(6001)';
+      program = 'jupiter';
+    } else if (code === 6024) {
+      // Could be InsufficientFunds (Jupiter) or SlippageExceeded (Raydium/Meteora)
+      label = 'InsufficientFundsOrSlippage(6024)';
+      program = 'jupiter-or-dex';
+    } else if (code === 6022 || code === 6023) {
+      label = `DEXSlippage(${code})`;
+      program = 'dex';
+    } else if (code >= 6000 && code < 6100) {
+      label = `AnchorCustom(${code})`;
+      program = 'anchor-program';
+    } else if (code === 1) {
+      label = 'InsufficientFunds(TokenProgram)';
+      program = 'spl-token';
+    }
+
+    return { code, label, program, instructionIndex };
+  }
+
   private failResult(error: string, startMs: number): ExecutionResult {
     const elapsed = Date.now() - startMs;
     executionLog.warn({ error, elapsedMs: elapsed }, 'Execution failed');

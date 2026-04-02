@@ -244,7 +244,7 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         userPublicKey: walletPubkey,
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
-        dynamicSlippage: { maxBps: 1000 },
+        dynamicSlippage: false,
         prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
       });
 
