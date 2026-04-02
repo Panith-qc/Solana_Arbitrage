@@ -77,6 +77,8 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   private botConfig: BotConfig;
   private riskProfile: RiskProfile;
   private lastJupiterCallMs: number = 0;
+  /** Separate rate limiter for second Jupiter endpoint */
+  private lastJupiter2CallMs: number = 0;
   private hotTokens: HotToken[] = [];
 
   constructor(connectionManager: ConnectionManager, config: BotConfig, riskProfile: RiskProfile) {
@@ -671,7 +673,10 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
   ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
     try {
       const walletPubkey = this.connectionManager.getPublicKey().toString();
-      const swapUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+      const primaryUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+      const secondaryUrl = this.botConfig.jupiterApiUrl2
+        ? `${this.botConfig.jupiterApiUrl2}/swap/v1/swap`
+        : null;
 
       const makeBody = (quote: any) => ({
         quoteResponse: quote,
@@ -682,32 +687,73 @@ export class CrossDexArbitrageStrategy extends BaseStrategy {
         prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
       });
 
-      // Fetch both swap TXs — sequential to respect rate limit
-      await this.jupiterRateLimit();
-      const fwdResp = await fetch(swapUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(makeBody(forwardQuote)),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!fwdResp.ok) {
-        strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
-        return null;
-      }
-      const fwdData = await fwdResp.json();
+      let fwdData: any;
+      let revData: any;
 
-      await this.jupiterRateLimit();
-      const revResp = await fetch(swapUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(makeBody(reverseQuote)),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!revResp.ok) {
-        strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
-        return null;
+      if (secondaryUrl) {
+        // PARALLEL: Forward on primary endpoint, Reverse on secondary endpoint
+        // Each endpoint has its own rate limit — no conflict
+        await this.jupiterRateLimit();
+
+        const [fwdResp, revResp] = await Promise.all([
+          fetch(primaryUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(makeBody(forwardQuote)),
+            signal: AbortSignal.timeout(10000),
+          }),
+          fetch(secondaryUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(makeBody(reverseQuote)),
+            signal: AbortSignal.timeout(10000),
+          }),
+        ]);
+
+        if (!fwdResp.ok) {
+          strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
+          return null;
+        }
+        if (!revResp.ok) {
+          strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
+          return null;
+        }
+
+        [fwdData, revData] = await Promise.all([fwdResp.json(), revResp.json()]);
+
+        // Update both rate limit trackers
+        this.lastJupiterCallMs = Date.now();
+        this.lastJupiter2CallMs = Date.now();
+
+        strategyLog.debug('Swap TX pair fetched in PARALLEL (dual endpoints)');
+      } else {
+        // SEQUENTIAL: Single endpoint, respect rate limit between calls
+        await this.jupiterRateLimit();
+        const fwdResp = await fetch(primaryUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(makeBody(forwardQuote)),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!fwdResp.ok) {
+          strategyLog.warn({ status: fwdResp.status }, 'Failed to fetch forward swap TX');
+          return null;
+        }
+        fwdData = await fwdResp.json();
+
+        await this.jupiterRateLimit();
+        const revResp = await fetch(primaryUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(makeBody(reverseQuote)),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!revResp.ok) {
+          strategyLog.warn({ status: revResp.status }, 'Failed to fetch reverse swap TX');
+          return null;
+        }
+        revData = await revResp.json();
       }
-      const revData = await revResp.json();
 
       if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
 

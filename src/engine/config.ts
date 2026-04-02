@@ -228,6 +228,8 @@ export interface BotConfig {
   // API
   jupiterApiUrl: string;
   jupiterApiKey: string;
+  /** Second Jupiter endpoint (free tier account) for parallel forward+reverse calls */
+  jupiterApiUrl2: string;
   heliusApiKey: string;
 
   // Jito
@@ -272,6 +274,7 @@ export function loadConfig(): BotConfig {
     scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '1.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
     jupiterApiKey: process.env.JUPITER_ULTRA_API_KEY || '',
+    jupiterApiUrl2: process.env.JUPITER_API_URL_2 || '',
     heliusApiKey: process.env.HELIUS_API_KEY || '',
     jitoEnabled: process.env.JITO_ENABLED !== 'false',
     // CRITICAL: Must match JITO_TIP_LAMPORTS (10,000) used in profit calculations.

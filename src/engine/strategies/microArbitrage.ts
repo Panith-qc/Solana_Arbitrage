@@ -231,7 +231,10 @@ export class MicroArbitrageStrategy extends BaseStrategy {
   ): Promise<{ forwardSwapTx: string; reverseSwapTx: string } | null> {
     try {
       const walletPubkey = this.connectionManager.getPublicKey().toString();
-      const swapUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+      const primaryUrl = `${this.botConfig.jupiterApiUrl}/swap/v1/swap`;
+      const secondaryUrl = this.botConfig.jupiterApiUrl2
+        ? `${this.botConfig.jupiterApiUrl2}/swap/v1/swap`
+        : null;
 
       const makeBody = (quote: any) => ({
         quoteResponse: quote,
@@ -239,28 +242,53 @@ export class MicroArbitrageStrategy extends BaseStrategy {
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
         dynamicSlippage: false,
-        prioritizationFeeLamports: 5000,
+        prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS,
       });
 
-      await this.jupiterRateLimit();
-      const fwdResp = await fetch(swapUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(makeBody(forwardQuote)),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!fwdResp.ok) return null;
-      const fwdData = await fwdResp.json();
+      let fwdData: any;
+      let revData: any;
 
-      await this.jupiterRateLimit();
-      const revResp = await fetch(swapUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(makeBody(reverseQuote)),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!revResp.ok) return null;
-      const revData = await revResp.json();
+      if (secondaryUrl) {
+        // PARALLEL: Forward on primary, Reverse on secondary
+        await this.jupiterRateLimit();
+        const [fwdResp, revResp] = await Promise.all([
+          fetch(primaryUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(makeBody(forwardQuote)),
+            signal: AbortSignal.timeout(10000),
+          }),
+          fetch(secondaryUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(makeBody(reverseQuote)),
+            signal: AbortSignal.timeout(10000),
+          }),
+        ]);
+        if (!fwdResp.ok || !revResp.ok) return null;
+        [fwdData, revData] = await Promise.all([fwdResp.json(), revResp.json()]);
+      } else {
+        // SEQUENTIAL: Single endpoint
+        await this.jupiterRateLimit();
+        const fwdResp = await fetch(primaryUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(makeBody(forwardQuote)),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!fwdResp.ok) return null;
+        fwdData = await fwdResp.json();
+
+        await this.jupiterRateLimit();
+        const revResp = await fetch(primaryUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(makeBody(reverseQuote)),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!revResp.ok) return null;
+        revData = await revResp.json();
+      }
 
       if (!fwdData.swapTransaction || !revData.swapTransaction) return null;
       return { forwardSwapTx: fwdData.swapTransaction, reverseSwapTx: revData.swapTransaction };
