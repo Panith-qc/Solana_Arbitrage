@@ -36,6 +36,7 @@ import {
   Keypair,
   VersionedTransaction,
   TransactionMessage,
+  TransactionInstruction,
   SystemProgram,
   PublicKey,
   ComputeBudgetProgram,
@@ -156,7 +157,24 @@ class KeyPool {
 // ═══════════════════════════════════════════════════════════════
 
 const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
-const JUPITER_SWAP_URL = 'https://lite-api.jup.ag/swap/v1/swap';
+const JUPITER_SWAP_IX_URL = 'https://lite-api.jup.ag/swap/v1/swap-instructions';
+
+// ═══════════════════════════════════════════════════════════════
+// Jupiter /swap-instructions response types
+// ═══════════════════════════════════════════════════════════════
+
+interface JupiterIxPayload {
+  programId: string;
+  accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[];
+  data: string; // base64-encoded
+}
+
+interface SwapInstructionsResponse {
+  setupInstructions?: JupiterIxPayload[];
+  swapInstruction: JupiterIxPayload;
+  cleanupInstruction?: JupiterIxPayload;
+  addressLookupTableAddresses?: string[];
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Circular Scanner
@@ -432,14 +450,21 @@ export class CircularScanner {
   }
 
   /**
-   * Execute a profitable opportunity:
-   *   1. Call Jupiter /swap on the SAME key that found the opportunity
-   *   2. Deserialize the returned transaction
-   *   3. Replace blockhash with getCachedBlockhash() (fresher)
-   *   4. Compute dynamic Jito tip, append as last instruction
-   *   5. Sign with wallet
-   *   6. Send via Helius Sender (fire-and-forget)
-   *   7. Enqueue signature for background confirmation tracking
+   * Execute a profitable opportunity ATOMICALLY — both legs in ONE transaction.
+   * NEVER hold an intermediate token position. SOL in, SOL out, one TX.
+   *
+   * Flow:
+   *   1. Call /swap-instructions for BOTH legs (2 API calls, same key)
+   *   2. Parse returned instruction sets (setup, swap, cleanup for each leg)
+   *   3. Combine all instructions into ONE atomic transaction
+   *   4. Replace blockhash with getCachedBlockhash() (fresher)
+   *   5. Append dynamic Jito tip as LAST instruction
+   *   6. Resolve all address lookup tables (union of both legs)
+   *   7. Sign with wallet
+   *   8. Send via Helius Sender (fire-and-forget)
+   *   9. Enqueue signature for background confirmation tracking
+   *
+   * If combined TX exceeds 1232 bytes → skip (don't send non-atomic fallback).
    */
   private async executeOpportunity(
     opp: CircularOpportunity,
@@ -453,147 +478,144 @@ export class CircularScanner {
     }
 
     try {
-      // ── Step 1: Call Jupiter /swap on the SAME key ────────
-      // Record the additional request against this key's rate limit
-      this.keyPool.record(executionKey);
-
-      // Jupiter /swap expects the full quote object as quoteResponse
-      const swapBody = {
-        quoteResponse: reverseQuote,
-        userPublicKey: this.wallet.publicKey.toString(),
-        wrapAndUnwrapSol: true,
-        dynamicComputeUnitLimit: true,
-        dynamicSlippage: { minBps: 1, maxBps: 300 },
-        prioritizationFeeLamports: 'auto',
+      const walletPubkey = this.wallet.publicKey.toString();
+      const swapIxHeaders = {
+        'Content-Type': 'application/json',
+        'x-api-key': executionKey.key,
       };
 
-      // Actually we need to combine both legs. Jupiter /swap only handles one route.
-      // For circular arb, we call /swap for the FORWARD leg (buy) and build the
-      // full circular TX. BUT Jupiter's /swap-instructions endpoint gives us
-      // deconstructed instructions we can combine.
-      //
-      // Simpler approach: call /swap for each leg, but that gives us two separate TXs.
-      // We need an ATOMIC TX. Use /swap-instructions for both legs and combine.
-      //
-      // For Phase 5, use the proven approach: call /swap for the full forward quote,
-      // deserialize, replace blockhash, add tip, send. The reverse quote's profit
-      // was already checked — Jupiter will route optimally.
-      //
-      // Actually, the standard Jupiter circular arb pattern is:
-      //   - Quote: SOL → Token → SOL (two separate quotes already done)
-      //   - Execute: Submit both as separate TXs? No — that's not atomic.
-      //
-      // The CORRECT approach for atomic execution with Jupiter:
-      //   Use /swap-instructions for BOTH legs, combine into one TX.
-      //   But this is complex and the TX might exceed 1232 bytes.
-      //
-      // PRAGMATIC Phase 5 approach (matches ARCHITECTURE.md "warm path"):
-      //   Use Jupiter /swap for the FORWARD quote (SOL→Token). This produces a
-      //   ready-to-sign TX. Then for the REVERSE (Token→SOL), use a second /swap.
-      //   Send them back-to-back (not atomic). Risk: token stuck if forward lands
-      //   but reverse doesn't. Mitigated by positionTracker cleanup.
-      //
-      // BETTER: Use /swap with the forward quote. The reverseQuote is only used
-      // to estimate profit. If the forward swap lands, the token position is
-      // immediately sold via a second /swap TX. This is the "warm path" pattern.
+      // ── Step 1: Call /swap-instructions for BOTH legs ─────
+      // Charge both calls against this key's rate limit
+      this.keyPool.record(executionKey);
+      this.keyPool.record(executionKey);
 
-      // For now: execute the FORWARD leg only as a test, and queue the reverse.
-      // Full atomic execution is Phase 8 (wire everything).
-
-      // Call /swap for the forward quote (SOL → Token)
-      const forwardSwapResp = await fetch(JUPITER_SWAP_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': executionKey.key,
-        },
-        body: JSON.stringify({
-          quoteResponse: forwardQuote,
-          userPublicKey: this.wallet.publicKey.toString(),
-          wrapAndUnwrapSol: true,
-          dynamicComputeUnitLimit: true,
-          dynamicSlippage: { minBps: 1, maxBps: 300 },
-          prioritizationFeeLamports: 'auto',
-        }),
-        signal: AbortSignal.timeout(8000),
+      const swapIxBody = (quoteResponse: any) => JSON.stringify({
+        quoteResponse,
+        userPublicKey: walletPubkey,
+        wrapAndUnwrapSol: true,
+        dynamicSlippage: { minBps: 1, maxBps: 300 },
       });
 
-      if (!forwardSwapResp.ok) {
+      // Fire both /swap-instructions calls in parallel
+      const [forwardResp, reverseResp] = await Promise.all([
+        fetch(JUPITER_SWAP_IX_URL, {
+          method: 'POST',
+          headers: swapIxHeaders,
+          body: swapIxBody(forwardQuote),
+          signal: AbortSignal.timeout(8000),
+        }),
+        fetch(JUPITER_SWAP_IX_URL, {
+          method: 'POST',
+          headers: swapIxHeaders,
+          body: swapIxBody(reverseQuote),
+          signal: AbortSignal.timeout(8000),
+        }),
+      ]);
+
+      if (!forwardResp.ok || !reverseResp.ok) {
         executionLog.warn(
-          { status: forwardSwapResp.status, token: opp.tokenSymbol },
-          'CircularScanner: forward /swap failed',
+          { fwd: forwardResp.status, rev: reverseResp.status, token: opp.tokenSymbol },
+          'CircularScanner: /swap-instructions failed',
         );
         return;
       }
 
-      const forwardSwapData = await forwardSwapResp.json() as any;
-      const swapTxBase64 = forwardSwapData?.swapTransaction;
-      if (!swapTxBase64) {
-        executionLog.warn({ token: opp.tokenSymbol }, 'CircularScanner: no swapTransaction in response');
+      const fwdIx = await forwardResp.json() as SwapInstructionsResponse;
+      const revIx = await reverseResp.json() as SwapInstructionsResponse;
+
+      if (!fwdIx.swapInstruction || !revIx.swapInstruction) {
+        executionLog.warn({ token: opp.tokenSymbol }, 'CircularScanner: missing swapInstruction');
         return;
       }
 
-      // ── Step 2: Deserialize the transaction ───────────────
-      const txBuffer = Buffer.from(swapTxBase64, 'base64');
-      const originalTx = VersionedTransaction.deserialize(txBuffer);
+      // ── Step 2: Parse instructions from both legs ─────────
+      const fwdSetup = (fwdIx.setupInstructions || []).map(deserializeIx);
+      const fwdSwap = deserializeIx(fwdIx.swapInstruction);
+      const fwdCleanup = fwdIx.cleanupInstruction ? [deserializeIx(fwdIx.cleanupInstruction)] : [];
 
-      // ── Step 3: Replace blockhash with cached (fresher) ───
+      const revSetup = (revIx.setupInstructions || []).map(deserializeIx);
+      const revSwap = deserializeIx(revIx.swapInstruction);
+      const revCleanup = revIx.cleanupInstruction ? [deserializeIx(revIx.cleanupInstruction)] : [];
+
+      // ── Step 3: Compute dynamic Jito tip ──────────────────
+      // min(max(profit * 40%, 1000), 200000) — pure BigInt
+      const rawTip = opp.grossProfitLamports * 40n / 100n;
+      const dynamicTip = rawTip < 1_000n ? 1_000n : rawTip > 200_000n ? 200_000n : rawTip;
+
+      const jitoTipIx = SystemProgram.transfer({
+        fromPubkey: this.wallet.publicKey,
+        toPubkey: new PublicKey(getRandomTipAccount()),
+        lamports: dynamicTip,
+      });
+
+      // ── Step 4: Combine all instructions into ONE TX ──────
+      // Order: ComputeBudget → fwd setup → fwd swap → rev setup → rev swap
+      //        → fwd cleanup → rev cleanup → Jito tip (LAST)
+      //
+      // Compute budget: use the higher of the two leg estimates, or 400k default.
+      // Filter out any ComputeBudget IXs from Jupiter — we set our own.
+      const COMPUTE_BUDGET_PROGRAM = ComputeBudgetProgram.programId.toString();
+
+      const filterCB = (ix: TransactionInstruction) =>
+        ix.programId.toString() !== COMPUTE_BUDGET_PROGRAM;
+
+      const instructions: TransactionInstruction[] = [
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: getCachedPriorityFee() }),
+        ...fwdSetup.filter(filterCB),
+        fwdSwap,
+        ...revSetup.filter(filterCB),
+        revSwap,
+        ...fwdCleanup.filter(filterCB),
+        ...revCleanup.filter(filterCB),
+        jitoTipIx,
+      ];
+
+      // ── Step 5: Resolve ALL address lookup tables ─────────
+      const connection = this.connectionManager.getConnection();
+      const allAltAddresses = new Set<string>();
+      for (const addr of (fwdIx.addressLookupTableAddresses || [])) allAltAddresses.add(addr);
+      for (const addr of (revIx.addressLookupTableAddresses || [])) allAltAddresses.add(addr);
+
+      const lookupTableAccounts: AddressLookupTableAccount[] = [];
+      for (const addr of allAltAddresses) {
+        try {
+          const info = await connection.getAddressLookupTable(new PublicKey(addr));
+          if (info.value) lookupTableAccounts.push(info.value);
+        } catch (err: any) {
+          executionLog.debug({ err: err?.message, alt: addr }, 'CircularScanner: ALT fetch error');
+        }
+      }
+
+      // ── Step 6: Build V0 message with fresh blockhash ─────
       const freshBlockhash = getCachedBlockhash();
       if (!freshBlockhash) {
         executionLog.warn('CircularScanner: no cached blockhash — skipping execution');
         return;
       }
 
-      // Decompile → rebuild with fresh blockhash + Jito tip
-      const connection = this.connectionManager.getConnection();
-
-      // Resolve lookup tables for V0 message
-      const lookupTableAccounts: AddressLookupTableAccount[] = [];
-      const message = originalTx.message;
-      if ('addressTableLookups' in message && message.addressTableLookups.length > 0) {
-        for (const lookup of message.addressTableLookups) {
-          try {
-            const info = await connection.getAddressLookupTable(lookup.accountKey);
-            if (info.value) lookupTableAccounts.push(info.value);
-          } catch (err: any) {
-            executionLog.debug({ err: err?.message }, 'CircularScanner: ALT fetch error');
-          }
-        }
-      }
-
-      const decompiled = TransactionMessage.decompile(message, {
-        addressLookupTableAccounts: lookupTableAccounts,
-      });
-
-      // ── Step 4: Compute dynamic Jito tip ──────────────────
-      // min(max(profit * 40%, 1000), 200000) — pure BigInt
-      const rawTip = opp.grossProfitLamports * 40n / 100n;
-      const dynamicTip = rawTip < 1_000n ? 1_000n : rawTip > 200_000n ? 200_000n : rawTip;
-
-      // Build new instruction list: original instructions + Jito tip LAST
-      const newInstructions = [
-        ...decompiled.instructions,
-        SystemProgram.transfer({
-          fromPubkey: this.wallet.publicKey,
-          toPubkey: new PublicKey(getRandomTipAccount()),
-          lamports: dynamicTip,
-        }),
-      ];
-
-      // ── Step 5: Rebuild message with fresh blockhash ──────
-      const newMessage = new TransactionMessage({
+      const message = new TransactionMessage({
         payerKey: this.wallet.publicKey,
         recentBlockhash: freshBlockhash,
-        instructions: newInstructions,
+        instructions,
       }).compileToV0Message(lookupTableAccounts);
 
-      const newTx = new VersionedTransaction(newMessage);
+      const tx = new VersionedTransaction(message);
 
-      // ── Step 6: Sign ──────────────────────────────────────
-      newTx.sign([this.wallet]);
+      // ── Step 7: Sign ──────────────────────────────────────
+      tx.sign([this.wallet]);
 
-      // ── Step 7: Send via Helius Sender (fire-and-forget) ──
-      const serialized = Buffer.from(newTx.serialize());
+      // ── Step 8: Check TX size (must fit in 1232 bytes) ────
+      const serialized = Buffer.from(tx.serialize());
+      if (serialized.length > 1232) {
+        executionLog.warn(
+          { txSize: serialized.length, token: opp.tokenSymbol },
+          'CircularScanner: combined TX exceeds 1232 bytes — skipping (no non-atomic fallback)',
+        );
+        return;
+      }
+
+      // ── Step 9: Send via Helius Sender (fire-and-forget) ──
       const signature = await this.connectionManager.sendSmartTransaction(serialized);
 
       this.totalExecutions++;
@@ -606,11 +628,13 @@ export class CircularScanner {
           netProfitLamports: opp.netProfitLamports.toString(),
           spreadBps: opp.spreadBps,
           txSize: serialized.length,
+          ixCount: instructions.length,
+          altCount: lookupTableAccounts.length,
         },
-        `CIRCULAR EXECUTED: ${opp.tokenSymbol} — sent via Helius Sender`,
+        `CIRCULAR EXECUTED: ${opp.tokenSymbol} — atomic 2-leg TX sent via Helius Sender`,
       );
 
-      // ── Step 8: Enqueue for background confirmation ───────
+      // ── Step 10: Enqueue for background confirmation ──────
       enqueueSignature({
         signature,
         enqueuedAt: Date.now(),
@@ -619,7 +643,7 @@ export class CircularScanner {
         buyPool: `jupiter:${opp.buyRoute}`,
         sellPool: `jupiter:${opp.sellRoute}`,
         solPrice: this.config.solPriceUsd || 0,
-        preBalanceLamports: null, // tracked by confirmation handler
+        preBalanceLamports: null,
       });
 
     } catch (err: any) {
@@ -649,6 +673,23 @@ export class CircularScanner {
 // ═══════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Deserialize a Jupiter instruction payload into a Solana TransactionInstruction.
+ * Jupiter /swap-instructions returns instructions as JSON objects with:
+ *   programId (string), accounts (array), data (base64 string)
+ */
+function deserializeIx(ix: JupiterIxPayload): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: new PublicKey(ix.programId),
+    keys: ix.accounts.map(a => ({
+      pubkey: new PublicKey(a.pubkey),
+      isSigner: a.isSigner,
+      isWritable: a.isWritable,
+    })),
+    data: Buffer.from(ix.data, 'base64'),
+  });
+}
 
 function buildHeaders(apiKey: string): Record<string, string> {
   const headers: Record<string, string> = {};
