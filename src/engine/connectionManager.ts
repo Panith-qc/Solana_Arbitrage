@@ -53,17 +53,9 @@ export class ConnectionManager {
       engineLog.info({ rpc: this.maskUrl(this.config.rpcBackupUrl) }, 'Backup RPC initialized');
     }
 
-    // Initialize wallet from env (optional — can be connected later via UI)
-    if (this.config.privateKey && this.config.privateKey.length > 10) {
-      try {
-        const keyBytes = bs58.decode(this.config.privateKey);
-        this.wallet = Keypair.fromSecretKey(keyBytes);
-        engineLog.info({ publicKey: this.wallet.publicKey.toString() }, 'Wallet loaded from environment');
-      } catch (err) {
-        engineLog.warn('PRIVATE_KEY in .env is invalid — ignoring. Connect your wallet via the dashboard instead.');
-        // Don't crash — wallet can be connected later via POST /api/wallet/connect
-      }
-    }
+    // Wallet is NOT loaded from env. Private key must be provided via
+    // POST /api/wallet/connect at runtime — never touches disk.
+    // The bot starts in monitoring-only mode until a wallet is connected.
 
     if (!this.activeConnection) {
       throw new Error('No RPC connection available - set HELIUS_RPC_URL');

@@ -118,9 +118,13 @@ export function createRoutes(deps: RouteDependencies): Router {
       // WS: 2 credits per 0.1MB — rough estimate based on subscription count
       const wsCreditsEstimate = Math.round(uptimeMin * wsStatus.monitoredPools * 0.5);
 
+      const walletStatus = botEngine?.getWalletStatus?.() ?? { connected: false, publicKey: null };
+
       res.json({
         status: 'ok',
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        walletConnected: walletStatus.connected,
+        publicKey: walletStatus.publicKey,
         wsConnected: wsStatus.connected,
         wsSubscriptionCount: wsStatus.monitoredPools,
         wsPaused: isWsPaused(),
@@ -198,12 +202,12 @@ export function createRoutes(deps: RouteDependencies): Router {
   });
 
   // ─────────────────────────────────────────────
-  // WALLET MANAGEMENT (no admin token needed for
-  // initial setup, but secured once configured)
+  // WALLET MANAGEMENT (admin auth required)
+  // Private key is received in memory only — never written to disk, never logged.
   // ─────────────────────────────────────────────
 
   // GET /api/wallet/status - Check wallet connection state
-  router.get('/api/wallet/status', async (_req: Request, res: Response) => {
+  router.get('/api/wallet/status', requireAdmin, async (_req: Request, res: Response) => {
     try {
       const walletStatus = botEngine?.getWalletStatus?.() ?? {
         connected: false,
@@ -222,8 +226,8 @@ export function createRoutes(deps: RouteDependencies): Router {
     }
   });
 
-  // POST /api/wallet/connect - Connect wallet with private key from UI
-  router.post('/api/wallet/connect', async (req: Request, res: Response) => {
+  // POST /api/wallet/connect - Connect wallet with private key (in memory only)
+  router.post('/api/wallet/connect', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { privateKey } = req.body as { privateKey?: string };
 
@@ -270,8 +274,8 @@ export function createRoutes(deps: RouteDependencies): Router {
     }
   });
 
-  // POST /api/wallet/disconnect - Disconnect wallet and stop bot
-  router.post('/api/wallet/disconnect', async (_req: Request, res: Response) => {
+  // POST /api/wallet/disconnect - Disconnect wallet, stop trading, clear key from memory
+  router.post('/api/wallet/disconnect', requireAdmin, async (_req: Request, res: Response) => {
     try {
       if (!botEngine?.disconnectWallet) {
         res.status(503).json({ error: 'Bot engine not available' });

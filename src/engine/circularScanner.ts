@@ -246,6 +246,13 @@ export class CircularScanner {
     executionLog.info('CircularScanner: execution context set — will execute profitable trades');
   }
 
+  /** Clear execution context — scanner continues monitoring but stops executing */
+  clearExecutionContext(): void {
+    this.connectionManager = null;
+    this.wallet = null;
+    executionLog.info('CircularScanner: execution context cleared — monitoring only');
+  }
+
   /** Register a callback for when profitable circular routes are found */
   onOpportunity(cb: CircularCallback): void {
     this.callbacks.push(cb);

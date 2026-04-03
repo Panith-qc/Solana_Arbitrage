@@ -228,18 +228,13 @@ export class BotEngine {
       return;
     }
 
-    // If wallet was loaded from env, complete init fully
-    if (this.connectionManager.hasWallet()) {
-      const balance = await this.connectionManager.getBalance();
-      this.config.capitalSol = balance;
-      // RiskManager uses hard-coded limits — no capital sync needed
-      engineLog.info({ balance, capitalSol: balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet loaded — capital synced to wallet balance');
-      this.stats.currentBalanceSol = balance;
-      await this.completeInitialization();
-      return;
-    }
+    // Complete initialization (strategies, price book) without wallet.
+    // Bot starts in monitoring-only mode — keepers, WS, and scanner run
+    // for price data, but no trades execute until wallet is connected
+    // via POST /api/wallet/connect.
+    await this.completeInitialization();
 
-    engineLog.info('RPC connected. Waiting for wallet connection via UI...');
+    engineLog.info('RPC connected. Monitoring active. Wallet NOT connected — call POST /api/wallet/connect to enable trading.');
   }
 
   /**
@@ -259,16 +254,26 @@ export class BotEngine {
     const balanceSol = await this.connectionManager.getBalance();
     this.stats.currentBalanceSol = balanceSol;
 
-    // Sync capital to actual wallet balance — don't use a hardcoded value
+    // Sync capital to actual wallet balance
     this.config.capitalSol = balanceSol;
-    // RiskManager uses hard-coded limits — no capital sync needed
 
     // Complete initialization if strategies haven't been set up yet
     if (this.strategies.size === 0) {
       await this.completeInitialization();
     }
 
-    engineLog.info({ publicKey, balanceSol, capitalSol: balanceSol }, 'Wallet connected via UI — capital synced to wallet balance');
+    // Give the circular scanner the execution context so it can trade.
+    // If the bot is already running (AUTO_START=true), the scanner was
+    // started in monitoring-only mode — now it can execute.
+    this.circularScanner.setExecutionContext(
+      this.connectionManager,
+      this.connectionManager.getWallet(),
+    );
+
+    engineLog.info(
+      { publicKey, balanceSol },
+      'Wallet connected — trading enabled. Key is in memory only.',
+    );
     return { publicKey, balanceSol };
   }
 
@@ -279,6 +284,7 @@ export class BotEngine {
     if (this.status === 'running') {
       await this.stop();
     }
+    this.circularScanner.clearExecutionContext();
     this.connectionManager.disconnectWallet();
     this.stats.currentBalanceSol = 0;
     engineLog.info('Wallet disconnected via UI');
