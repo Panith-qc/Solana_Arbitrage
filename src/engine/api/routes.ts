@@ -7,6 +7,11 @@ import { apiLog } from '../logger.js';
 import { BotConfig, RiskLevel, RISK_PROFILES } from '../config.js';
 import { BotDatabase } from '../database.js';
 import { MetricsCollector } from '../metrics.js';
+import {
+  getCachedBlockhash, getCachedBlockhashAge, getCachedPriorityFee,
+  isWsPaused, getKeeperStats, getPendingCount,
+} from '../keepers.js';
+import { RiskManager } from '../riskManager.js';
 
 // ═══════════════════════════════════════════════
 // TYPES
@@ -91,26 +96,48 @@ export function createRoutes(deps: RouteDependencies): Router {
   }
 
   // ─────────────────────────────────────────────
-  // PUBLIC ROUTES (no auth required)
+  // HEALTH & METRICS (admin auth required)
+  // Phase 7: Monitoring endpoints for production ops.
+  // These read in-memory state only — never block the event loop.
   // ─────────────────────────────────────────────
 
-  // GET /api/health - Basic health check
-  router.get('/api/health', async (_req: Request, res: Response) => {
+  // GET /api/health — system health snapshot
+  router.get('/api/health', requireAdmin, (_req: Request, res: Response) => {
     try {
-      let rpcHealth = false;
-      try {
-        // Attempt a lightweight check via the bot engine if available
-        rpcHealth = botEngine?.isRpcHealthy?.() ?? true;
-      } catch {
-        rpcHealth = false;
-      }
+      const keeperStats = getKeeperStats();
+      const wsStatus = botEngine?.getWebSocketStatus?.() ?? { connected: false, monitoredPools: 0 };
+      const scannerStats = botEngine?.getCircularScannerStats?.() ?? { running: false };
+
+      // Estimate Helius credit usage:
+      //   blockhash keeper: 1 credit/2s = 30/min
+      //   priority fee keeper: 1 credit/10s = 6/min
+      //   confirmation tracker: 1 credit/500ms but only when sigs pending
+      const uptimeMin = (Date.now() - startedAt) / 60_000;
+      const blockhashCredits = Math.round(uptimeMin * 30);
+      const priorityFeeCredits = Math.round(uptimeMin * 6);
+      // WS: 2 credits per 0.1MB — rough estimate based on subscription count
+      const wsCreditsEstimate = Math.round(uptimeMin * wsStatus.monitoredPools * 0.5);
 
       res.json({
         status: 'ok',
-        uptime: Math.floor((Date.now() - startedAt) / 1000),
-        wallet: botEngine?.getWalletStatus?.()?.connected ? 'connected' : 'not_connected',
-        rpcHealth,
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        wsConnected: wsStatus.connected,
+        wsSubscriptionCount: wsStatus.monitoredPools,
+        wsPaused: isWsPaused(),
+        cachedBlockhash: getCachedBlockhash() ? getCachedBlockhash().slice(0, 8) + '...' : null,
+        cachedBlockhashAgeMs: getCachedBlockhashAge(),
+        cachedPriorityFeeMicroLamports: getCachedPriorityFee(),
+        jupiterScannerRunning: scannerStats.running,
+        pendingConfirmations: getPendingCount(),
+        keeperStats,
+        creditsUsedEstimate: {
+          blockhash: blockhashCredits,
+          priorityFee: priorityFeeCredits,
+          ws: wsCreditsEstimate,
+          total: blockhashCredits + priorityFeeCredits + wsCreditsEstimate,
+        },
         version: BOT_VERSION,
+        timestamp: Date.now(),
       });
     } catch (err) {
       apiLog.error({ err }, 'Health check failed');
@@ -118,12 +145,52 @@ export function createRoutes(deps: RouteDependencies): Router {
     }
   });
 
-  // GET /api/metrics - Prometheus text format metrics
-  router.get('/api/metrics', async (_req: Request, res: Response) => {
+  // GET /api/metrics — trading performance metrics
+  router.get('/api/metrics', requireAdmin, (_req: Request, res: Response) => {
     try {
-      const metricsText = await metrics.getMetrics();
-      res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-      res.send(metricsText);
+      const stats = botEngine?.getStats?.() ?? {};
+      const riskMgr: RiskManager | undefined = botEngine?.getRiskManager?.();
+      const riskStatus = riskMgr?.getStatus?.();
+      const riskStats = riskMgr?.getStats?.();
+      const scannerStats = botEngine?.getCircularScannerStats?.() ?? {};
+
+      // Hot path stats from botEngine
+      const hotPathExecutions = stats.hotPathExecutions ?? 0;
+      const warmPathExecutions = stats.tradesExecuted ?? 0;
+
+      res.json({
+        tradesToday: {
+          total: (stats.tradesExecuted ?? 0) + hotPathExecutions,
+          hotPath: hotPathExecutions,
+          warmPath: warmPathExecutions,
+        },
+        profitToday: {
+          sol: stats.totalProfitSol ?? 0,
+          usd: stats.totalProfitUsd ?? 0,
+        },
+        lossToday: {
+          sol: riskStats?.dailyLossSol ?? 0,
+        },
+        netPnL: {
+          sol: (stats.totalProfitSol ?? 0) - (riskStats?.dailyLossSol ?? 0),
+        },
+        opportunitiesDetected: stats.opportunitiesFound ?? 0,
+        opportunitiesSkipped: stats.tradesSkipped ?? 0,
+        revertsToday: riskStats?.dailyFailedAttempts ?? 0,
+        avgExecutionMs: stats.avgExecutionMs ?? 0,
+        circuitBreakerStatus: riskStatus?.circuitBreaker ?? null,
+        openPositions: riskStatus?.openPositions ?? 0,
+        dailyFailedAttempts: riskStats?.dailyFailedAttempts ?? 0,
+        scannerStats: {
+          totalScans: scannerStats.totalScans ?? 0,
+          totalOpportunities: scannerStats.totalOpportunities ?? 0,
+          totalExecutions: scannerStats.totalExecutions ?? 0,
+          skippedRateLimit: scannerStats.skippedRateLimit ?? 0,
+          cycleCount: scannerStats.cycleCount ?? 0,
+          lastCycleMs: scannerStats.lastCycleMs ?? 0,
+        },
+        timestamp: Date.now(),
+      });
     } catch (err) {
       apiLog.error({ err }, 'Failed to collect metrics');
       res.status(500).json({ error: 'Failed to collect metrics' });

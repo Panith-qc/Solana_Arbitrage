@@ -1960,11 +1960,12 @@ export class BotEngine {
     return this.status === 'running';
   }
 
-  getStats(): BotStats {
+  getStats(): BotStats & { hotPathExecutions: number } {
     return {
       ...this.stats,
       uptime: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
       currentSolPriceUsd: this.solPriceUsd,
+      hotPathExecutions: this.hotPathExecutions,
     };
   }
 
@@ -2012,7 +2013,15 @@ export class BotEngine {
     try {
       return this.riskManager.getCircuitBreakerStatus();
     } catch {
-      return { triggered: false, consecutiveFailures: 0 };
+      return { triggered: false, failuresInWindow: 0 };
+    }
+  }
+
+  getCircularScannerStats(): Record<string, any> {
+    try {
+      return this.circularScanner.getStats();
+    } catch {
+      return { running: false };
     }
   }
 
