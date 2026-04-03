@@ -1626,40 +1626,37 @@ export class Executor {
   // PUBLIC: HOT PATH — DIRECT SWAP (no Jupiter, no simulation)
   // ═════════════════════════════════════════════════════════════════
 
+  /** Callback for async hot path confirmation results */
+  private hotPathCallbacks: Array<(result: ExecutionResult, meta: { buyPool: string; sellPool: string }) => void> = [];
+
+  /** Register a callback for hot path confirmation results (called from background) */
+  onHotPathResult(cb: (result: ExecutionResult, meta: { buyPool: string; sellPool: string }) => void): void {
+    this.hotPathCallbacks.push(cb);
+  }
+
   /**
    * Execute a pre-built hot path transaction from directSwapBuilder.
-   * NO simulation. NO Jupiter. Just sign and send via Helius Sender.
+   * NO simulation. NO Jupiter. FIRE AND FORGET.
    *
-   * The transaction is already:
-   * - Built from raw Raydium AMM V4 instructions
-   * - Profitability-checked with dynamic Jito tip
-   * - Signed by the wallet
-   * - CU limit set to 400,000 (generous, no simulation needed)
+   * Returns immediately after sending TX via Helius Sender.
+   * Confirmation + profit measurement happens in the background
+   * and results are reported via onHotPathResult callback.
    *
-   * Target: <10ms from receiving signed TX to sending to Sender.
+   * Target: <10ms from receiving signed TX to returning.
    */
   async executeHotPathDirect(
     transaction: VersionedTransaction,
-    expectedProfitLamports: number,
-    tipLamports: number,
+    expectedProfitLamports: bigint,
+    tipLamports: bigint,
     buyPool: string,
     sellPool: string,
     solPrice: number,
+    cachedBalanceLamports: bigint | null = null,
   ): Promise<ExecutionResult> {
     const startMs = Date.now();
-    const connection = this.connManager.getConnection();
 
     try {
-      // ── STEP 0: CAPTURE PRE-TRADE BALANCE ─────────────────────
-      let preBalanceLamports: number | null = null;
-      try {
-        const preBalanceSol = await this.connManager.getBalance();
-        preBalanceLamports = Math.round(preBalanceSol * LAMPORTS_PER_SOL);
-      } catch {
-        // Non-fatal — will fall back to expected profit
-      }
-
-      // ── STEP 1: SEND IMMEDIATELY via Helius Sender ────────────
+      // ── SEND IMMEDIATELY via Helius Sender — then return ──────
       const rawTx = Buffer.from(transaction.serialize());
       const sendStart = Date.now();
       const signature = await this.connManager.sendSmartTransaction(rawTx);
@@ -1668,24 +1665,66 @@ export class Executor {
       executionLog.info(
         {
           signature,
-          expectedProfitLamports,
-          tipLamports,
+          expectedProfitLamports: expectedProfitLamports.toString(),
+          tipLamports: tipLamports.toString(),
           buyPool,
           sellPool,
           sendMs,
           txBytes: rawTx.length,
         },
-        'HOT PATH: TX sent via Helius Sender — no simulation',
+        'HOT PATH: TX sent via Helius Sender — fire and forget',
       );
 
-      // ── STEP 2: CONFIRM via signature status polling ──────────
-      // Use getSignatureStatuses instead of confirmTransaction because
-      // the TX was built with a cached blockhash we don't have here.
-      let confirmed = false;
-      let onChainErr: any = null;
-      const confirmDeadline = Date.now() + 30_000;
+      // ── BACKGROUND: confirm + measure profit ──────────────────
+      // Fire-and-forget — do NOT await. Hot path returns immediately.
+      this.trackHotPathConfirmation(
+        signature, expectedProfitLamports, tipLamports,
+        buyPool, sellPool, solPrice, cachedBalanceLamports, startMs,
+      ).catch((err: any) => {
+        executionLog.warn({ err: err?.message, signature }, 'HOT PATH: background confirmation tracker failed');
+      });
 
-      while (Date.now() < confirmDeadline) {
+      // Return immediately with "in-flight" result
+      return {
+        success: true, // TX was sent successfully
+        profitSol: Number(expectedProfitLamports) / LAMPORTS_PER_SOL, // expected, actual comes via callback
+        profitUsd: (Number(expectedProfitLamports) / LAMPORTS_PER_SOL) * solPrice,
+        signatures: [signature],
+        gasUsed: 0,
+        jitoTip: Number(tipLamports),
+        error: null,
+        stuckToken: null,
+        executionTimeMs: Date.now() - startMs,
+      };
+
+    } catch (err: any) {
+      return this.failResult(`HOT PATH: ${err?.message || String(err)}`, startMs);
+    }
+  }
+
+  /**
+   * Background confirmation tracker for hot path TXs.
+   * Polls getSignatureStatuses, measures real profit via balance delta,
+   * and reports results via callbacks.
+   */
+  private async trackHotPathConfirmation(
+    signature: string,
+    expectedProfitLamports: bigint,
+    tipLamports: bigint,
+    buyPool: string,
+    sellPool: string,
+    solPrice: number,
+    preBalanceLamports: bigint | null,
+    startMs: number,
+  ): Promise<void> {
+    const connection = this.connManager.getConnection();
+    const confirmDeadline = Date.now() + 30_000;
+
+    let confirmed = false;
+    let onChainErr: any = null;
+
+    while (Date.now() < confirmDeadline) {
+      try {
         const statuses = await connection.getSignatureStatuses([signature]);
         const status = statuses?.value?.[0];
         if (status) {
@@ -1695,90 +1734,82 @@ export class Executor {
             break;
           }
         }
-        await sleep(500);
+      } catch (err: any) {
+        executionLog.debug({ err: err?.message, signature }, 'HOT PATH confirm: status poll error');
       }
+      await sleep(500);
+    }
 
-      const elapsed = Date.now() - startMs;
+    const elapsed = Date.now() - startMs;
 
-      if (!confirmed) {
-        executionLog.warn(
-          { signature, buyPool, sellPool, elapsedMs: elapsed },
-          'HOT PATH: TX not confirmed within 30s',
-        );
-        return {
-          success: false, profitSol: 0, profitUsd: 0,
-          signatures: [signature], gasUsed: 0, jitoTip: tipLamports,
-          error: 'HOT PATH: TX not confirmed within 30s',
-          stuckToken: null, executionTimeMs: elapsed,
-        };
-      }
+    if (!confirmed) {
+      executionLog.warn({ signature, buyPool, sellPool, elapsedMs: elapsed }, 'HOT PATH: TX not confirmed within 30s');
+      const result: ExecutionResult = {
+        success: false, profitSol: 0, profitUsd: 0,
+        signatures: [signature], gasUsed: 0, jitoTip: Number(tipLamports),
+        error: 'HOT PATH: TX not confirmed within 30s',
+        stuckToken: null, executionTimeMs: elapsed,
+      };
+      for (const cb of this.hotPathCallbacks) { try { cb(result, { buyPool, sellPool }); } catch {} }
+      return;
+    }
 
-      if (onChainErr) {
-        const errDetail = this.parseOnChainError(JSON.stringify(onChainErr));
-        executionLog.warn(
+    if (onChainErr) {
+      const errDetail = this.parseOnChainError(JSON.stringify(onChainErr));
+      executionLog.warn(
+        { signature, buyPool, sellPool, errorCode: errDetail.code, errorLabel: errDetail.label, elapsedMs: elapsed },
+        `HOT PATH: TX reverted — ${errDetail.label}`,
+      );
+      const result: ExecutionResult = {
+        success: false, profitSol: 0, profitUsd: 0,
+        signatures: [signature], gasUsed: 0, jitoTip: Number(tipLamports),
+        error: `HOT PATH reverted: ${errDetail.label} (code ${errDetail.code})`,
+        stuckToken: null, executionTimeMs: elapsed,
+      };
+      for (const cb of this.hotPathCallbacks) { try { cb(result, { buyPool, sellPool }); } catch {} }
+      return;
+    }
+
+    // Measure real profit from balance delta
+    let actualProfitSol: number;
+    try {
+      await sleep(500);
+      const postBalanceSol = await this.connManager.getBalance();
+      const postBalanceLamports = BigInt(Math.round(postBalanceSol * LAMPORTS_PER_SOL));
+
+      if (preBalanceLamports !== null) {
+        const profitLamports = postBalanceLamports - preBalanceLamports;
+        actualProfitSol = Number(profitLamports) / LAMPORTS_PER_SOL;
+        executionLog.info(
           {
             signature, buyPool, sellPool,
-            errorCode: errDetail.code, errorLabel: errDetail.label,
+            preBalanceSol: (Number(preBalanceLamports) / LAMPORTS_PER_SOL).toFixed(4),
+            postBalanceSol: postBalanceSol.toFixed(4),
+            actualProfitSol: actualProfitSol.toFixed(6),
+            expectedProfitSol: (Number(expectedProfitLamports) / LAMPORTS_PER_SOL).toFixed(6),
             elapsedMs: elapsed,
           },
-          `HOT PATH: TX reverted — ${errDetail.label}`,
+          'HOT PATH: CONFIRMED — REAL profit from balance delta',
         );
-        return {
-          success: false, profitSol: 0, profitUsd: 0,
-          signatures: [signature], gasUsed: 0, jitoTip: tipLamports,
-          error: `HOT PATH reverted: ${errDetail.label} (code ${errDetail.code})`,
-          stuckToken: null, executionTimeMs: elapsed,
-        };
+      } else {
+        actualProfitSol = Number(expectedProfitLamports) / LAMPORTS_PER_SOL;
+        executionLog.info(
+          { signature, buyPool, sellPool, expectedProfitSol: actualProfitSol.toFixed(6) },
+          'HOT PATH: CONFIRMED — using expected profit (pre-balance unavailable)',
+        );
       }
-
-      // ── STEP 3: MEASURE REAL PROFIT FROM BALANCE DELTA ────────
-      let actualProfitSol: number;
-      try {
-        await sleep(500);
-        const postBalanceSol = await this.connManager.getBalance();
-        const postBalanceLamports = Math.round(postBalanceSol * LAMPORTS_PER_SOL);
-
-        if (preBalanceLamports !== null) {
-          actualProfitSol = (postBalanceLamports - preBalanceLamports) / LAMPORTS_PER_SOL;
-          executionLog.info(
-            {
-              signature, buyPool, sellPool,
-              preBalanceSol: (preBalanceLamports / LAMPORTS_PER_SOL).toFixed(4),
-              postBalanceSol: postBalanceSol.toFixed(4),
-              actualProfitSol: actualProfitSol.toFixed(6),
-              expectedProfitSol: (expectedProfitLamports / LAMPORTS_PER_SOL).toFixed(6),
-              elapsedMs: elapsed,
-            },
-            'HOT PATH: CONFIRMED — REAL profit from balance delta',
-          );
-        } else {
-          actualProfitSol = expectedProfitLamports / LAMPORTS_PER_SOL;
-          executionLog.info(
-            { signature, buyPool, sellPool, expectedProfitSol: actualProfitSol.toFixed(6) },
-            'HOT PATH: CONFIRMED — using expected profit (pre-balance unavailable)',
-          );
-        }
-      } catch {
-        actualProfitSol = expectedProfitLamports / LAMPORTS_PER_SOL;
-      }
-
-      const profitUsd = actualProfitSol * solPrice;
-
-      return {
-        success: true,
-        profitSol: actualProfitSol,
-        profitUsd,
-        signatures: [signature],
-        gasUsed: 0,
-        jitoTip: tipLamports,
-        error: null,
-        stuckToken: null,
-        executionTimeMs: elapsed,
-      };
-
     } catch (err: any) {
-      return this.failResult(`HOT PATH: ${err?.message || String(err)}`, startMs);
+      executionLog.debug({ err: err?.message, signature }, 'HOT PATH: post-balance fetch failed');
+      actualProfitSol = Number(expectedProfitLamports) / LAMPORTS_PER_SOL;
     }
+
+    const profitUsd = actualProfitSol * solPrice;
+    const result: ExecutionResult = {
+      success: true, profitSol: actualProfitSol, profitUsd,
+      signatures: [signature], gasUsed: 0, jitoTip: Number(tipLamports),
+      error: null, stuckToken: null, executionTimeMs: elapsed,
+    };
+    for (const cb of this.hotPathCallbacks) { try { cb(result, { buyPool, sellPool }); } catch {} }
   }
 }
 

@@ -499,12 +499,17 @@ export class BotEngine {
     engineLog.info('Blockhash keeper started (2s interval)');
   }
 
-  /** Refresh global priority fee every 10s (uses connectionManager cache) */
+  /** Cached priority fee for hot path — updated by keeper, never fetched inline */
+  private cachedPriorityFee: number = 10_000; // default micro-lamports
+
+  /** Refresh global priority fee every 10s */
   private startPriorityFeeKeeper(): void {
     const refresh = async () => {
       try {
-        await this.connectionManager.getDynamicPriorityFee();
-      } catch {}
+        this.cachedPriorityFee = await this.connectionManager.getDynamicPriorityFee();
+      } catch (err: any) {
+        engineLog.debug({ err: err?.message }, 'Priority fee keeper: refresh failed — using cached value');
+      }
     };
     refresh();
     this.priorityFeeTimer = setInterval(refresh, 10_000);
@@ -528,8 +533,28 @@ export class BotEngine {
     );
   }
 
-  /** Start the circular scanner warm path */
+  /** Start the circular scanner warm path and register hot path confirmation callback */
   private startCircularScanner(): void {
+    // Register hot path async result callback — receives confirmation results in background
+    this.executor.onHotPathResult((result, meta) => {
+      if (result.success) {
+        this.stats.tradesSuccessful++;
+        this.stats.totalProfitSol += result.profitSol;
+        this.stats.totalProfitUsd += result.profitUsd;
+        this.hotPathProfitLamports += BigInt(Math.round(result.profitSol * LAMPORTS_PER_SOL));
+        engineLog.info(
+          { ...meta, profitSol: result.profitSol.toFixed(6), sig: result.signatures[0] },
+          'HOT PATH CONFIRMED: async result received',
+        );
+      } else {
+        this.stats.tradesFailed++;
+        engineLog.warn(
+          { ...meta, error: result.error, sig: result.signatures[0] },
+          'HOT PATH FAILED: async result received',
+        );
+      }
+    });
+
     // Register callback — when circular scanner finds profitable route,
     // trigger execution through the existing warm path (Jupiter TX building)
     this.circularScanner.onOpportunity((opp) => {
@@ -554,7 +579,7 @@ export class BotEngine {
     engineLog.info(
       {
         token: opp.tokenSymbol,
-        netProfitSol: (opp.netProfitLamports / LAMPORTS_PER_SOL).toFixed(6),
+        netProfitSol: (Number(opp.netProfitLamports) / LAMPORTS_PER_SOL).toFixed(6),
         spreadBps: opp.spreadBps.toFixed(1),
         buy: opp.buyRoute,
         sell: opp.sellRoute,
@@ -597,7 +622,7 @@ export class BotEngine {
   private blockhashTimer: ReturnType<typeof setInterval> | null = null;
   private priorityFeeTimer: ReturnType<typeof setInterval> | null = null;
   private hotPathExecutions = 0;
-  private hotPathProfitLamports = 0;
+  private hotPathProfitLamports = 0n;
 
   /** Track opportunity IDs already executed via onImmediateExecute to avoid double-execution */
   private immediatelyExecutedIds: Set<string> = new Set();
@@ -785,7 +810,8 @@ export class BotEngine {
       try {
         const wallet = this.connectionManager.getWallet();
         const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
-        const priorityFee = await this.connectionManager.getDynamicPriorityFee();
+        // Use cached priority fee — NEVER await RPC in hot path
+        const priorityFee = this.cachedPriorityFee;
 
         const result = buildHotPathTransaction(
           spread.buyPoolAddress,
@@ -809,18 +835,20 @@ export class BotEngine {
         engineLog.info(
           {
             token: poolEntry.tokenSymbol,
-            expectedProfitLamports: result.expectedProfitLamports,
-            tipLamports: result.tipLamports,
+            expectedProfitLamports: result.expectedProfitLamports.toString(),
+            tipLamports: result.tipLamports.toString(),
             txBytes: result.sizeBytes,
             buildMs,
             buyPool: result.buyPool,
             sellPool: result.sellPool,
           },
-          `HOT PATH: TX built in ${buildMs}ms — sending via Sender`,
+          `HOT PATH: TX built in ${buildMs}ms — fire and forget via Sender`,
         );
 
-        // Execute via hot path executor (no simulation)
+        // Execute via hot path executor — FIRE AND FORGET
+        // Returns immediately after sending TX. Confirmation tracked in background.
         const solPrice = this.solPriceUsd || this.config.solPriceUsd || 150;
+        const cachedBalance = BigInt(Math.round(this.stats.currentBalanceSol * LAMPORTS_PER_SOL));
         const execResult = await this.executor.executeHotPathDirect(
           result.transaction,
           result.expectedProfitLamports,
@@ -828,29 +856,22 @@ export class BotEngine {
           result.buyPool,
           result.sellPool,
           solPrice,
+          cachedBalance,
         );
 
+        // execResult returns immediately after TX sent (not after confirmation)
         this.hotPathExecutions++;
-        if (execResult.success) {
-          this.hotPathProfitLamports += result.expectedProfitLamports;
-          this.stats.tradesExecuted++;
-          this.stats.tradesSuccessful++;
-          this.stats.totalProfitSol += execResult.profitSol;
-          this.stats.totalProfitUsd += execResult.profitUsd;
-        } else {
-          this.stats.tradesFailed++;
-        }
+        this.stats.tradesExecuted++;
 
         const totalMs = Date.now() - hotStart;
         engineLog.info(
           {
             token: poolEntry.tokenSymbol,
-            success: execResult.success,
             totalMs,
             buildMs,
             hotPathExecutions: this.hotPathExecutions,
           },
-          `HOT PATH: ${execResult.success ? 'SUCCESS' : 'FAILED'} — total ${totalMs}ms`,
+          `HOT PATH: TX fired in ${totalMs}ms — confirmation tracking in background`,
         );
 
         return;
@@ -893,7 +914,7 @@ export class BotEngine {
         this.stats.opportunitiesFound += opportunities.length;
       }
     } catch (err) {
-      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'Warm path scan error');
+      engineLog.debug({ err: (err as any)?.message, token: poolEntry.tokenSymbol }, 'Warm path scan error');
     }
   }
 

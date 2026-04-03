@@ -22,10 +22,10 @@ import {
 export interface CircularOpportunity {
   tokenSymbol: string;
   tokenMint: string;
-  inputLamports: number;
-  outputLamports: number;
-  grossProfitLamports: number;
-  netProfitLamports: number;
+  inputLamports: bigint;
+  outputLamports: bigint;
+  grossProfitLamports: bigint;
+  netProfitLamports: bigint;
   spreadBps: number;
   buyRoute: string;
   sellRoute: string;
@@ -236,31 +236,26 @@ export class CircularScanner {
     if (netProfit > 0n) {
       this.totalOpportunities++;
 
-      // Convert to numbers for the interface (safe for amounts < 2^53 lamports = ~9000 SOL)
-      const inputNum = Number(inputLamports);
-      const outputNum = Number(outputLamports);
-      const grossNum = Number(grossProfit);
-      const netNum = Number(netProfit);
-
       const opp: CircularOpportunity = {
         tokenSymbol: token.symbol,
         tokenMint: token.mint,
-        inputLamports: inputNum,
-        outputLamports: outputNum,
-        grossProfitLamports: grossNum,
-        netProfitLamports: netNum,
+        inputLamports,
+        outputLamports,
+        grossProfitLamports: grossProfit,
+        netProfitLamports: netProfit,
         spreadBps,
         buyRoute,
         sellRoute,
         timestamp: Date.now(),
       };
 
+      // Convert to Number only for display/logging
       executionLog.info(
         {
           token: token.symbol,
-          inputSol: (inputNum / LAMPORTS_PER_SOL).toFixed(3),
-          grossProfitSol: (grossNum / LAMPORTS_PER_SOL).toFixed(6),
-          netProfitSol: (netNum / LAMPORTS_PER_SOL).toFixed(6),
+          inputSol: (Number(inputLamports) / LAMPORTS_PER_SOL).toFixed(3),
+          grossProfitSol: (Number(grossProfit) / LAMPORTS_PER_SOL).toFixed(6),
+          netProfitSol: (Number(netProfit) / LAMPORTS_PER_SOL).toFixed(6),
           spreadBps: spreadBps.toFixed(1),
           buy: buyRoute,
           sell: sellRoute,
@@ -269,7 +264,9 @@ export class CircularScanner {
       );
 
       for (const cb of this.callbacks) {
-        try { cb(opp); } catch {}
+        try { cb(opp); } catch (err: any) {
+          executionLog.warn({ err: err?.message }, 'CircularScanner: callback error');
+        }
       }
     }
   }

@@ -82,10 +82,10 @@ export interface CachedPoolData {
   marketBaseVault: PublicKey;
   marketQuoteVault: PublicKey;
   marketVaultSigner: PublicKey;
-  // Fee info
-  tradeFeeNumerator: number;
-  tradeFeeDenominator: number;
-  // Current reserves (updated by WebSocket)
+  // Fee info (on-chain u64 values — kept as bigint per standard)
+  tradeFeeNumerator: bigint;
+  tradeFeeDenominator: bigint;
+  // Current reserves (updated by WebSocket via updateCachedReserves)
   baseReserve: bigint;
   quoteReserve: bigint;
   // Pool type label
@@ -96,10 +96,10 @@ export interface CachedPoolData {
 export interface HotPathTxResult {
   transaction: VersionedTransaction;
   sizeBytes: number;
-  expectedProfitLamports: number;
+  expectedProfitLamports: bigint;
   buyPool: string;
   sellPool: string;
-  tipLamports: number;
+  tipLamports: bigint;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -143,8 +143,8 @@ export async function cachePoolData(
     const marketProgramId = readPubkey(AMM_LAYOUT.MARKET_PROGRAM_ID);
     const targetOrders = readPubkey(AMM_LAYOUT.TARGET_ORDERS);
 
-    const tradeFeeNumerator = Number(ammData.readBigUInt64LE(AMM_LAYOUT.TRADE_FEE_NUMERATOR));
-    const tradeFeeDenominator = Number(ammData.readBigUInt64LE(AMM_LAYOUT.TRADE_FEE_DENOMINATOR));
+    const tradeFeeNumerator = ammData.readBigUInt64LE(AMM_LAYOUT.TRADE_FEE_NUMERATOR);
+    const tradeFeeDenominator = ammData.readBigUInt64LE(AMM_LAYOUT.TRADE_FEE_DENOMINATOR);
 
     // 3. Derive AMM authority PDA
     // Seeds: [b"amm authority"]  with AMM program
@@ -183,6 +183,7 @@ export async function cachePoolData(
       connection.getAccountInfo(quoteVault),
     ]);
 
+    // SPL Token Account layout: offset 64 = amount (u64 LE)
     const baseReserve = baseVaultAcct?.data ? baseVaultAcct.data.readBigUInt64LE(64) : 0n;
     const quoteReserve = quoteVaultAcct?.data ? quoteVaultAcct.data.readBigUInt64LE(64) : 0n;
 
@@ -220,7 +221,7 @@ export async function cachePoolData(
         pool: label,
         baseReserve: cached.baseReserve.toString(),
         quoteReserve: cached.quoteReserve.toString(),
-        fee: `${tradeFeeNumerator}/${tradeFeeDenominator}`,
+        fee: `${tradeFeeNumerator.toString()}/${tradeFeeDenominator.toString()}`,
       },
       'Pool data cached for direct swap building',
     );
@@ -263,16 +264,14 @@ export function calculateAmountOut(
   amountIn: bigint,
   reserveIn: bigint,
   reserveOut: bigint,
-  feeNumerator: number,
-  feeDenominator: number,
+  feeNumerator: bigint,
+  feeDenominator: bigint,
 ): bigint {
   if (reserveIn === 0n || reserveOut === 0n || amountIn === 0n) return 0n;
 
-  const feeNum = BigInt(feeNumerator);
-  const feeDen = BigInt(feeDenominator);
-  const amountInWithFee = amountIn * (feeDen - feeNum);
+  const amountInWithFee = amountIn * (feeDenominator - feeNumerator);
   const numerator = reserveOut * amountInWithFee;
-  const denominator = reserveIn * feeDen + amountInWithFee;
+  const denominator = reserveIn * feeDenominator + amountInWithFee;
 
   return numerator / denominator;
 }
@@ -423,10 +422,9 @@ export function buildHotPathTransaction(
   // ── Step 2: Profitability check ───────────────────────────────
   const grossProfitLamports = solAmountOut - inputLamports;
   const baseFee = 5_000n + 10_000n; // base gas + priority fee estimate
-  // Dynamic Jito tip: min(max(profit * 0.40, 1000), 200000)
-  const dynamicTip = grossProfitLamports > 0n
-    ? BigInt(Math.min(Math.max(Number(grossProfitLamports) * 0.40, 1000), 200000))
-    : 1_000n;
+  // Dynamic Jito tip: min(max(profit * 40 / 100, 1000), 200000) — pure BigInt
+  const rawTip = grossProfitLamports > 0n ? grossProfitLamports * 40n / 100n : 0n;
+  const dynamicTip = rawTip < 1_000n ? 1_000n : rawTip > 200_000n ? 200_000n : rawTip;
   const totalFees = baseFee + dynamicTip;
   const netProfit = grossProfitLamports - totalFees;
 
@@ -554,9 +552,9 @@ export function buildHotPathTransaction(
   return {
     transaction: tx,
     sizeBytes: serialized.length,
-    expectedProfitLamports: Number(netProfit),
+    expectedProfitLamports: netProfit,
     buyPool: buyPool.label,
     sellPool: sellPool.label,
-    tipLamports: Number(dynamicTip),
+    tipLamports: dynamicTip,
   };
 }
