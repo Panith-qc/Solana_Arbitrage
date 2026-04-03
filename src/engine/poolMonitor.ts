@@ -83,21 +83,61 @@ const SIGNIFICANT_CHANGE_THRESHOLD = 0.0005;
 const MAX_MONITORED_POOLS = 200;
 
 // ═══════════════════════════════════════════════════════════════
-// Raydium AMM pool layout offsets (V4 liquidity pool state)
-// These byte offsets locate the reserve fields within the account data.
+// Raydium AMM V4 pool layout (AmmInfo struct, 752 bytes)
+// IMPORTANT: Reserves are NOT stored in the AMM account directly.
+// The AMM account stores vault pubkeys — actual reserves are in
+// the SPL Token vault accounts pointed to by baseVault/quoteVault.
 // ═══════════════════════════════════════════════════════════════
 
+const RAYDIUM_AMM_V4_LAYOUT = {
+  /** baseMint (token A / coin) — 32-byte pubkey */
+  BASE_MINT_OFFSET: 400,
+  /** quoteMint (token B / pc) — 32-byte pubkey */
+  QUOTE_MINT_OFFSET: 432,
+  /** baseVault — SPL Token account holding base token reserves */
+  BASE_VAULT_OFFSET: 336,
+  /** quoteVault — SPL Token account holding quote token reserves */
+  QUOTE_VAULT_OFFSET: 368,
+  /** baseNeedTakePnl — subtract from vault amount for effective reserve */
+  BASE_NEED_TAKE_PNL_OFFSET: 192,
+  /** quoteNeedTakePnl — subtract from vault amount for effective reserve */
+  QUOTE_NEED_TAKE_PNL_OFFSET: 200,
+  /** Minimum account data length for valid AMM V4 account */
+  MIN_DATA_LENGTH: 752,
+} as const;
+
+// ═══════════════════════════════════════════════════════════════
+// Raydium CLMM pool layout (PoolState struct, Anchor program)
+// Price can be derived from sqrtPriceX64 without vault subscriptions.
+// ═══════════════════════════════════════════════════════════════
+
+const RAYDIUM_CLMM_LAYOUT = {
+  /** tokenMint0 (token A) — 32-byte pubkey */
+  TOKEN_MINT_0_OFFSET: 73,
+  /** tokenMint1 (token B) — 32-byte pubkey */
+  TOKEN_MINT_1_OFFSET: 105,
+  /** sqrtPriceX64 — u128 LE, Q64.64 fixed-point sqrt(price) */
+  SQRT_PRICE_X64_OFFSET: 253,
+  /** tickCurrent — i32 LE */
+  TICK_CURRENT_OFFSET: 269,
+  /** mintDecimals0 — u8 */
+  MINT_DECIMALS_0_OFFSET: 233,
+  /** mintDecimals1 — u8 */
+  MINT_DECIMALS_1_OFFSET: 234,
+  /** Minimum account data length (includes Anchor discriminator) */
+  MIN_DATA_LENGTH: 400,
+} as const;
+
+// SPL Token account layout — amount field is at offset 64
+const SPL_TOKEN_AMOUNT_OFFSET = 64;
+
+// Legacy alias for backward compatibility with parsePoolData
 const RAYDIUM_POOL_LAYOUT = {
-  /** Offset to token A (coin) mint pubkey */
-  TOKEN_A_MINT_OFFSET: 400,
-  /** Offset to token B (pc) mint pubkey */
-  TOKEN_B_MINT_OFFSET: 432,
-  /** Offset to token A reserve (u64, little-endian) */
-  RESERVE_A_OFFSET: 208,
-  /** Offset to token B reserve (u64, little-endian) */
-  RESERVE_B_OFFSET: 216,
-  /** Minimum expected account data length for a valid Raydium pool */
-  MIN_DATA_LENGTH: 680,
+  TOKEN_A_MINT_OFFSET: RAYDIUM_AMM_V4_LAYOUT.BASE_MINT_OFFSET,
+  TOKEN_B_MINT_OFFSET: RAYDIUM_AMM_V4_LAYOUT.QUOTE_MINT_OFFSET,
+  RESERVE_A_OFFSET: RAYDIUM_AMM_V4_LAYOUT.BASE_NEED_TAKE_PNL_OFFSET, // fallback — not actual reserves
+  RESERVE_B_OFFSET: RAYDIUM_AMM_V4_LAYOUT.QUOTE_NEED_TAKE_PNL_OFFSET,
+  MIN_DATA_LENGTH: RAYDIUM_AMM_V4_LAYOUT.MIN_DATA_LENGTH,
 } as const;
 
 // ═══════════════════════════════════════════════════════════════
@@ -147,10 +187,195 @@ export class PoolMonitor {
   private reconnectAttempts = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 10;
 
+  // ── Vault tracking for accurate reserves ──────────────────────
+  // Raydium AMM V4 stores reserves in separate SPL Token vault accounts.
+  // We subscribe to vaults and map them back to pool addresses.
+
+  /** Maps vault address → { poolAddress, side: 'base'|'quote' } */
+  private vaultToPool: Map<string, { poolAddress: string; side: 'base' | 'quote' }> = new Map();
+
+  /** Maps pool address → { baseVault, quoteVault, baseReserve, quoteReserve, basePnl, quotePnl } */
+  private poolVaultState: Map<string, {
+    baseVault: string;
+    quoteVault: string;
+    baseReserve: bigint;
+    quoteReserve: bigint;
+    basePnl: bigint;
+    quotePnl: bigint;
+    poolType: 'amm-v4' | 'clmm';
+  }> = new Map();
+
   constructor(connectionManager: ConnectionManager, config: BotConfig) {
     this.connectionManager = connectionManager;
     this.config = config;
     this.cacheTtlMs = DEFAULT_CACHE_TTL_MS;
+  }
+
+  // ─────────────────────────────────────────────
+  // Vault subscription (for accurate AMM V4 reserves)
+  // ─────────────────────────────────────────────
+
+  /**
+   * Read an AMM V4 pool account to extract vault pubkeys, then subscribe
+   * to those vault SPL Token accounts for real-time reserve updates.
+   */
+  private async subscribeToVaults(
+    connection: import('@solana/web3.js').Connection,
+    poolAddress: string,
+    poolPubkey: PublicKey,
+  ): Promise<void> {
+    try {
+      // Fetch the AMM account data to get vault pubkeys
+      const accountInfo = await connection.getAccountInfo(poolPubkey);
+      if (!accountInfo?.data || accountInfo.data.length < RAYDIUM_AMM_V4_LAYOUT.MIN_DATA_LENGTH) {
+        dataLog.debug({ pool: poolAddress, len: accountInfo?.data?.length }, 'AMM account too small for V4');
+        return;
+      }
+
+      const data = accountInfo.data;
+
+      // Read vault pubkeys
+      const baseVault = new PublicKey(
+        data.subarray(RAYDIUM_AMM_V4_LAYOUT.BASE_VAULT_OFFSET, RAYDIUM_AMM_V4_LAYOUT.BASE_VAULT_OFFSET + 32),
+      );
+      const quoteVault = new PublicKey(
+        data.subarray(RAYDIUM_AMM_V4_LAYOUT.QUOTE_VAULT_OFFSET, RAYDIUM_AMM_V4_LAYOUT.QUOTE_VAULT_OFFSET + 32),
+      );
+
+      // Read PnL values to subtract from vault amounts
+      const basePnl = data.readBigUInt64LE(RAYDIUM_AMM_V4_LAYOUT.BASE_NEED_TAKE_PNL_OFFSET);
+      const quotePnl = data.readBigUInt64LE(RAYDIUM_AMM_V4_LAYOUT.QUOTE_NEED_TAKE_PNL_OFFSET);
+
+      const baseVaultStr = baseVault.toString();
+      const quoteVaultStr = quoteVault.toString();
+
+      // Initialize vault state
+      this.poolVaultState.set(poolAddress, {
+        baseVault: baseVaultStr,
+        quoteVault: quoteVaultStr,
+        baseReserve: 0n,
+        quoteReserve: 0n,
+        basePnl,
+        quotePnl,
+        poolType: 'amm-v4',
+      });
+
+      // Map vaults back to pool
+      this.vaultToPool.set(baseVaultStr, { poolAddress, side: 'base' });
+      this.vaultToPool.set(quoteVaultStr, { poolAddress, side: 'quote' });
+
+      // Subscribe to base vault token account
+      const baseSubId = connection.onAccountChange(
+        baseVault,
+        (info: AccountInfo<Buffer>, ctx: Context) => {
+          this.handleVaultChange(baseVaultStr, info, ctx);
+        },
+        this.config.rpcCommitment,
+      );
+      this.subscriptions.set(baseVaultStr, baseSubId);
+
+      // Subscribe to quote vault token account
+      const quoteSubId = connection.onAccountChange(
+        quoteVault,
+        (info: AccountInfo<Buffer>, ctx: Context) => {
+          this.handleVaultChange(quoteVaultStr, info, ctx);
+        },
+        this.config.rpcCommitment,
+      );
+      this.subscriptions.set(quoteVaultStr, quoteSubId);
+
+      // Read initial vault balances
+      const [baseAcct, quoteAcct] = await Promise.all([
+        connection.getAccountInfo(baseVault),
+        connection.getAccountInfo(quoteVault),
+      ]);
+
+      if (baseAcct?.data && baseAcct.data.length >= SPL_TOKEN_AMOUNT_OFFSET + 8) {
+        const state = this.poolVaultState.get(poolAddress)!;
+        state.baseReserve = baseAcct.data.readBigUInt64LE(SPL_TOKEN_AMOUNT_OFFSET);
+      }
+      if (quoteAcct?.data && quoteAcct.data.length >= SPL_TOKEN_AMOUNT_OFFSET + 8) {
+        const state = this.poolVaultState.get(poolAddress)!;
+        state.quoteReserve = quoteAcct.data.readBigUInt64LE(SPL_TOKEN_AMOUNT_OFFSET);
+      }
+
+      const poolCfg = this.poolConfigs.get(poolAddress);
+      dataLog.info(
+        {
+          pool: poolCfg?.label || poolAddress,
+          baseVault: baseVaultStr.slice(0, 8),
+          quoteVault: quoteVaultStr.slice(0, 8),
+          baseReserve: this.poolVaultState.get(poolAddress)?.baseReserve.toString(),
+          quoteReserve: this.poolVaultState.get(poolAddress)?.quoteReserve.toString(),
+        },
+        'Subscribed to vault token accounts for accurate reserves',
+      );
+    } catch (err) {
+      dataLog.error({ err, pool: poolAddress }, 'Failed to subscribe to vaults');
+    }
+  }
+
+  /**
+   * Handle a vault SPL Token account change — updates reserves for the parent pool.
+   */
+  private handleVaultChange(
+    vaultAddress: string,
+    accountInfo: AccountInfo<Buffer>,
+    context: Context,
+  ): void {
+    this.lastEventReceivedMs = Date.now();
+
+    const mapping = this.vaultToPool.get(vaultAddress);
+    if (!mapping) return;
+
+    const { poolAddress, side } = mapping;
+    const state = this.poolVaultState.get(poolAddress);
+    if (!state) return;
+
+    const data = accountInfo.data;
+    if (!data || data.length < SPL_TOKEN_AMOUNT_OFFSET + 8) return;
+
+    const newAmount = data.readBigUInt64LE(SPL_TOKEN_AMOUNT_OFFSET);
+
+    if (side === 'base') {
+      state.baseReserve = newAmount;
+    } else {
+      state.quoteReserve = newAmount;
+    }
+
+    // Compute effective reserves (vault amount - PnL)
+    const effectiveBase = state.baseReserve > state.basePnl ? state.baseReserve - state.basePnl : 0n;
+    const effectiveQuote = state.quoteReserve > state.quotePnl ? state.quoteReserve - state.quotePnl : 0n;
+
+    // Build a PoolUpdate with actual reserves
+    const poolCfg = this.poolConfigs.get(poolAddress);
+    const update: PoolUpdate = {
+      poolAddress,
+      tokenA: poolCfg?.tokenA || '',
+      tokenB: poolCfg?.tokenB || '',
+      reserveA: effectiveBase,
+      reserveB: effectiveQuote,
+      timestamp: Date.now(),
+      slot: context.slot,
+    };
+
+    // Update cache and detect significance
+    const previousState = this.poolCache.get(poolAddress);
+    const isSignificant = this.isSignificantChange(previousState, update);
+
+    this.poolCache.set(poolAddress, {
+      update,
+      cachedAt: Date.now(),
+      previousReserveA: previousState?.update.reserveA ?? 0n,
+      previousReserveB: previousState?.update.reserveB ?? 0n,
+    });
+
+    if (isSignificant) {
+      this.emitUpdate(update);
+    }
+
+    // Always check cross-pool spreads
+    this.detectCrossPoolSpread(update);
   }
 
   // ─────────────────────────────────────────────
@@ -172,7 +397,7 @@ export class PoolMonitor {
 
     dataLog.info(
       { poolCount: poolAddresses.length },
-      'Starting pool monitoring'
+      'Starting pool monitoring (vault-based reserves)',
     );
 
     this.isMonitoring = true;
@@ -187,25 +412,34 @@ export class PoolMonitor {
 
       try {
         const pubkey = new PublicKey(address);
+        const poolConfig = this.poolConfigs.get(address);
 
+        // Determine pool type from config label
+        const isClmm = poolConfig?.label?.toLowerCase().includes('clmm') ?? false;
+
+        // Subscribe to the pool account itself (for CLMM sqrtPriceX64 or AMM PnL fields)
         const subId = connection.onAccountChange(
           pubkey,
           (accountInfo: AccountInfo<Buffer>, context: Context) => {
             this.handleAccountChange(address, accountInfo, context);
           },
-          this.config.rpcCommitment
+          this.config.rpcCommitment,
         );
-
         this.subscriptions.set(address, subId);
 
+        // For AMM V4: read vault pubkeys and subscribe to vault token accounts
+        if (!isClmm) {
+          await this.subscribeToVaults(connection, address, pubkey);
+        }
+
         dataLog.debug(
-          { pool: address, subId },
-          'Subscribed to pool account changes'
+          { pool: address, subId, isClmm, label: poolConfig?.label },
+          'Subscribed to pool account changes',
         );
       } catch (err) {
         dataLog.error(
           { err, pool: address },
-          'Failed to subscribe to pool account changes'
+          'Failed to subscribe to pool account changes',
         );
       }
     }
@@ -538,54 +772,95 @@ export class PoolMonitor {
   private parsePoolData(
     poolAddress: string,
     accountInfo: AccountInfo<Buffer>,
-    context: Context
+    context: Context,
   ): PoolUpdate | null {
     const data = accountInfo.data;
+    if (!data || data.length < 16) return null;
 
-    if (!data || data.length < RAYDIUM_POOL_LAYOUT.MIN_DATA_LENGTH) {
-      // Attempt a generic parse for smaller accounts (e.g. Orca pools)
-      return this.parseGenericPoolData(poolAddress, data, context);
-    }
+    const poolCfg = this.poolConfigs.get(poolAddress);
+    const isClmm = poolCfg?.label?.toLowerCase().includes('clmm') ?? false;
 
     try {
-      // Read reserves as little-endian u64
-      const reserveA = data.readBigUInt64LE(RAYDIUM_POOL_LAYOUT.RESERVE_A_OFFSET);
-      const reserveB = data.readBigUInt64LE(RAYDIUM_POOL_LAYOUT.RESERVE_B_OFFSET);
+      // ── CLMM pools: derive price from sqrtPriceX64 ─────────────
+      if (isClmm && data.length >= RAYDIUM_CLMM_LAYOUT.MIN_DATA_LENGTH) {
+        return this.parseClmmPoolData(poolAddress, data, context, poolCfg);
+      }
 
-      // Read token mint pubkeys (32 bytes each)
-      const tokenA = new PublicKey(
-        data.subarray(
-          RAYDIUM_POOL_LAYOUT.TOKEN_A_MINT_OFFSET,
-          RAYDIUM_POOL_LAYOUT.TOKEN_A_MINT_OFFSET + 32
-        )
-      ).toString();
+      // ── AMM V4 pools: PnL fields updated on AMM account change ─
+      // The actual reserves come from vault subscriptions (handleVaultChange).
+      // When the AMM account changes, update PnL fields that affect effective reserves.
+      if (data.length >= RAYDIUM_AMM_V4_LAYOUT.MIN_DATA_LENGTH) {
+        const state = this.poolVaultState.get(poolAddress);
+        if (state) {
+          state.basePnl = data.readBigUInt64LE(RAYDIUM_AMM_V4_LAYOUT.BASE_NEED_TAKE_PNL_OFFSET);
+          state.quotePnl = data.readBigUInt64LE(RAYDIUM_AMM_V4_LAYOUT.QUOTE_NEED_TAKE_PNL_OFFSET);
 
-      const tokenB = new PublicKey(
-        data.subarray(
-          RAYDIUM_POOL_LAYOUT.TOKEN_B_MINT_OFFSET,
-          RAYDIUM_POOL_LAYOUT.TOKEN_B_MINT_OFFSET + 32
-        )
-      ).toString();
+          // Recompute effective reserves
+          const effectiveBase = state.baseReserve > state.basePnl ? state.baseReserve - state.basePnl : 0n;
+          const effectiveQuote = state.quoteReserve > state.quotePnl ? state.quoteReserve - state.quotePnl : 0n;
 
-      // Use pool config overrides if available
-      const poolCfg = this.poolConfigs.get(poolAddress);
+          return {
+            poolAddress,
+            tokenA: poolCfg?.tokenA || '',
+            tokenB: poolCfg?.tokenB || '',
+            reserveA: effectiveBase,
+            reserveB: effectiveQuote,
+            timestamp: Date.now(),
+            slot: context.slot,
+          };
+        }
+      }
 
-      return {
-        poolAddress,
-        tokenA: poolCfg?.tokenA || tokenA,
-        tokenB: poolCfg?.tokenB || tokenB,
-        reserveA,
-        reserveB,
-        timestamp: Date.now(),
-        slot: context.slot,
-      };
+      // Fallback to generic parse
+      return this.parseGenericPoolData(poolAddress, data, context);
     } catch (err) {
       dataLog.error(
         { err, pool: poolAddress, dataLen: data.length },
-        'Failed to parse Raydium pool data'
+        'Failed to parse pool data',
       );
       return null;
     }
+  }
+
+  /**
+   * Parse a Raydium CLMM pool — price derived from sqrtPriceX64.
+   * sqrtPriceX64 is a Q64.64 fixed-point sqrt of price.
+   * We store the price ratio as pseudo-reserves for compatibility with
+   * the cross-pool spread detection (which compares reserveA/reserveB).
+   */
+  private parseClmmPoolData(
+    poolAddress: string,
+    data: Buffer,
+    context: Context,
+    poolCfg: PoolConfig | undefined,
+  ): PoolUpdate | null {
+    // Read sqrtPriceX64 as u128 LE (16 bytes)
+    const lo = data.readBigUInt64LE(RAYDIUM_CLMM_LAYOUT.SQRT_PRICE_X64_OFFSET);
+    const hi = data.readBigUInt64LE(RAYDIUM_CLMM_LAYOUT.SQRT_PRICE_X64_OFFSET + 8);
+    const sqrtPriceX64 = (hi << 64n) | lo;
+
+    if (sqrtPriceX64 === 0n) return null;
+
+    // price = (sqrtPriceX64 / 2^64)^2, adjusted for decimals
+    const dec0 = data[RAYDIUM_CLMM_LAYOUT.MINT_DECIMALS_0_OFFSET];
+    const dec1 = data[RAYDIUM_CLMM_LAYOUT.MINT_DECIMALS_1_OFFSET];
+    const sqrtPrice = Number(sqrtPriceX64) / 2 ** 64;
+    const price = sqrtPrice * sqrtPrice * (10 ** (dec0 - dec1));
+
+    // Store as pseudo-reserves: reserveA/reserveB = price
+    // Use large scale factor for bigint precision
+    const SCALE = 1_000_000_000n; // 1e9
+    const scaledPrice = BigInt(Math.round(price * 1e9));
+
+    return {
+      poolAddress,
+      tokenA: poolCfg?.tokenA || '',
+      tokenB: poolCfg?.tokenB || '',
+      reserveA: scaledPrice,    // price × 1e9
+      reserveB: SCALE,          // 1e9 (denominator)
+      timestamp: Date.now(),
+      slot: context.slot,
+    };
   }
 
   private parseGenericPoolData(
