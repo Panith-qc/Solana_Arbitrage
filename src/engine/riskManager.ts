@@ -1,598 +1,392 @@
-// RISK MANAGER
-// Central risk enforcement layer -- gates EVERY trade.
-// Checks daily loss limits, drawdown, position limits, circuit breaker,
-// strategy permissions, and balance before allowing execution.
+// RISK MANAGER — Phase 6
+// Fast (<1ms) in-memory gatekeeper. Runs in the hot path before EVERY trade.
+// Both hot path (directSwapBuilder) and warm path (circularScanner) call
+// canTrade() synchronously before executing.
+//
+// HARD-CODED LIMITS (10 SOL wallet):
+//   MAX_SINGLE_TRADE_SOL      = 0.5     — never risk >5% of wallet on one trade
+//   MAX_OPEN_POSITIONS         = 3       — limit concurrent exposure
+//   MAX_DAILY_LOSS_SOL         = 1.0     — stop trading after 10% daily drawdown
+//   MIN_NET_PROFIT_LAMPORTS    = 50000   — minimum profit to justify TX fees + risk
+//   CIRCUIT_BREAKER_FAILURES   = 50      — 50 failures in 10 min → pause trading
+//   MAX_DAILY_FAILED_ATTEMPTS  = 200     — hard cap on daily failed TXs (fee burn limit)
+//
+// POSITION TRACKING:
+//   openPositions increments on SEND (not on confirm).
+//   openPositions decrements on BOTH success AND failure confirmation.
+//   This ensures we never exceed MAX_OPEN_POSITIONS even with in-flight TXs.
+//
+// CODING STANDARDS:
+//   - canTrade() is SYNC — zero async, zero RPC calls, <1ms
+//   - All on-chain amounts are BigInt (standard 1)
+//   - Circuit breaker uses sliding window (not consecutive count)
 
 import { riskLog } from './logger.js';
-import {
-  BotConfig,
-  RiskProfile,
-  RISK_PROFILES,
-  LAMPORTS_PER_SOL,
-} from './config.js';
-import type { ConnectionManager } from './connectionManager.js';
-import type { PnLTracker } from './pnlTracker.js';
-import type { PositionTracker } from './positionTracker.js';
 
-// ═══════════════════════════════════════════════════════════
-// TYPES
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// HARD-CODED LIMITS
+// ═══════════════════════════════════════════════════════════════
+
+const MAX_SINGLE_TRADE_SOL = 0.5;
+const MAX_OPEN_POSITIONS = 3;
+const MAX_DAILY_LOSS_SOL = 1.0;
+const MIN_NET_PROFIT_LAMPORTS = 50_000n;
+const CIRCUIT_BREAKER_FAILURES = 50;
+const CIRCUIT_BREAKER_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const CIRCUIT_BREAKER_COOLDOWN_MS = 5 * 60 * 1000; // 5 min pause after trip
+const MAX_DAILY_FAILED_ATTEMPTS = 200;
+const LAMPORTS_PER_SOL = 1_000_000_000;
+
+// ═══════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════
 
 export interface RiskCheck {
   allowed: boolean;
   reason?: string;
-  adjustedAmount?: number;
 }
 
 export interface CircuitBreakerState {
   triggered: boolean;
-  consecutiveFailures: number;
+  failuresInWindow: number;
   cooldownRemaining: number;
   lastFailureAt: number | null;
   lastResetAt: number | null;
 }
 
 export interface RiskStatus {
-  dailyLossSol: number;
-  dailyLossLimitSol: number;
-  dailyLossPercent: number;
   openPositions: number;
   maxPositions: number;
-  totalExposureSol: number;
-  maxPositionSol: number;
-  drawdownPercent: number;
-  maxDrawdownPercent: number;
+  dailyLossSol: number;
+  dailyLossLimitSol: number;
+  dailyFailedAttempts: number;
+  maxDailyFailedAttempts: number;
   circuitBreaker: CircuitBreakerState;
   emergencyStopped: boolean;
-  riskLevel: string;
-  balanceSol: number;
 }
 
-// ═══════════════════════════════════════════════════════════
-// RISK MANAGER CLASS
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// Risk Manager
+// ═══════════════════════════════════════════════════════════════
 
 export class RiskManager {
-  private readonly config: BotConfig;
-  private readonly riskProfile: RiskProfile;
-  private readonly pnlTracker: PnLTracker;
-  private readonly positionTracker: PositionTracker;
-  private readonly connectionManager: ConnectionManager;
+  // ── Position tracking ───────────────────────────────────────
+  // Incremented on send, decremented on confirmation (success OR failure).
+  private openPositions = 0;
 
-  // Circuit breaker state
-  private consecutiveFailures = 0;
+  // ── Daily loss tracking ─────────────────────────────────────
+  // Accumulated realized loss (positive number = loss) for today.
+  private dailyLossSol = 0;
+  private dailyResetDate = this.todayKey();
+
+  // ── Daily failed attempts ───────────────────────────────────
+  private dailyFailedAttempts = 0;
+
+  // ── Circuit breaker ─────────────────────────────────────────
+  // Sliding window: track failure timestamps in last 10 minutes.
+  private failureTimestamps: number[] = [];
   private circuitBreakerTriggered = false;
   private circuitBreakerTriggeredAt = 0;
   private lastFailureAt: number | null = null;
   private lastResetAt: number | null = null;
 
-  // Emergency stop
+  // ── Emergency stop ──────────────────────────────────────────
   private emergencyStopped = false;
 
-  // Cached balance to avoid hammering RPC on every risk check
-  private cachedBalanceSol = 0;
-  private lastBalanceFetchAt = 0;
-  private static readonly BALANCE_CACHE_TTL_MS = 5_000; // 5 seconds
-
-  // Peak balance tracking for drawdown calculation
-  private peakBalanceSol = 0;
-
-  // Auto emergency stop tracking
-  private recentBalances: Array<{ balance: number; timestamp: number }> = [];
-  private static readonly RAPID_DROP_WINDOW_MS = 60_000; // 1 minute window
-  private static readonly RAPID_DROP_THRESHOLD_PERCENT = 10; // 10% drop in 1 min = auto stop
-
-  constructor(
-    config: BotConfig,
-    pnlTracker: PnLTracker,
-    positionTracker: PositionTracker,
-    connectionManager: ConnectionManager,
-  ) {
-    this.config = config;
-    this.riskProfile = RISK_PROFILES[config.riskLevel];
-    this.pnlTracker = pnlTracker;
-    this.positionTracker = positionTracker;
-    this.connectionManager = connectionManager;
-
-    // Initialize peak balance from config capital
-    this.peakBalanceSol = config.capitalSol;
-
+  constructor() {
     riskLog.info(
       {
-        riskLevel: this.riskProfile.level,
-        maxDailyLossSol: this.riskProfile.maxDailyLossSol,
-        maxPositionSol: this.riskProfile.maxPositionSol,
-        maxConcurrentTrades: this.riskProfile.maxConcurrentTrades,
-        maxDrawdownPercent: this.riskProfile.maxDrawdownPercent,
-        circuitBreakerThreshold: this.riskProfile.circuitBreakerFailures,
+        maxSingleTradeSol: MAX_SINGLE_TRADE_SOL,
+        maxOpenPositions: MAX_OPEN_POSITIONS,
+        maxDailyLossSol: MAX_DAILY_LOSS_SOL,
+        minNetProfitLamports: MIN_NET_PROFIT_LAMPORTS.toString(),
+        circuitBreakerFailures: CIRCUIT_BREAKER_FAILURES,
+        circuitBreakerWindowMin: CIRCUIT_BREAKER_WINDOW_MS / 60_000,
+        maxDailyFailedAttempts: MAX_DAILY_FAILED_ATTEMPTS,
       },
-      `RiskManager initialized [${this.riskProfile.level}]`,
+      'RiskManager initialized with hard-coded limits',
     );
   }
 
-  /**
-   * Sync capital and peak balance to the actual wallet balance.
-   * Called when a wallet is connected (from env or UI) so that
-   * risk calculations use the real balance, not a hardcoded value.
-   */
-  syncCapital(balanceSol: number): void {
-    this.config.capitalSol = balanceSol;
-    this.peakBalanceSol = Math.max(this.peakBalanceSol, balanceSol);
-    riskLog.info({ capitalSol: balanceSol, peakBalanceSol: this.peakBalanceSol }, 'Capital synced to wallet balance');
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // MAIN GATE
-  // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // MAIN GATE — SYNC, <1ms, no RPC calls
+  // ─────────────────────────────────────────────────────────────
 
   /**
-   * THE main trade gate. Every trade attempt must pass through here.
-   * Returns { allowed, reason, adjustedAmount }.
+   * Synchronous trade gate. Called by BOTH hot path and warm path
+   * before every execution. Returns immediately.
+   *
+   * Example trace:
+   *   canTrade(0.1, 50000n) → checks 6 gates in order:
+   *     1. emergencyStopped? no
+   *     2. circuitBreaker? no (12 failures in window, < 50)
+   *     3. dailyLoss 0.3 < 1.0? yes
+   *     4. dailyFailedAttempts 45 < 200? yes
+   *     5. openPositions 1 < 3? yes
+   *     6. tradeSol 0.1 <= 0.5? yes
+   *     → { allowed: true }
    */
-  async canTrade(
-    strategy: string,
-    amountSol: number,
-    solPrice: number,
-  ): Promise<RiskCheck> {
+  canTrade(tradeSol: number, expectedNetProfitLamports: bigint): RiskCheck {
+    // Reset daily counters if new day
+    this.maybeResetDaily();
+
     // 1. Emergency stop
     if (this.emergencyStopped) {
-      return this.deny('Emergency stop is active -- all trading halted');
+      return this.deny('Emergency stop active — all trading halted');
     }
 
     // 2. Circuit breaker
     if (this.circuitBreakerTriggered) {
-      const cooldownRemaining = this.getCooldownRemaining();
-      if (cooldownRemaining > 0) {
+      const cooldown = this.getCooldownRemaining();
+      if (cooldown > 0) {
         return this.deny(
-          `Circuit breaker active: ${this.consecutiveFailures} consecutive failures. ` +
-          `Cooldown: ${Math.ceil(cooldownRemaining / 1000)}s remaining`,
+          `Circuit breaker active: ${this.countRecentFailures()} failures in 10min. ` +
+          `Cooldown: ${Math.ceil(cooldown / 1000)}s remaining`,
         );
       }
-      // Cooldown expired -- auto-resume
+      // Cooldown expired — auto-reset
       this.resetCircuitBreaker();
-      riskLog.info('Circuit breaker cooldown expired, auto-resuming trading');
     }
 
-    // 3. Strategy enabled check
-    if (!this.isStrategyEnabled(strategy)) {
+    // 3. Daily loss limit
+    if (this.dailyLossSol >= MAX_DAILY_LOSS_SOL) {
       return this.deny(
-        `Strategy "${strategy}" is not enabled in ${this.riskProfile.level} risk profile`,
+        `Daily loss limit reached: ${this.dailyLossSol.toFixed(4)} SOL >= ${MAX_DAILY_LOSS_SOL} SOL`,
       );
     }
 
-    // 4. Daily loss limit
-    const dailyLoss = this.pnlTracker.getDailyLoss();
-    if (dailyLoss >= this.riskProfile.maxDailyLossSol) {
+    // 4. Daily failed attempts
+    if (this.dailyFailedAttempts >= MAX_DAILY_FAILED_ATTEMPTS) {
       return this.deny(
-        `Daily loss limit reached: ${dailyLoss.toFixed(4)} SOL >= ${this.riskProfile.maxDailyLossSol} SOL limit`,
+        `Daily failed attempt limit: ${this.dailyFailedAttempts} >= ${MAX_DAILY_FAILED_ATTEMPTS}`,
       );
     }
 
-    // Also check percentage-based daily loss limit
-    const dailyPnl = this.pnlTracker.getDailyPnL();
-    const capitalSol = this.config.capitalSol;
-    if (capitalSol > 0) {
-      const dailyLossPercent = (dailyLoss / capitalSol) * 100;
-      if (dailyLossPercent >= this.riskProfile.maxDailyLossPercent) {
-        return this.deny(
-          `Daily loss percentage limit reached: ${dailyLossPercent.toFixed(1)}% >= ${this.riskProfile.maxDailyLossPercent}% limit`,
-        );
-      }
-    }
-
-    // 5. Drawdown limit
-    const balance = await this.getBalanceSol();
-    if (balance > this.peakBalanceSol) {
-      this.peakBalanceSol = balance;
-    }
-    const drawdown = this.pnlTracker.getDrawdown(balance, this.peakBalanceSol);
-    if (drawdown.currentDrawdownPercent >= this.riskProfile.maxDrawdownPercent) {
+    // 5. Open positions
+    if (this.openPositions >= MAX_OPEN_POSITIONS) {
       return this.deny(
-        `Max drawdown reached: ${drawdown.currentDrawdownPercent.toFixed(1)}% >= ${this.riskProfile.maxDrawdownPercent}% limit ` +
-        `(peak: ${drawdown.peakBalanceSol.toFixed(4)} SOL, current: ${balance.toFixed(4)} SOL)`,
+        `Max open positions: ${this.openPositions} >= ${MAX_OPEN_POSITIONS}`,
       );
     }
 
-    // 6. Max concurrent positions
-    const openPositions = this.positionTracker.getPositionCount();
-    if (openPositions >= this.riskProfile.maxConcurrentTrades) {
+    // 6. Trade size
+    if (tradeSol > MAX_SINGLE_TRADE_SOL) {
       return this.deny(
-        `Max concurrent positions reached: ${openPositions} >= ${this.riskProfile.maxConcurrentTrades}`,
+        `Trade size ${tradeSol.toFixed(4)} SOL > max ${MAX_SINGLE_TRADE_SOL} SOL`,
       );
     }
 
-    // 7. Max trade amount
-    let effectiveAmount = amountSol;
-    if (effectiveAmount > this.riskProfile.maxTradeAmountSol) {
-      effectiveAmount = this.riskProfile.maxTradeAmountSol;
-      riskLog.warn(
-        {
-          requested: amountSol.toFixed(6),
-          adjusted: effectiveAmount.toFixed(6),
-          maxTradeAmountSol: this.riskProfile.maxTradeAmountSol,
-        },
-        'Trade amount capped to max trade size',
-      );
-    }
-
-    // 8. Max position size (total exposure + this trade)
-    const currentExposure = this.positionTracker.getTotalExposureSol();
-    if (currentExposure + effectiveAmount > this.riskProfile.maxPositionSol) {
-      const available = Math.max(0, this.riskProfile.maxPositionSol - currentExposure);
-      if (available <= 0) {
-        return this.deny(
-          `Max position size reached: exposure ${currentExposure.toFixed(4)} SOL >= ${this.riskProfile.maxPositionSol} SOL limit`,
-        );
-      }
-      effectiveAmount = available;
-      riskLog.warn(
-        {
-          requested: amountSol.toFixed(6),
-          adjusted: effectiveAmount.toFixed(6),
-          currentExposure: currentExposure.toFixed(6),
-          maxPositionSol: this.riskProfile.maxPositionSol,
-        },
-        'Trade amount reduced to fit within max position size',
-      );
-    }
-
-    // 9. Sufficient balance
-    // Leave a small buffer for transaction fees (0.01 SOL)
-    const FEE_BUFFER_SOL = 0.01;
-    if (balance < effectiveAmount + FEE_BUFFER_SOL) {
+    // 7. Minimum profit threshold
+    if (expectedNetProfitLamports < MIN_NET_PROFIT_LAMPORTS) {
       return this.deny(
-        `Insufficient balance: ${balance.toFixed(4)} SOL < ${effectiveAmount.toFixed(4)} SOL + ${FEE_BUFFER_SOL} SOL fee buffer`,
+        `Expected profit ${expectedNetProfitLamports} < min ${MIN_NET_PROFIT_LAMPORTS} lamports`,
       );
     }
 
-    // All checks passed
+    return { allowed: true };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // POSITION LIFECYCLE
+  // Increment on SEND, decrement on confirmation (success OR failure).
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Call immediately after sending a transaction (before confirmation).
+   * Increments open positions so subsequent canTrade() checks see the in-flight TX.
+   */
+  recordSend(): void {
+    this.openPositions++;
+    riskLog.debug({ openPositions: this.openPositions }, 'Position opened (TX sent)');
+  }
+
+  /**
+   * Call when a transaction is confirmed (success or failure/revert/drop).
+   * Always decrements open positions. Records loss if applicable.
+   *
+   * @param success  true if TX confirmed profitably, false if reverted/dropped/unprofitable
+   * @param profitSol  realized P&L in SOL (negative = loss). Only meaningful if success=true.
+   */
+  recordConfirmation(success: boolean, profitSol: number): void {
+    // Always decrement — position is no longer in-flight
+    this.openPositions = Math.max(0, this.openPositions - 1);
+
+    if (success && profitSol >= 0) {
+      // Profitable confirmation — no action needed for risk tracking
+      riskLog.debug(
+        { profitSol: profitSol.toFixed(6), openPositions: this.openPositions },
+        'Position closed (confirmed profitable)',
+      );
+      return;
+    }
+
+    // Failed or unprofitable
+    this.dailyFailedAttempts++;
+    const now = Date.now();
+    this.failureTimestamps.push(now);
+    this.lastFailureAt = now;
+
+    // Accumulate realized loss (fees burned on reverted TXs, or negative P&L)
+    if (profitSol < 0) {
+      this.dailyLossSol += Math.abs(profitSol);
+    } else {
+      // Reverted TX costs ~0.000005 SOL in base fee
+      this.dailyLossSol += 0.000005;
+    }
+
     riskLog.debug(
       {
-        strategy,
-        requestedSol: amountSol.toFixed(6),
-        effectiveSol: effectiveAmount.toFixed(6),
-        dailyLoss: dailyLoss.toFixed(4),
-        openPositions,
-        drawdownPercent: drawdown.currentDrawdownPercent.toFixed(2),
-        balance: balance.toFixed(4),
+        dailyFailedAttempts: this.dailyFailedAttempts,
+        dailyLossSol: this.dailyLossSol.toFixed(6),
+        failuresInWindow: this.countRecentFailures(),
+        openPositions: this.openPositions,
       },
-      'Trade approved by risk manager',
+      'Position closed (failed/reverted)',
     );
 
-    return {
-      allowed: true,
-      adjustedAmount: effectiveAmount !== amountSol ? effectiveAmount : undefined,
-    };
+    // Check circuit breaker
+    if (this.countRecentFailures() >= CIRCUIT_BREAKER_FAILURES) {
+      this.tripCircuitBreaker();
+    }
   }
 
-  // ─────────────────────────────────────────────────────────
-  // TRADE SIZE ADJUSTMENT
-  // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // CIRCUIT BREAKER — sliding window (50 failures in 10 min)
+  // ─────────────────────────────────────────────────────────────
 
-  /**
-   * Calculate an adjusted trade size based on current risk conditions.
-   * Reduces size when approaching limits. Returns 0 if trading should be blocked.
-   */
-  getAdjustedTradeSize(requestedSol: number, strategy: string): number {
-    if (this.emergencyStopped || this.circuitBreakerTriggered) {
-      return 0;
-    }
-
-    let adjusted = requestedSol;
-
-    // Cap at max trade amount
-    adjusted = Math.min(adjusted, this.riskProfile.maxTradeAmountSol);
-
-    // Cap at remaining position capacity
-    const currentExposure = this.positionTracker.getTotalExposureSol();
-    const remainingCapacity = Math.max(0, this.riskProfile.maxPositionSol - currentExposure);
-    adjusted = Math.min(adjusted, remainingCapacity);
-
-    // Scale down proportionally as we approach daily loss limit
-    const dailyLoss = this.pnlTracker.getDailyLoss();
-    const dailyLossRatio = dailyLoss / this.riskProfile.maxDailyLossSol;
-    if (dailyLossRatio > 0.5) {
-      // Start reducing size once we've used 50% of daily loss budget
-      // Linear scale: at 50% loss budget => 100% size, at 100% loss budget => 0% size
-      const scaleFactor = Math.max(0, 1 - (dailyLossRatio - 0.5) * 2);
-      adjusted *= scaleFactor;
-
-      riskLog.debug(
-        {
-          requestedSol: requestedSol.toFixed(6),
-          adjustedSol: adjusted.toFixed(6),
-          dailyLossRatio: dailyLossRatio.toFixed(3),
-          scaleFactor: scaleFactor.toFixed(3),
-        },
-        'Trade size scaled down due to approaching daily loss limit',
-      );
-    }
-
-    // Scale down based on consecutive failures (even below circuit breaker threshold)
-    if (this.consecutiveFailures > 0) {
-      const failureRatio = this.consecutiveFailures / this.riskProfile.circuitBreakerFailures;
-      const failureScale = Math.max(0.25, 1 - failureRatio * 0.5);
-      adjusted *= failureScale;
-    }
-
-    return Math.max(0, adjusted);
+  private countRecentFailures(): number {
+    const cutoff = Date.now() - CIRCUIT_BREAKER_WINDOW_MS;
+    // Prune old entries while counting (keeps array bounded)
+    this.failureTimestamps = this.failureTimestamps.filter(t => t > cutoff);
+    return this.failureTimestamps.length;
   }
 
-  // ─────────────────────────────────────────────────────────
-  // STRATEGY CHECKS
-  // ─────────────────────────────────────────────────────────
+  private tripCircuitBreaker(): void {
+    if (this.circuitBreakerTriggered) return; // already tripped
+    this.circuitBreakerTriggered = true;
+    this.circuitBreakerTriggeredAt = Date.now();
 
-  /**
-   * Check if a strategy is enabled in the current risk profile.
-   */
-  isStrategyEnabled(strategy: string): boolean {
-    const strategies = this.riskProfile.strategies as Record<string, boolean>;
-    // If the strategy key exists in the profile, use its value.
-    // Unknown strategies are denied by default.
-    if (strategy in strategies) {
-      return strategies[strategy];
-    }
-    // Try camelCase conversion: "cross-dex-arbitrage" → "crossDexArbitrage"
-    const camelKey = strategy.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    if (camelKey in strategies) {
-      return strategies[camelKey];
-    }
-    riskLog.warn(
-      { strategy, riskLevel: this.riskProfile.level },
-      'Unknown strategy checked against risk profile -- denied by default',
+    riskLog.error(
+      {
+        failuresInWindow: this.countRecentFailures(),
+        windowMin: CIRCUIT_BREAKER_WINDOW_MS / 60_000,
+        cooldownMin: CIRCUIT_BREAKER_COOLDOWN_MS / 60_000,
+      },
+      `CIRCUIT BREAKER TRIPPED: ${this.countRecentFailures()} failures in 10min. Pausing for 5min.`,
     );
-    return false;
   }
 
-  // ─────────────────────────────────────────────────────────
-  // CIRCUIT BREAKER
-  // ─────────────────────────────────────────────────────────
-
-  /**
-   * Report the result of a trade attempt. Updates circuit breaker state.
-   * Call this AFTER every trade execution, whether it succeeded or failed.
-   */
-  reportTradeResult(success: boolean, profitSol: number): void {
-    if (success && profitSol >= 0) {
-      // Successful profitable trade -- reset failure counter
-      if (this.consecutiveFailures > 0) {
-        riskLog.info(
-          { previousFailures: this.consecutiveFailures },
-          'Consecutive failure counter reset after successful trade',
-        );
-      }
-      this.consecutiveFailures = 0;
-    } else {
-      // Failed or unprofitable trade
-      this.consecutiveFailures++;
-      this.lastFailureAt = Date.now();
-
-      riskLog.warn(
-        {
-          consecutiveFailures: this.consecutiveFailures,
-          threshold: this.riskProfile.circuitBreakerFailures,
-          profitSol: profitSol.toFixed(6),
-        },
-        `Trade failure #${this.consecutiveFailures}`,
-      );
-
-      // Check if circuit breaker should trip
-      if (this.consecutiveFailures >= this.riskProfile.circuitBreakerFailures) {
-        this.tripCircuitBreaker();
-      }
-    }
+  private resetCircuitBreaker(): void {
+    this.circuitBreakerTriggered = false;
+    this.circuitBreakerTriggeredAt = 0;
+    this.lastResetAt = Date.now();
+    riskLog.info('Circuit breaker reset — trading resumed');
   }
 
-  /**
-   * Get current circuit breaker status.
-   */
+  private getCooldownRemaining(): number {
+    if (!this.circuitBreakerTriggered) return 0;
+    const elapsed = Date.now() - this.circuitBreakerTriggeredAt;
+    return Math.max(0, CIRCUIT_BREAKER_COOLDOWN_MS - elapsed);
+  }
+
   getCircuitBreakerStatus(): CircuitBreakerState {
     return {
       triggered: this.circuitBreakerTriggered,
-      consecutiveFailures: this.consecutiveFailures,
+      failuresInWindow: this.countRecentFailures(),
       cooldownRemaining: this.getCooldownRemaining(),
       lastFailureAt: this.lastFailureAt,
       lastResetAt: this.lastResetAt,
     };
   }
 
-  private tripCircuitBreaker(): void {
-    this.circuitBreakerTriggered = true;
-    this.circuitBreakerTriggeredAt = Date.now();
-
-    const cooldownSec = this.riskProfile.circuitBreakerCooldownMs / 1000;
-
-    riskLog.error(
-      {
-        consecutiveFailures: this.consecutiveFailures,
-        cooldownMs: this.riskProfile.circuitBreakerCooldownMs,
-        cooldownSec,
-      },
-      `CIRCUIT BREAKER TRIPPED after ${this.consecutiveFailures} consecutive failures. ` +
-      `Trading paused for ${cooldownSec}s`,
-    );
-  }
-
-  private resetCircuitBreaker(): void {
-    this.circuitBreakerTriggered = false;
-    this.consecutiveFailures = 0;
-    this.circuitBreakerTriggeredAt = 0;
-    this.lastResetAt = Date.now();
-
-    riskLog.info('Circuit breaker reset -- trading resumed');
-  }
-
-  private getCooldownRemaining(): number {
-    if (!this.circuitBreakerTriggered) {
-      return 0;
-    }
-    const elapsed = Date.now() - this.circuitBreakerTriggeredAt;
-    return Math.max(0, this.riskProfile.circuitBreakerCooldownMs - elapsed);
-  }
-
-  // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
   // EMERGENCY STOP
-  // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
 
-  /**
-   * Activate emergency stop. Blocks ALL trading until manually cleared.
-   */
   activateEmergencyStop(reason: string): void {
     this.emergencyStopped = true;
-    riskLog.error(
-      { reason },
-      'EMERGENCY STOP ACTIVATED -- all trading halted until manual reset',
-    );
+    riskLog.error({ reason }, 'EMERGENCY STOP ACTIVATED — all trading halted');
   }
 
-  /**
-   * Clear the emergency stop. Trading will resume (subject to other checks).
-   */
   clearEmergencyStop(): void {
     this.emergencyStopped = false;
-    riskLog.info('Emergency stop cleared -- trading may resume');
+    riskLog.info('Emergency stop cleared — trading may resume');
   }
 
-  /**
-   * Check if emergency stop is currently active.
-   */
   isEmergencyStopped(): boolean {
     return this.emergencyStopped;
   }
 
-  // ─────────────────────────────────────────────────────────
-  // STATUS
-  // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // DAILY RESET
+  // ─────────────────────────────────────────────────────────────
 
-  /**
-   * Get full risk status snapshot (useful for dashboards and API).
-   */
-  async getStatus(): Promise<RiskStatus> {
-    const dailyLoss = this.pnlTracker.getDailyLoss();
-    const balance = await this.getBalanceSol();
-    const drawdown = this.pnlTracker.getDrawdown(balance, this.peakBalanceSol);
-    const capitalSol = this.config.capitalSol;
-    const dailyLossPercent = capitalSol > 0 ? (dailyLoss / capitalSol) * 100 : 0;
+  private todayKey(): string {
+    return new Date().toISOString().slice(0, 10); // "2026-04-03"
+  }
 
+  private maybeResetDaily(): void {
+    const today = this.todayKey();
+    if (today !== this.dailyResetDate) {
+      riskLog.info(
+        {
+          previousDay: this.dailyResetDate,
+          dailyLossSol: this.dailyLossSol.toFixed(6),
+          dailyFailedAttempts: this.dailyFailedAttempts,
+        },
+        'Daily risk counters reset',
+      );
+      this.dailyLossSol = 0;
+      this.dailyFailedAttempts = 0;
+      this.dailyResetDate = today;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // STATUS (for API / dashboard)
+  // ─────────────────────────────────────────────────────────────
+
+  getStatus(): RiskStatus {
     return {
-      dailyLossSol: dailyLoss,
-      dailyLossLimitSol: this.riskProfile.maxDailyLossSol,
-      dailyLossPercent,
-      openPositions: this.positionTracker.getPositionCount(),
-      maxPositions: this.riskProfile.maxConcurrentTrades,
-      totalExposureSol: this.positionTracker.getTotalExposureSol(),
-      maxPositionSol: this.riskProfile.maxPositionSol,
-      drawdownPercent: drawdown.currentDrawdownPercent,
-      maxDrawdownPercent: this.riskProfile.maxDrawdownPercent,
+      openPositions: this.openPositions,
+      maxPositions: MAX_OPEN_POSITIONS,
+      dailyLossSol: this.dailyLossSol,
+      dailyLossLimitSol: MAX_DAILY_LOSS_SOL,
+      dailyFailedAttempts: this.dailyFailedAttempts,
+      maxDailyFailedAttempts: MAX_DAILY_FAILED_ATTEMPTS,
       circuitBreaker: this.getCircuitBreakerStatus(),
       emergencyStopped: this.emergencyStopped,
-      riskLevel: this.riskProfile.level,
-      balanceSol: balance,
     };
   }
 
-  // ─────────────────────────────────────────────────────────
-  // INTERNAL HELPERS
-  // ─────────────────────────────────────────────────────────
-
-  /**
-   * Get wallet SOL balance with a short TTL cache to avoid hammering RPC.
-   */
-  private async getBalanceSol(): Promise<number> {
-    const now = Date.now();
-    if (now - this.lastBalanceFetchAt < RiskManager.BALANCE_CACHE_TTL_MS) {
-      return this.cachedBalanceSol;
-    }
-
-    try {
-      const balance = await this.connectionManager.getBalance();
-      this.cachedBalanceSol = balance;
-      this.lastBalanceFetchAt = now;
-
-      // Update peak
-      if (balance > this.peakBalanceSol) {
-        this.peakBalanceSol = balance;
-      }
-
-      return balance;
-    } catch (err) {
-      riskLog.error({ err }, 'Failed to fetch wallet balance for risk check');
-      // Return cached value if available, otherwise assume 0
-      return this.cachedBalanceSol;
-    }
+  /** Get stats for logging */
+  getStats() {
+    return {
+      openPositions: this.openPositions,
+      dailyLossSol: this.dailyLossSol,
+      dailyFailedAttempts: this.dailyFailedAttempts,
+      circuitBreakerTriggered: this.circuitBreakerTriggered,
+      failuresInWindow: this.countRecentFailures(),
+      emergencyStopped: this.emergencyStopped,
+    };
   }
 
-  /**
-   * Helper to construct a denial RiskCheck with logging.
-   */
+  // ─────────────────────────────────────────────────────────────
+  // HELPERS
+  // ─────────────────────────────────────────────────────────────
+
   private deny(reason: string): RiskCheck {
-    riskLog.warn({ reason }, 'Trade denied by risk manager');
+    riskLog.debug({ reason }, 'Trade denied');
     return { allowed: false, reason };
   }
-
-  /**
-   * Update peak balance externally (e.g. after deposits).
-   */
-  setPeakBalance(peakSol: number): void {
-    this.peakBalanceSol = peakSol;
-    riskLog.info({ peakSol: peakSol.toFixed(4) }, 'Peak balance updated');
-  }
-
-  /**
-   * Check for rapid balance drops and trigger emergency stop automatically.
-   * Should be called periodically (e.g. every scan cycle).
-   * Returns true if emergency stop was triggered.
-   */
-  async checkAutoEmergencyStop(): Promise<boolean> {
-    if (this.emergencyStopped) return true;
-
-    try {
-      const balance = await this.getBalanceSol();
-      const now = Date.now();
-
-      // Track recent balances
-      this.recentBalances.push({ balance, timestamp: now });
-
-      // Remove entries older than the window
-      this.recentBalances = this.recentBalances.filter(
-        (entry) => now - entry.timestamp < RiskManager.RAPID_DROP_WINDOW_MS,
-      );
-
-      if (this.recentBalances.length < 2) return false;
-
-      // Check for rapid drop: compare current balance to the max in the window
-      const maxRecentBalance = Math.max(...this.recentBalances.map((e) => e.balance));
-      if (maxRecentBalance <= 0) return false;
-
-      const dropPercent = ((maxRecentBalance - balance) / maxRecentBalance) * 100;
-
-      if (dropPercent >= RiskManager.RAPID_DROP_THRESHOLD_PERCENT) {
-        this.activateEmergencyStop(
-          `AUTOMATIC: Rapid balance drop detected: ${dropPercent.toFixed(1)}% in ${RiskManager.RAPID_DROP_WINDOW_MS / 1000}s ` +
-          `(${maxRecentBalance.toFixed(4)} SOL -> ${balance.toFixed(4)} SOL)`,
-        );
-        return true;
-      }
-
-      // Also auto-stop if balance drops below minimum operational threshold
-      const MIN_OPERATIONAL_SOL = 0.05; // need at least 0.05 SOL for fees
-      if (balance < MIN_OPERATIONAL_SOL) {
-        this.activateEmergencyStop(
-          `AUTOMATIC: Balance critically low: ${balance.toFixed(6)} SOL < ${MIN_OPERATIONAL_SOL} SOL minimum`,
-        );
-        return true;
-      }
-    } catch (err) {
-      riskLog.error({ err }, 'Auto emergency stop check failed');
-    }
-
-    return false;
-  }
-
-  /**
-   * Get the active risk profile.
-   */
-  getRiskProfile(): RiskProfile {
-    return this.riskProfile;
-  }
 }
+
+// ── Exported constants for use by other modules ────────────────
+export {
+  MAX_SINGLE_TRADE_SOL,
+  MAX_OPEN_POSITIONS,
+  MAX_DAILY_LOSS_SOL,
+  MIN_NET_PROFIT_LAMPORTS,
+  CIRCUIT_BREAKER_FAILURES,
+  MAX_DAILY_FAILED_ATTEMPTS,
+};

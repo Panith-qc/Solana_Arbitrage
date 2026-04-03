@@ -151,7 +151,7 @@ export class BotEngine {
     // Risk
     this.pnlTracker = new PnLTracker(this.database);
     this.positionTracker = new PositionTracker(this.database);
-    this.riskManager = new RiskManager(this.config, this.pnlTracker, this.positionTracker, this.connectionManager);
+    this.riskManager = new RiskManager();
 
     // Data
     this.geyserClient = new GeyserClient(this.config);
@@ -203,7 +203,7 @@ export class BotEngine {
       const balance = await this.connectionManager.getBalance();
       // Sync capital to actual wallet balance
       this.config.capitalSol = balance;
-      this.riskManager.syncCapital(balance);
+      // RiskManager uses hard-coded limits — no capital sync needed
       engineLog.info({ balance, capitalSol: balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet loaded — capital synced to wallet balance');
       this.stats.currentBalanceSol = balance;
     }
@@ -232,7 +232,7 @@ export class BotEngine {
     if (this.connectionManager.hasWallet()) {
       const balance = await this.connectionManager.getBalance();
       this.config.capitalSol = balance;
-      this.riskManager.syncCapital(balance);
+      // RiskManager uses hard-coded limits — no capital sync needed
       engineLog.info({ balance, capitalSol: balance, publicKey: this.connectionManager.getPublicKey().toString() }, 'Wallet loaded — capital synced to wallet balance');
       this.stats.currentBalanceSol = balance;
       await this.completeInitialization();
@@ -261,7 +261,7 @@ export class BotEngine {
 
     // Sync capital to actual wallet balance — don't use a hardcoded value
     this.config.capitalSol = balanceSol;
-    this.riskManager.syncCapital(balanceSol);
+    // RiskManager uses hard-coded limits — no capital sync needed
 
     // Complete initialization if strategies haven't been set up yet
     if (this.strategies.size === 0) {
@@ -522,7 +522,7 @@ export class BotEngine {
       this.stats.totalProfitSol += result.profitSol;
       this.stats.totalProfitUsd += result.profitUsd;
       this.hotPathProfitLamports += BigInt(Math.round(result.profitSol * LAMPORTS_PER_SOL));
-      this.riskManager.reportTradeResult(true, result.profitSol);
+      this.riskManager.recordConfirmation(true, result.profitSol);
       engineLog.info(
         {
           signature: result.signature.slice(0, 12),
@@ -535,7 +535,7 @@ export class BotEngine {
       );
     } else {
       this.stats.tradesFailed++;
-      this.riskManager.reportTradeResult(false, 0);
+      this.riskManager.recordConfirmation(false, 0);
       engineLog.warn(
         {
           signature: result.signature.slice(0, 12),
@@ -808,6 +808,16 @@ export class BotEngine {
     const blockhash = getCachedBlockhash();
     if (bothAmmV4 && blockhash && this.connectionManager.hasWallet()) {
       // ═══ HOT PATH: Direct swap, no simulation ═══
+      const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
+      const tradeSol = this.config.scanAmountSol;
+
+      // Risk gate (sync, <1ms) — check BEFORE building TX
+      const riskCheck = this.riskManager.canTrade(tradeSol, 50_000n);
+      if (!riskCheck.allowed) {
+        engineLog.debug({ reason: riskCheck.reason }, 'HOT PATH: blocked by risk manager');
+        return;
+      }
+
       const hotStart = Date.now();
 
       engineLog.info(
@@ -822,7 +832,6 @@ export class BotEngine {
 
       try {
         const wallet = this.connectionManager.getWallet();
-        const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
         // Use cached priority fee from keepers — NEVER await RPC in hot path
         const priorityFee = getCachedPriorityFee();
 
@@ -873,6 +882,7 @@ export class BotEngine {
 
         // Enqueue signature for batch confirmation tracking via keepers (Process 4)
         if (execResult.success && execResult.signatures[0]) {
+          this.riskManager.recordSend(); // increment open positions BEFORE confirmation
           enqueueSignature({
             signature: execResult.signatures[0],
             enqueuedAt: Date.now(),
@@ -956,8 +966,8 @@ export class BotEngine {
       if (cbStatus.triggered) {
         this.stats.status = 'circuit_breaker';
         engineLog.warn({ cooldownRemaining: cbStatus.cooldownRemaining }, 'Circuit breaker active');
-        this.metrics.updateCircuitBreaker(true, cbStatus.consecutiveFailures);
-        await this.alertManager.alertCircuitBreaker(cbStatus.consecutiveFailures);
+        this.metrics.updateCircuitBreaker(true, cbStatus.failuresInWindow);
+        await this.alertManager.alertCircuitBreaker(cbStatus.failuresInWindow);
 
         // Wait for cooldown
         this.scanLoopTimer = setTimeout(() => this.runScanLoop(), Math.min(cbStatus.cooldownRemaining, 10000));
@@ -966,16 +976,6 @@ export class BotEngine {
 
       this.stats.status = 'running';
       this.metrics.updateCircuitBreaker(false, 0);
-
-      // Auto emergency stop check (rapid balance drops)
-      const autoStopped = await this.riskManager.checkAutoEmergencyStop();
-      if (autoStopped) {
-        engineLog.error('Auto emergency stop triggered - halting all operations');
-        await this.alertManager.sendAlert('critical', 'AUTO EMERGENCY STOP',
-          'Bot automatically stopped due to rapid balance drop or critically low balance');
-        await this.emergencyStop();
-        return;
-      }
 
       // Refresh SOL price
       await this.refreshSolPrice();
@@ -1123,7 +1123,7 @@ export class BotEngine {
 
     } catch (err) {
       engineLog.error({ err }, 'Scan loop error');
-      this.riskManager.reportTradeResult(false, 0);
+      this.riskManager.recordConfirmation(false, 0);
     }
 
     // Schedule next scan with ±20% jitter to avoid predictable timing
@@ -1172,12 +1172,10 @@ export class BotEngine {
       return;
     }
 
-    // Risk check
-    const riskCheck = await this.riskManager.canTrade(
-      opp.strategy,
-      Number(opp.inputAmountLamports) / 1e9,
-      this.solPriceUsd
-    );
+    // Risk check (sync — <1ms, no RPC calls)
+    const tradeSol = Number(opp.inputAmountLamports) / 1e9;
+    const expectedProfit = BigInt(Math.round(opp.expectedProfitSol * 1e9));
+    const riskCheck = this.riskManager.canTrade(tradeSol, expectedProfit);
 
     if (!riskCheck.allowed) {
       log.info({ reason: riskCheck.reason }, 'Trade blocked by risk manager');
@@ -1186,10 +1184,7 @@ export class BotEngine {
       return;
     }
 
-    // Use adjusted amount if risk manager reduced it
-    const tradeAmountLamports = riskCheck.adjustedAmount
-      ? BigInt(Math.floor(riskCheck.adjustedAmount * 1e9))
-      : opp.inputAmountLamports;
+    const tradeAmountLamports = opp.inputAmountLamports;
 
     log.info({
       strategy: opp.strategy,
@@ -1281,6 +1276,9 @@ export class BotEngine {
 
       const latencyMs = Date.now() - startTime;
 
+      // Record send for risk tracking (decrement happens in recordConfirmation)
+      this.riskManager.recordSend();
+
       if (result.success) {
         this.stats.tradesExecuted++;
         this.stats.tradesSuccessful++;
@@ -1320,7 +1318,7 @@ export class BotEngine {
         this.stats.totalProfitUsd += verifiedProfitUsd;
 
         // Record everywhere with VERIFIED profit
-        this.riskManager.reportTradeResult(true, verifiedProfitSol);
+        this.riskManager.recordConfirmation(true, verifiedProfitSol);
         this.pnlTracker.recordTrade(
           opp.id, opp.strategy,
           verifiedProfitSol, verifiedProfitUsd,
@@ -1393,7 +1391,7 @@ export class BotEngine {
         this.broadcastTrade(opp, result, latencyMs);
       } else {
         this.stats.tradesFailed++;
-        this.riskManager.reportTradeResult(false, 0);
+        this.riskManager.recordConfirmation(false, 0);
         this.metrics.recordTrade(opp.strategy, 'failed', 0, latencyMs);
         this.tradeJournal.failTrade(opp.id, result.error || 'Unknown error', result.signatures);
 
@@ -1435,7 +1433,7 @@ export class BotEngine {
     } catch (err) {
       const latencyMs = Date.now() - startTime;
       this.stats.tradesFailed++;
-      this.riskManager.reportTradeResult(false, 0);
+      this.riskManager.recordConfirmation(false, 0);
       this.metrics.recordTrade(opp.strategy, 'failed', 0, latencyMs);
       this.tradeJournal.failTrade(opp.id, (err as Error).message);
       this.positionTracker.closePosition(opp.id, tradeAmountLamports, this.solPriceUsd);
