@@ -15,7 +15,7 @@ import { MetricsCollector } from './metrics.js';
 import { AlertManager } from './alertManager.js';
 import { TradeJournal } from './tradeJournal.js';
 import { GeyserClient } from './geyserClient.js';
-import { PoolMonitor } from './poolMonitor.js';
+import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
 import { decodeSwapInstruction, decodeAllSwaps } from './instructionDecoder.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
 import {
@@ -451,7 +451,7 @@ export class BotEngine {
 
   /** Track last WS-triggered scan per token to avoid flooding */
   private wsLastScanMs: Map<string, number> = new Map();
-  private readonly WS_SCAN_COOLDOWN_MS = 2_000; // Don't re-scan same token within 2s
+  private readonly WS_SCAN_COOLDOWN_MS = 200; // 200ms cooldown — fast enough for 800ms target
   private wsPoolCallbackId: string | null = null;
   private wsTriggeredScans = 0;
   private wsConnected = false;
@@ -478,9 +478,16 @@ export class BotEngine {
       });
     }
 
-    // Register callback for pool state changes
+    // Register callback for pool state changes (reserve movements)
     this.wsPoolCallbackId = this.poolMonitor.onPoolUpdate((update) => {
       this.handlePoolChange(update);
+    });
+
+    // Register callback for cross-pool spread detection (in-memory, no RPC)
+    // This fires when two pools for the same token have a price discrepancy >= 3 bps.
+    // Much faster than Jupiter quote — spread calculated from cached reserves.
+    this.poolMonitor.onSpreadDetected((spread) => {
+      this.handleSpreadDetected(spread);
     });
 
     // Start monitoring — subscribes to on-chain account changes via WebSocket
@@ -581,6 +588,74 @@ export class BotEngine {
       }
     } catch (err) {
       engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'WebSocket-triggered scan error');
+    }
+  }
+
+  /**
+   * Handle a cross-pool spread detected entirely from local reserve data.
+   * This is the FASTEST path — no Jupiter quote needed for detection.
+   * Spread was calculated in-memory from cached pool reserves.
+   * Only calls Jupiter for swap TX building (not for price discovery).
+   */
+  private async handleSpreadDetected(spread: SpreadEvent): Promise<void> {
+    if (this.status !== 'running') return;
+
+    // Find the token info
+    const poolEntry = RAYDIUM_POOL_REGISTRY.find(
+      p => p.poolAddress === spread.buyPoolAddress || p.poolAddress === spread.sellPoolAddress,
+    );
+    if (!poolEntry) return;
+
+    // Cooldown — use same cooldown as regular WS scans
+    const lastScan = this.wsLastScanMs.get(spread.tokenMint) || 0;
+    const now = Date.now();
+    if (now - lastScan < this.WS_SCAN_COOLDOWN_MS) return;
+    this.wsLastScanMs.set(spread.tokenMint, now);
+
+    engineLog.info(
+      {
+        token: poolEntry.tokenSymbol,
+        spreadBps: spread.spreadBps.toFixed(1),
+        buyPool: spread.buyPoolAddress.slice(0, 8),
+        sellPool: spread.sellPoolAddress.slice(0, 8),
+        slot: spread.slot,
+      },
+      `LOCAL SPREAD: ${poolEntry.tokenSymbol} ${spread.spreadBps.toFixed(1)}bps — triggering scan`,
+    );
+
+    // Trigger a targeted scan for this token (uses Jupiter for TX building only)
+    const tokenInfo = SCAN_TOKENS.find(t => t.mint === spread.tokenMint);
+    if (!tokenInfo) return;
+
+    const crossDexStrategy = this.strategies.get('cross-dex-arbitrage') as CrossDexArbitrageStrategy | undefined;
+    if (!crossDexStrategy?.isActive()) return;
+
+    try {
+      const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
+
+      if (opportunities.length > 0) {
+        engineLog.warn(
+          {
+            token: poolEntry.tokenSymbol,
+            localSpreadBps: spread.spreadBps.toFixed(1),
+            confirmedProfitUsd: opportunities[0].expectedProfitUsd.toFixed(4),
+            detectionLatencyMs: Date.now() - spread.timestamp,
+          },
+          `LOCAL SPREAD CONFIRMED: ${poolEntry.tokenSymbol} — executing immediately`,
+        );
+
+        const hasBalance = this.stats.currentBalanceSol > 0.01;
+        for (const opp of opportunities) {
+          if (this.status !== 'running') break;
+          this.immediatelyExecutedIds.add(opp.id);
+          if (hasBalance) {
+            await this.executeOpportunity(opp);
+          }
+        }
+        this.stats.opportunitiesFound += opportunities.length;
+      }
+    } catch (err) {
+      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'Spread-triggered scan error');
     }
   }
 

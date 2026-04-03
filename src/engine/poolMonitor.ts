@@ -52,6 +52,21 @@ export interface PoolConfig {
 /** Callback type for pool update events */
 export type PoolUpdateCallback = (update: PoolUpdate) => void;
 
+/** Cross-pool spread event — detected entirely in memory, no RPC calls */
+export interface SpreadEvent {
+  tokenMint: string;
+  spreadBps: number;
+  buyPoolAddress: string;
+  sellPoolAddress: string;
+  buyPrice: number;
+  sellPrice: number;
+  timestamp: number;
+  slot: number;
+}
+
+/** Callback type for spread detection events */
+export type SpreadCallback = (event: SpreadEvent) => void;
+
 // ═══════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════
@@ -59,8 +74,10 @@ export type PoolUpdateCallback = (update: PoolUpdate) => void;
 /** Default cache time-to-live in milliseconds (30 seconds) */
 const DEFAULT_CACHE_TTL_MS = 30_000;
 
-/** Minimum reserve change ratio to emit an event (1%) */
-const SIGNIFICANT_CHANGE_THRESHOLD = 0.01;
+/** Minimum reserve change ratio to emit an event (0.05% = 5 bps).
+ *  At 5-10bps arb spreads, even tiny reserve shifts can create/destroy opportunities.
+ *  Previous 1% threshold was missing most opportunities. */
+const SIGNIFICANT_CHANGE_THRESHOLD = 0.0005;
 
 /** Maximum number of pools that can be monitored simultaneously */
 const MAX_MONITORED_POOLS = 200;
@@ -506,6 +523,10 @@ export class PoolMonitor {
       if (isSignificant) {
         this.emitUpdate(update);
       }
+
+      // Always check cross-pool spreads on ANY update (even small changes)
+      // because a 0.01% change in one pool can create a 5bps+ spread vs another pool
+      this.detectCrossPoolSpread(update);
     } catch (err) {
       dataLog.error(
         { err, pool: poolAddress },
@@ -661,6 +682,100 @@ export class PoolMonitor {
           { err, callbackId },
           'Pool update callback threw an error'
         );
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // Cross-pool spread detection (in-memory, no RPC)
+  // ─────────────────────────────────────────────
+
+  /** Callback for when a cross-pool spread exceeds threshold */
+  private spreadCallbacks: Map<string, SpreadCallback> = new Map();
+  private spreadCallbackCounter = 0;
+
+  /** Register a callback for cross-pool spread opportunities */
+  onSpreadDetected(callback: SpreadCallback): string {
+    const id = `spread-${++this.spreadCallbackCounter}`;
+    this.spreadCallbacks.set(id, callback);
+    return id;
+  }
+
+  /** Unregister a spread callback */
+  offSpreadDetected(id: string): void {
+    this.spreadCallbacks.delete(id);
+  }
+
+  /**
+   * Calculate implied price from reserves: price of tokenB in terms of tokenA.
+   * For a constant-product AMM: price = reserveA / reserveB
+   * (how many units of A per unit of B)
+   */
+  private calculatePrice(reserveA: bigint, reserveB: bigint): number {
+    if (reserveB === 0n) return 0;
+    return Number(reserveA) / Number(reserveB);
+  }
+
+  /**
+   * After a pool update, check if there's a cross-pool spread for the same token.
+   * Compares the updated pool's price against ALL other cached pools for the same token.
+   * If spread > threshold, emits a spread event (no Jupiter call needed for detection).
+   */
+  private detectCrossPoolSpread(updatedPool: PoolUpdate): void {
+    if (this.spreadCallbacks.size === 0) return;
+
+    // Find all other pools with the same tokenB (the non-SOL token)
+    const updatedConfig = this.poolConfigs.get(updatedPool.poolAddress);
+    if (!updatedConfig) return;
+
+    const updatedPrice = this.calculatePrice(updatedPool.reserveA, updatedPool.reserveB);
+    if (updatedPrice <= 0) return;
+
+    // Compare against all other cached pools for the same token
+    for (const [address, cached] of this.poolCache) {
+      if (address === updatedPool.poolAddress) continue;
+
+      const otherConfig = this.poolConfigs.get(address);
+      if (!otherConfig) continue;
+
+      // Same token pair? (tokenB is the non-SOL token)
+      if (otherConfig.tokenB !== updatedConfig.tokenB) continue;
+
+      // Check staleness — other pool must have been updated recently
+      if (Date.now() - cached.cachedAt > 10_000) continue;
+
+      const otherPrice = this.calculatePrice(cached.update.reserveA, cached.update.reserveB);
+      if (otherPrice <= 0) continue;
+
+      // Calculate spread in bps: (highPrice - lowPrice) / lowPrice * 10000
+      const highPrice = Math.max(updatedPrice, otherPrice);
+      const lowPrice = Math.min(updatedPrice, otherPrice);
+      const spreadBps = ((highPrice - lowPrice) / lowPrice) * 10_000;
+
+      // Only emit if spread is meaningful (> 3 bps to cover fees)
+      if (spreadBps >= 3) {
+        // Determine direction: buy from cheaper pool, sell to expensive pool
+        const buyPool = updatedPrice < otherPrice ? updatedPool.poolAddress : address;
+        const sellPool = updatedPrice < otherPrice ? address : updatedPool.poolAddress;
+
+        const spreadEvent: SpreadEvent = {
+          tokenMint: updatedConfig.tokenB,
+          spreadBps,
+          buyPoolAddress: buyPool,
+          sellPoolAddress: sellPool,
+          buyPrice: Math.min(updatedPrice, otherPrice),
+          sellPrice: Math.max(updatedPrice, otherPrice),
+          timestamp: Date.now(),
+          slot: updatedPool.slot,
+        };
+
+        for (const [, cb] of this.spreadCallbacks) {
+          try {
+            cb(spreadEvent);
+          } catch (err) {
+            dataLog.error({ err }, 'Spread callback error');
+          }
+        }
       }
     }
   }
