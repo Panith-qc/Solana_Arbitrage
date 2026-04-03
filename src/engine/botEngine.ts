@@ -19,6 +19,11 @@ import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
 import { CircularScanner, CircularOpportunity } from './circularScanner.js';
 import { buildHotPathTransaction, cachePoolData, updateCachedReserves } from './directSwapBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
+import {
+  startKeepers, stopKeepers, getCachedBlockhash, getCachedPriorityFee,
+  enqueueSignature, onConfirmation, isWsPaused, getKeeperStats,
+  type ConfirmationResult,
+} from './keepers.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
 import {
   logScan, logOpportunity, logCycle, logLoop, logTrade, logApiError,
@@ -350,11 +355,19 @@ export class BotEngine {
       engineLog.info({ strategy: name }, 'Strategy started');
     }
 
-    // ── Background keepers ──────────────────────────────────────
-    // Blockhash keeper: refresh every 2s so hot path always has a fresh blockhash
-    await this.startBlockhashKeeper();
-    // Priority fee keeper: refresh every 10s (cached in connectionManager)
-    this.startPriorityFeeKeeper();
+    // ── Background keepers (Phase 2: keepers.ts) ──────────────
+    // 4 processes: blockhash 2s, priority fee 10s, WS health 30s, confirmation tracker 500ms
+    await startKeepers({
+      connection: this.connectionManager.getConnection(),
+      rpcUrl: this.connectionManager.getRpcUrl(),
+      walletPubkey: this.connectionManager.hasWallet() ? this.connectionManager.getPublicKey() : null,
+      poolMonitor: this.poolMonitor,
+    });
+
+    // Register confirmation callback — updates stats from background confirmation results
+    onConfirmation((result: ConfirmationResult) => {
+      this.handleConfirmationResult(result);
+    });
 
     // ── Cache pool data for hot path (directSwapBuilder) ──────
     await this.cachePoolDataForHotPath();
@@ -386,8 +399,7 @@ export class BotEngine {
     engineLog.info({
       hotPath: 'WebSocket → directSwapBuilder → Sender (no simulation)',
       warmPath: 'CircularScanner → Jupiter quotes → executor',
-      blockhashKeeper: '2s interval',
-      priorityFeeKeeper: '10s interval',
+      keepers: 'blockhash 2s, priorityFee 10s, wsHealth 30s, confirmTracker 500ms',
     }, 'Bot engine running — dual path architecture active');
   }
 
@@ -409,9 +421,8 @@ export class BotEngine {
       engineLog.info({ strategy: name }, 'Strategy stopped');
     }
 
-    // Stop background keepers
-    if (this.blockhashTimer) { clearInterval(this.blockhashTimer); this.blockhashTimer = null; }
-    if (this.priorityFeeTimer) { clearInterval(this.priorityFeeTimer); this.priorityFeeTimer = null; }
+    // Stop background keepers (Phase 2)
+    stopKeepers();
 
     // Stop circular scanner
     this.circularScanner.stop();
@@ -450,9 +461,8 @@ export class BotEngine {
       this.scanLoopTimer = null;
     }
 
-    // Stop background keepers
-    if (this.blockhashTimer) { clearInterval(this.blockhashTimer); this.blockhashTimer = null; }
-    if (this.priorityFeeTimer) { clearInterval(this.priorityFeeTimer); this.priorityFeeTimer = null; }
+    // Stop background keepers (Phase 2)
+    stopKeepers();
     this.circularScanner.stop();
 
     for (const strategy of this.strategies.values()) {
@@ -482,38 +492,47 @@ export class BotEngine {
   // BACKGROUND KEEPERS (blockhash, priority fee, pool cache)
   // ═══════════════════════════════════════════════════════════════
 
-  /** Refresh blockhash every 2s so hot path always has a fresh one */
-  private async startBlockhashKeeper(): Promise<void> {
-    const refresh = async () => {
-      try {
-        const conn = this.connectionManager.getConnection();
-        const { blockhash } = await conn.getLatestBlockhash('confirmed');
-        this.cachedBlockhash = blockhash;
-        this.cachedBlockhashTs = Date.now();
-      } catch (err: any) {
-        engineLog.debug({ err: err?.message }, 'Blockhash keeper: refresh failed');
-      }
-    };
-    await refresh(); // await first fetch so hot path has a blockhash at startup
-    this.blockhashTimer = setInterval(refresh, 2_000);
-    engineLog.info('Blockhash keeper started (2s interval)');
-  }
-
-  /** Cached priority fee for hot path — updated by keeper, never fetched inline */
-  private cachedPriorityFee: number = 10_000; // default micro-lamports
-
-  /** Refresh global priority fee every 10s */
-  private startPriorityFeeKeeper(): void {
-    const refresh = async () => {
-      try {
-        this.cachedPriorityFee = await this.connectionManager.getDynamicPriorityFee();
-      } catch (err: any) {
-        engineLog.debug({ err: err?.message }, 'Priority fee keeper: refresh failed — using cached value');
-      }
-    };
-    refresh();
-    this.priorityFeeTimer = setInterval(refresh, 10_000);
-    engineLog.info('Priority fee keeper started (10s interval)');
+  /**
+   * Handle a confirmation result from the keepers confirmation tracker.
+   * Updates bot stats based on confirmed/reverted/dropped status.
+   * Called from background — NEVER blocks the hot path.
+   *
+   * // Example trace:
+   * //   keepers confirms sig "4xYz..." → status 'confirmed', profitSol=0.0012
+   * //   handleConfirmationResult({ status:'confirmed', profitSol:0.0012, ... })
+   * //   stats.tradesSuccessful++, stats.totalProfitSol += 0.0012
+   */
+  private handleConfirmationResult(result: ConfirmationResult): void {
+    if (result.status === 'confirmed') {
+      this.stats.tradesSuccessful++;
+      this.stats.totalProfitSol += result.profitSol;
+      this.stats.totalProfitUsd += result.profitUsd;
+      this.hotPathProfitLamports += BigInt(Math.round(result.profitSol * LAMPORTS_PER_SOL));
+      this.riskManager.reportTradeResult(true, result.profitSol);
+      engineLog.info(
+        {
+          signature: result.signature.slice(0, 12),
+          profitSol: result.profitSol.toFixed(6),
+          latencyMs: result.latencyMs,
+          buyPool: result.buyPool.slice(0, 8),
+          sellPool: result.sellPool.slice(0, 8),
+        },
+        'HOT PATH CONFIRMED via keepers tracker',
+      );
+    } else {
+      this.stats.tradesFailed++;
+      this.riskManager.reportTradeResult(false, 0);
+      engineLog.warn(
+        {
+          signature: result.signature.slice(0, 12),
+          status: result.status,
+          errorCode: result.errorCode,
+          errorLabel: result.errorLabel,
+          latencyMs: result.latencyMs,
+        },
+        `HOT PATH ${result.status.toUpperCase()} via keepers tracker`,
+      );
+    }
   }
 
   /** Cache all AMM V4 pool data for the directSwapBuilder hot path */
@@ -533,27 +552,10 @@ export class BotEngine {
     );
   }
 
-  /** Start the circular scanner warm path and register hot path confirmation callback */
+  /** Start the circular scanner warm path */
   private startCircularScanner(): void {
-    // Register hot path async result callback — receives confirmation results in background
-    this.executor.onHotPathResult((result, meta) => {
-      if (result.success) {
-        this.stats.tradesSuccessful++;
-        this.stats.totalProfitSol += result.profitSol;
-        this.stats.totalProfitUsd += result.profitUsd;
-        this.hotPathProfitLamports += BigInt(Math.round(result.profitSol * LAMPORTS_PER_SOL));
-        engineLog.info(
-          { ...meta, profitSol: result.profitSol.toFixed(6), sig: result.signatures[0] },
-          'HOT PATH CONFIRMED: async result received',
-        );
-      } else {
-        this.stats.tradesFailed++;
-        engineLog.warn(
-          { ...meta, error: result.error, sig: result.signatures[0] },
-          'HOT PATH FAILED: async result received',
-        );
-      }
-    });
+    // Hot path confirmation is now handled by keepers Process 4 (batch tracker)
+    // via onConfirmation callback registered in start().
 
     // Register callback — when circular scanner finds profitable route,
     // trigger execution through the existing warm path (Jupiter TX building)
@@ -616,11 +618,7 @@ export class BotEngine {
   private wsTriggeredScans = 0;
   private wsConnected = false;
 
-  // ── Background keeper state ──────────────────────────────────
-  private cachedBlockhash: string = '';
-  private cachedBlockhashTs: number = 0;
-  private blockhashTimer: ReturnType<typeof setInterval> | null = null;
-  private priorityFeeTimer: ReturnType<typeof setInterval> | null = null;
+  // ── Hot path stats (confirmation results come from keepers) ──
   private hotPathExecutions = 0;
   private hotPathProfitLamports = 0n;
 
@@ -793,7 +791,8 @@ export class BotEngine {
     const sellEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
     const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
 
-    if (bothAmmV4 && this.cachedBlockhash && this.connectionManager.hasWallet()) {
+    const blockhash = getCachedBlockhash();
+    if (bothAmmV4 && blockhash && this.connectionManager.hasWallet()) {
       // ═══ HOT PATH: Direct swap, no simulation ═══
       const hotStart = Date.now();
 
@@ -810,15 +809,15 @@ export class BotEngine {
       try {
         const wallet = this.connectionManager.getWallet();
         const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
-        // Use cached priority fee — NEVER await RPC in hot path
-        const priorityFee = this.cachedPriorityFee;
+        // Use cached priority fee from keepers — NEVER await RPC in hot path
+        const priorityFee = getCachedPriorityFee();
 
         const result = buildHotPathTransaction(
           spread.buyPoolAddress,
           spread.sellPoolAddress,
           inputLamports,
           wallet,
-          this.cachedBlockhash,
+          blockhash,
           priorityFee,
         );
 
@@ -845,8 +844,7 @@ export class BotEngine {
           `HOT PATH: TX built in ${buildMs}ms — fire and forget via Sender`,
         );
 
-        // Execute via hot path executor — FIRE AND FORGET
-        // Returns immediately after sending TX. Confirmation tracked in background.
+        // FIRE AND FORGET: send TX, enqueue for confirmation tracking via keepers
         const solPrice = this.solPriceUsd || this.config.solPriceUsd || 150;
         const cachedBalance = BigInt(Math.round(this.stats.currentBalanceSol * LAMPORTS_PER_SOL));
         const execResult = await this.executor.executeHotPathDirect(
@@ -859,7 +857,20 @@ export class BotEngine {
           cachedBalance,
         );
 
-        // execResult returns immediately after TX sent (not after confirmation)
+        // Enqueue signature for batch confirmation tracking via keepers (Process 4)
+        if (execResult.success && execResult.signatures[0]) {
+          enqueueSignature({
+            signature: execResult.signatures[0],
+            enqueuedAt: Date.now(),
+            expectedProfitLamports: result.expectedProfitLamports,
+            tipLamports: result.tipLamports,
+            buyPool: result.buyPool,
+            sellPool: result.sellPool,
+            solPrice,
+            preBalanceLamports: cachedBalance,
+          });
+        }
+
         this.hotPathExecutions++;
         this.stats.tradesExecuted++;
 

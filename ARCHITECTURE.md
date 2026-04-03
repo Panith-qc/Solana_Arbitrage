@@ -11,6 +11,7 @@
 | File | Purpose | External API Calls |
 |------|---------|-------------------|
 | `botEngine.ts` | Central orchestrator. Wires strategies, risk manager, executor, WebSocket monitoring. Manages hot path (directSwapBuilder) and warm path (circularScanner). | None directly |
+| `keepers.ts` | Background keepers (Phase 2): blockhash (2s), priority fee (10s), WS health (30s), confirmation tracker (500ms batch). Module-level state read by hot path. | Helius RPC `getLatestBlockhash`, `getPriorityFeeEstimate`, `getSignatureStatuses` |
 | `config.ts` | Single source of truth for constants: token mints, pool registry, fee constants, risk profiles, Jito tip accounts. Loads .env. | None |
 | `connectionManager.ts` | Manages primary/backup RPC connections, wallet, Helius Sender endpoint, priority fee API, failover logic. | Helius RPC, Helius Sender (`sender.helius-rpc.com/fast`), `getPriorityFeeEstimate` |
 | `executor.ts` | Executes trades: quoted swaps, atomic arbitrage (Token Ledger), fast atomic (pre-fetched TXs), hot path direct (fire-and-forget). | Jupiter `/swap/v1/quote`, `/swap/v1/swap`, `/swap/v1/swap-instructions`; Helius Sender |
