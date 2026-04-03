@@ -433,12 +433,23 @@ export function buildHotPathTransaction(
   }
 
   // ── Step 3: Set minimumAmountOut with safety margin ──────────
-  // Buy leg: accept up to 1% less tokens (pool may have moved slightly)
-  const minTokenOut = tokenAmountOut * 99n / 100n;
-  // Sell leg: minimum SOL out must cover input + fees + min profit
+  // Buy leg: accept up to 0.5% less tokens than calculated.
+  // This covers pool movement between our read and on-chain execution.
+  const minTokenOut = tokenAmountOut * 995n / 1000n;
+
+  // Sell leg minimumAmountOut: hard floor that guarantees net profitability.
+  // If pool moved and output falls below this → instruction fails → TX reverts.
+  // This is the ONLY safety net (no simulation).
   const minSolOut = inputLamports + totalFees + minNetProfitLamports;
 
-  // ── Step 4: Determine token mint and ATAs ────────────────────
+  // ── Step 4: Sell leg amountIn ───────────────────────────────
+  // CRITICAL: Do NOT use exact tokenAmountOut (optimistic). If buy yields
+  // even 1 fewer token, sell would try to spend more than we have → TX fails.
+  // Do NOT use minTokenOut either (too conservative — leaves profit on table).
+  // Use 0.5% below expected: close to actual output while tolerating rounding.
+  const sellAmountIn = tokenAmountOut * 995n / 1000n;
+
+  // ── Step 5: Determine token mint and ATAs ────────────────────
   const tokenMint = buyIsSolQuote ? buyPool.baseMint : buyPool.quoteMint;
   const wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, wallet.publicKey);
   const tokenAta = getAssociatedTokenAddressSync(tokenMint, wallet.publicKey);
@@ -487,32 +498,13 @@ export function buildHotPathTransaction(
   ));
 
   // Sell swap: Token → SOL
-  // CRITICAL: Use minTokenOut (guaranteed minimum from buy's slippage protection)
-  // as the sell amountIn, NOT the optimistic tokenAmountOut. If buy yields
-  // fewer tokens than estimated (but above minTokenOut), using tokenAmountOut
-  // would try to spend more tokens than the wallet has → TX fails.
-  // Recalculate minSolOut based on minTokenOut to keep safety margin consistent.
-  let conservativeSolOut: bigint;
-  if (sellIsSolQuote) {
-    conservativeSolOut = calculateAmountOut(
-      minTokenOut, sellPool.baseReserve, sellPool.quoteReserve,
-      sellPool.tradeFeeNumerator, sellPool.tradeFeeDenominator,
-    );
-  } else {
-    conservativeSolOut = calculateAmountOut(
-      minTokenOut, sellPool.quoteReserve, sellPool.baseReserve,
-      sellPool.tradeFeeNumerator, sellPool.tradeFeeDenominator,
-    );
-  }
-  // minSolOut: at minimum we need to recover input + fees + min profit
-  const safeMinSolOut = inputLamports + totalFees + minNetProfitLamports;
-  // Use the lesser of conservative estimate (with 1% margin) and the hard floor
-  const sellMinOut = conservativeSolOut * 98n / 100n > safeMinSolOut
-    ? safeMinSolOut
-    : conservativeSolOut * 98n / 100n;
-
+  // amountIn = sellAmountIn (0.5% below expected buy output)
+  // minimumAmountOut = minSolOut (hard floor: input + fees + minProfit)
+  // If actual buy output < sellAmountIn → sell tries to spend more tokens than we have → TX reverts
+  // If sell output < minSolOut → instruction fails → TX reverts
+  // Both reversions are safe — atomic TX, no stuck tokens.
   instructions.push(buildRaydiumSwapInstruction(
-    sellPool, tokenAta, wsolAta, wallet.publicKey, minTokenOut, sellMinOut,
+    sellPool, tokenAta, wsolAta, wallet.publicKey, sellAmountIn, minSolOut,
   ));
 
   // Close WSOL account → unwrap back to native SOL
