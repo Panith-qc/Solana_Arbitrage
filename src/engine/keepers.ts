@@ -158,14 +158,21 @@ let wsDisconnectTimestamps: number[] = [];
 /** Whether WS monitoring is paused due to repeated failures */
 let wsPaused = false;
 
+/** Unix ms when WS was paused — used for auto-recovery after cooldown */
+let wsPausedAt: number = 0;
+
+/** Auto-recovery cooldown: 5 min after pause, attempt reconnect */
+const WS_PAUSE_COOLDOWN_MS = 5 * 60 * 1000;
+
 /** Public: check if WS is paused */
 export function isWsPaused(): boolean {
   return wsPaused;
 }
 
-/** Public: reset WS pause (called after manual restart) */
+/** Public: reset WS pause (called after manual restart or auto-recovery) */
 export function resetWsPause(): void {
   wsPaused = false;
+  wsPausedAt = 0;
   wsDisconnectTimestamps = [];
 }
 
@@ -280,36 +287,65 @@ async function refreshPriorityFee(): Promise<void> {
  * If dead (no events in 60s), the poolMonitor handles its own reconnection.
  * This keeper tracks disconnect frequency: if >3 disconnects in 5 min, pause WS.
  * Pausing prevents reconnection storms that burn RPC credits.
+ * Auto-recovery: after 5 min cooldown, unpause and clear disconnect history
+ * so poolMonitor can attempt reconnection with a clean slate.
  *
  * // Example trace:
  * //   checkWsHealth() at T=0 — poolMonitor.isWsAlive() → true → no action
  * //   checkWsHealth() at T=30s — isWsAlive() → false → record disconnect at T=30
  * //   checkWsHealth() at T=60s — isWsAlive() → false → record disconnect at T=60
  * //   checkWsHealth() at T=90s — isWsAlive() → false → record disconnect at T=90
- * //   3 disconnects in 5 min → wsPaused = true, log warning
- * //   poolMonitor stops reconnecting, hot path uses poll-based scanning only
+ * //   3 disconnects in 5 min → wsPaused = true, wsPausedAt = T=90
+ * //   checkWsHealth() at T=390s (5 min later) — wsPaused && cooldown expired
+ * //     → resetWsPause(), log "auto-recovery, unpausing WS"
+ * //   poolMonitor resumes normal reconnection attempts
+ * //   if WS comes back alive → next check sees alive=true, no action
+ * //   if WS fails again → 3 more disconnects → re-pause for another 5 min
  */
 function checkWsHealth(): void {
   if (!poolMonitorRef) return;
 
+  const now = Date.now();
   const alive = poolMonitorRef.isWsAlive();
+
+  // If currently paused, check for auto-recovery after cooldown
+  if (wsPaused) {
+    if (alive) {
+      // WS recovered on its own while we were paused
+      engineLog.info('WS Health Monitor: WebSocket recovered while paused — unpausing');
+      resetWsPause();
+      return;
+    }
+    if (wsPausedAt > 0 && (now - wsPausedAt) >= WS_PAUSE_COOLDOWN_MS) {
+      // Cooldown expired — unpause so poolMonitor can retry
+      engineLog.info(
+        { pausedForMs: now - wsPausedAt },
+        'WS Health Monitor: 5 min cooldown expired — unpausing, poolMonitor may retry',
+      );
+      resetWsPause();
+      // Don't return — fall through to normal check so we start fresh tracking
+    } else {
+      return; // Still in cooldown, do nothing
+    }
+  }
+
   if (alive) return; // WS is healthy, nothing to do
 
   // Record disconnect
-  const now = Date.now();
   wsDisconnectTimestamps.push(now);
 
   // Prune disconnects older than 5 min
   const fiveMinAgo = now - 5 * 60 * 1000;
   wsDisconnectTimestamps = wsDisconnectTimestamps.filter(ts => ts >= fiveMinAgo);
 
-  if (wsDisconnectTimestamps.length > 3 && !wsPaused) {
+  if (wsDisconnectTimestamps.length > 3) {
     wsPaused = true;
+    wsPausedAt = now;
     engineLog.warn(
       { disconnectsIn5Min: wsDisconnectTimestamps.length },
-      'WS Health Monitor: >3 disconnects in 5 min — PAUSING WebSocket monitoring. Poll-only mode active.',
+      'WS Health Monitor: >3 disconnects in 5 min — PAUSING for 5 min cooldown. Poll-only mode active.',
     );
-  } else if (!wsPaused) {
+  } else {
     engineLog.info(
       { disconnectsIn5Min: wsDisconnectTimestamps.length },
       'WS Health Monitor: WebSocket not alive — poolMonitor will handle reconnection',
@@ -564,6 +600,7 @@ export function stopKeepers(): void {
   walletPubkeyRef = null;
   poolMonitorRef = null;
   wsPaused = false;
+  wsPausedAt = 0;
   wsDisconnectTimestamps = [];
 
   engineLog.info('All keepers stopped');
