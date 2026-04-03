@@ -482,30 +482,40 @@ export function buildHotPathTransaction(
   );
 
   // Buy swap: SOL → Token
-  if (buyIsSolQuote) {
-    // Source: WSOL (quote), Dest: Token (base)
-    instructions.push(buildRaydiumSwapInstruction(
-      buyPool, wsolAta, tokenAta, wallet.publicKey, inputLamports, minTokenOut,
-    ));
-  } else {
-    // Source: WSOL (base), Dest: Token (quote)
-    instructions.push(buildRaydiumSwapInstruction(
-      buyPool, wsolAta, tokenAta, wallet.publicKey, inputLamports, minTokenOut,
-    ));
-  }
+  // Both branches are identical — AMM resolves direction from which user
+  // token account matches which vault mint, not from the conditional.
+  instructions.push(buildRaydiumSwapInstruction(
+    buyPool, wsolAta, tokenAta, wallet.publicKey, inputLamports, minTokenOut,
+  ));
 
   // Sell swap: Token → SOL
+  // CRITICAL: Use minTokenOut (guaranteed minimum from buy's slippage protection)
+  // as the sell amountIn, NOT the optimistic tokenAmountOut. If buy yields
+  // fewer tokens than estimated (but above minTokenOut), using tokenAmountOut
+  // would try to spend more tokens than the wallet has → TX fails.
+  // Recalculate minSolOut based on minTokenOut to keep safety margin consistent.
+  let conservativeSolOut: bigint;
   if (sellIsSolQuote) {
-    // Source: Token (base), Dest: WSOL (quote)
-    instructions.push(buildRaydiumSwapInstruction(
-      sellPool, tokenAta, wsolAta, wallet.publicKey, tokenAmountOut, minSolOut,
-    ));
+    conservativeSolOut = calculateAmountOut(
+      minTokenOut, sellPool.baseReserve, sellPool.quoteReserve,
+      sellPool.tradeFeeNumerator, sellPool.tradeFeeDenominator,
+    );
   } else {
-    // Source: Token (quote), Dest: WSOL (base)
-    instructions.push(buildRaydiumSwapInstruction(
-      sellPool, tokenAta, wsolAta, wallet.publicKey, tokenAmountOut, minSolOut,
-    ));
+    conservativeSolOut = calculateAmountOut(
+      minTokenOut, sellPool.quoteReserve, sellPool.baseReserve,
+      sellPool.tradeFeeNumerator, sellPool.tradeFeeDenominator,
+    );
   }
+  // minSolOut: at minimum we need to recover input + fees + min profit
+  const safeMinSolOut = inputLamports + totalFees + minNetProfitLamports;
+  // Use the lesser of conservative estimate (with 1% margin) and the hard floor
+  const sellMinOut = conservativeSolOut * 98n / 100n > safeMinSolOut
+    ? safeMinSolOut
+    : conservativeSolOut * 98n / 100n;
+
+  instructions.push(buildRaydiumSwapInstruction(
+    sellPool, tokenAta, wsolAta, wallet.publicKey, minTokenOut, sellMinOut,
+  ));
 
   // Close WSOL account → unwrap back to native SOL
   instructions.push(

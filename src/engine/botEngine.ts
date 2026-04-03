@@ -17,8 +17,8 @@ import { TradeJournal } from './tradeJournal.js';
 import { GeyserClient } from './geyserClient.js';
 import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
 import { CircularScanner, CircularOpportunity } from './circularScanner.js';
-import { buildHotPathTransaction, cachePoolData, updateCachedReserves, HotPathTxResult } from './directSwapBuilder.js';
-import { decodeSwapInstruction, decodeAllSwaps } from './instructionDecoder.js';
+import { buildHotPathTransaction, cachePoolData, updateCachedReserves } from './directSwapBuilder.js';
+import { decodeSwapInstruction } from './instructionDecoder.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
 import {
   logScan, logOpportunity, logCycle, logLoop, logTrade, logApiError,
@@ -352,7 +352,7 @@ export class BotEngine {
 
     // ── Background keepers ──────────────────────────────────────
     // Blockhash keeper: refresh every 2s so hot path always has a fresh blockhash
-    this.startBlockhashKeeper();
+    await this.startBlockhashKeeper();
     // Priority fee keeper: refresh every 10s (cached in connectionManager)
     this.startPriorityFeeKeeper();
 
@@ -450,6 +450,11 @@ export class BotEngine {
       this.scanLoopTimer = null;
     }
 
+    // Stop background keepers
+    if (this.blockhashTimer) { clearInterval(this.blockhashTimer); this.blockhashTimer = null; }
+    if (this.priorityFeeTimer) { clearInterval(this.priorityFeeTimer); this.priorityFeeTimer = null; }
+    this.circularScanner.stop();
+
     for (const strategy of this.strategies.values()) {
       strategy.stop();
     }
@@ -478,7 +483,7 @@ export class BotEngine {
   // ═══════════════════════════════════════════════════════════════
 
   /** Refresh blockhash every 2s so hot path always has a fresh one */
-  private startBlockhashKeeper(): void {
+  private async startBlockhashKeeper(): Promise<void> {
     const refresh = async () => {
       try {
         const conn = this.connectionManager.getConnection();
@@ -489,7 +494,7 @@ export class BotEngine {
         engineLog.debug({ err: err?.message }, 'Blockhash keeper: refresh failed');
       }
     };
-    refresh(); // immediate first fetch
+    await refresh(); // await first fetch so hot path has a blockhash at startup
     this.blockhashTimer = setInterval(refresh, 2_000);
     engineLog.info('Blockhash keeper started (2s interval)');
   }
@@ -653,6 +658,10 @@ export class BotEngine {
    */
   private async handlePoolChange(update: import('./poolMonitor.js').PoolUpdate): Promise<void> {
     if (this.status !== 'running') return;
+
+    // Keep directSwapBuilder cache in sync with live reserve data.
+    // Without this, the hot path would use stale reserves from startup.
+    updateCachedReserves(update.poolAddress, update.reserveA, update.reserveB);
 
     // Find which token this pool belongs to
     const poolEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === update.poolAddress);

@@ -220,11 +220,10 @@ export class CircularScanner {
     const reverseQuote = await reverseResp.json() as any;
     if (!reverseQuote?.outAmount) return;
 
-    const outputLamports = parseInt(reverseQuote.outAmount, 10);
-    const inputNum = Number(inputLamports);
-    const grossProfit = outputLamports - inputNum;
-    const netProfit = grossProfit - TWO_LEG_FEE_LAMPORTS;
-    const spreadBps = (grossProfit / inputNum) * 10_000;
+    const outputLamports = BigInt(reverseQuote.outAmount);
+    const grossProfit = outputLamports - inputLamports;
+    const netProfit = grossProfit - BigInt(TWO_LEG_FEE_LAMPORTS);
+    const spreadBps = Number(grossProfit * 10_000n / inputLamports);
 
     // Extract route labels
     const buyRoute = (forwardQuote.routePlan || [])
@@ -234,16 +233,22 @@ export class CircularScanner {
       .map((r: any) => r?.swapInfo?.label || '?')
       .join(' → ');
 
-    if (netProfit > 0) {
+    if (netProfit > 0n) {
       this.totalOpportunities++;
+
+      // Convert to numbers for the interface (safe for amounts < 2^53 lamports = ~9000 SOL)
+      const inputNum = Number(inputLamports);
+      const outputNum = Number(outputLamports);
+      const grossNum = Number(grossProfit);
+      const netNum = Number(netProfit);
 
       const opp: CircularOpportunity = {
         tokenSymbol: token.symbol,
         tokenMint: token.mint,
         inputLamports: inputNum,
-        outputLamports,
-        grossProfitLamports: grossProfit,
-        netProfitLamports: netProfit,
+        outputLamports: outputNum,
+        grossProfitLamports: grossNum,
+        netProfitLamports: netNum,
         spreadBps,
         buyRoute,
         sellRoute,
@@ -254,8 +259,8 @@ export class CircularScanner {
         {
           token: token.symbol,
           inputSol: (inputNum / LAMPORTS_PER_SOL).toFixed(3),
-          grossProfitSol: (grossProfit / LAMPORTS_PER_SOL).toFixed(6),
-          netProfitSol: (netProfit / LAMPORTS_PER_SOL).toFixed(6),
+          grossProfitSol: (grossNum / LAMPORTS_PER_SOL).toFixed(6),
+          netProfitSol: (netNum / LAMPORTS_PER_SOL).toFixed(6),
           spreadBps: spreadBps.toFixed(1),
           buy: buyRoute,
           sell: sellRoute,
