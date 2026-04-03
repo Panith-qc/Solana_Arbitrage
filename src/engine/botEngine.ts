@@ -408,11 +408,18 @@ export class BotEngine {
     }
     this.startCircularScanner();
 
+    const poolCount = RAYDIUM_POOL_REGISTRY.length;
+    const pairCount = SCAN_TOKENS.length;
+    const scannerStats = this.circularScanner.getStats();
+
     engineLog.info({
       hotPath: 'WebSocket → directSwapBuilder → Sender (no simulation)',
-      warmPath: 'CircularScanner → Jupiter quotes → executor',
+      warmPath: 'CircularScanner → Jupiter quotes → atomic 2-leg TX',
       keepers: 'blockhash 2s, priorityFee 10s, wsHealth 30s, confirmTracker 500ms',
-    }, 'Bot engine running — dual path architecture active');
+      wsPoolsMonitored: poolCount,
+      jupiterPairsScanned: pairCount,
+      jupiterApiKeys: scannerStats.apiKeys,
+    }, `Bot running. WS monitoring ${poolCount} pools. Jupiter scanning ${pairCount} pairs.`);
   }
 
   async stop(): Promise<void> {
