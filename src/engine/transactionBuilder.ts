@@ -269,6 +269,8 @@ export interface CombinedSwapResult {
   transaction: VersionedTransaction;
   /** Serialized size in bytes — must be ≤ 1232 */
   sizeBytes: number;
+  /** Resolved lookup tables — needed for patchComputeUnitLimit without re-fetch */
+  lookupTables: AddressLookupTableAccount[];
 }
 
 /**
@@ -384,7 +386,7 @@ export async function combineSwapsIntoSingleTx(
     'Combined atomic TX built — both swaps in single transaction',
   );
 
-  return { transaction: combinedTx, sizeBytes };
+  return { transaction: combinedTx, sizeBytes, lookupTables: allLookupTables };
 }
 
 /**
@@ -587,7 +589,59 @@ export async function combineSwapsWithTokenLedger(
     `Token ledger combined TX built — reverse leg uses dynamic balance${jitoTipLamports > 0 ? ` + ${jitoTipLamports} lamport Jito tip` : ''}`,
   );
 
-  return { transaction: combinedTx, sizeBytes };
+  return { transaction: combinedTx, sizeBytes, lookupTables: allLookupTables };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PATCH CU LIMIT — modify existing TX without full rebuild
+// Finds the SetComputeUnitLimit instruction and patches the u32 value,
+// then re-signs. Saves ~70ms vs full rebuild (no ALT re-fetch).
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Patch the ComputeUnitLimit in an existing VersionedTransaction.
+ * Avoids full TX rebuild — decompile, replace CU ix, recompile, re-sign.
+ *
+ * @param transaction       The existing signed VersionedTransaction
+ * @param newComputeUnits   The new CU limit to set
+ * @param wallet            Keypair for re-signing
+ * @param lookupTables      Address lookup tables (must be the same ones used to build)
+ * @returns                 New VersionedTransaction with patched CU limit
+ */
+export function patchComputeUnitLimit(
+  transaction: VersionedTransaction,
+  newComputeUnits: number,
+  wallet: Keypair,
+  lookupTables: AddressLookupTableAccount[],
+): VersionedTransaction {
+  const message = transaction.message;
+
+  // Decompile to get instructions
+  const decompiled = TransactionMessage.decompile(message, {
+    addressLookupTableAccounts: lookupTables,
+  });
+
+  // Replace the SetComputeUnitLimit instruction (discriminator byte 0x02)
+  const COMPUTE_BUDGET_ID = ComputeBudgetProgram.programId.toString();
+  const newCuIx = ComputeBudgetProgram.setComputeUnitLimit({ units: newComputeUnits });
+
+  const patchedInstructions = decompiled.instructions.map((ix) => {
+    if (ix.programId.toString() === COMPUTE_BUDGET_ID && ix.data[0] === 0x02) {
+      return newCuIx;
+    }
+    return ix;
+  });
+
+  // Recompile with same blockhash and lookup tables
+  const newMessage = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: decompiled.recentBlockhash,
+    instructions: patchedInstructions,
+  }).compileToV0Message(lookupTables);
+
+  const newTx = new VersionedTransaction(newMessage);
+  newTx.sign([wallet]);
+  return newTx;
 }
 
 // ═══════════════════════════════════════════════════════════════════

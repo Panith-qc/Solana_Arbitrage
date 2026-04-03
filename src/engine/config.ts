@@ -14,11 +14,13 @@ export const PRIORITY_FEE_LAMPORTS = 10_000;   // Priority fee for staked connec
 // Below 200,000 lamports, Sender only uses SWQoS (no Jito auction).
 export const JITO_TIP_LAMPORTS = 200_000;
 
-// Single atomic TX = 1 signature + priority fee + Jito tip
-export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS; // 215,000
-// Combined atomic TX: both swaps in one TX = 1 signature + priority fee + Jito tip
-// Jito tip (200k lamports = 0.0002 SOL) required for Helius Sender dual SWQoS + Jito routing
-export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + JITO_TIP_LAMPORTS;   // 215,000
+// Fee estimates for SCANNING (profit threshold).
+// Use minimum Jito tip (1,000) for scanning — executor uses dynamic tip (40% of profit).
+// This ensures scanner doesn't discard opportunities that executor would accept.
+export const SINGLE_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + 1_000; // 16,000
+export const TWO_LEG_FEE_LAMPORTS = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS + 1_000;   // 16,000
+// Executor applies real fee: baseFee + dynamicTip, where dynamicTip = min(max(profit*0.40, 1000), 200000)
+// Executor also gates on netProfit >= 10,000 lamports after dynamic tip.
 
 // ── EXECUTION REALITY CONSTANTS ────────────────────────────────────────────
 // These account for the physical reality of Solana execution latency.
@@ -60,20 +62,19 @@ export interface TokenInfo {
   decimals: number;
 }
 
-// FOCUSED: Only 6 tokens that showed profitable or near-profitable spreads in live scans.
-// Removed: JTO (-207bps), BONK (-107bps), WIF (-50bps), wETH (-54bps) — too far negative.
-// 6 tokens instead of 10 = 40% faster scan = fresher quotes when opportunity hits.
+// PAIR SELECTION — avoid ultra-fast pairs (SOL/USDC, SOL/USDT) where latency
+// matters most. Focus on LSTs, mid-cap tokens where spreads persist longer.
 export const SCAN_TOKENS: TokenInfo[] = [
-  // Profitable: RAY showed +1.5 to +7.9 bps cross-dex spreads
-  { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
-  // Near-profitable: wBTC showed micro-spreads in micro-arbitrage
-  { mint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'wBTC', decimals: 8 },
-  // Near-profitable: JUP showed small spreads occasionally
-  { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
-  // LSTs: tightest spreads (-0.8bps), closest to breakeven
+  // LSTs — slow-moving, persistent spreads across DEXes
   { mint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', symbol: 'mSOL', decimals: 9 },
   { mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', symbol: 'jitoSOL', decimals: 9 },
   { mint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', symbol: 'bSOL', decimals: 9 },
+  // Mid-cap — lower competition, wider spreads
+  { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', symbol: 'BONK', decimals: 5 },
+  { mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', symbol: 'WIF', decimals: 6 },
+  { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
+  { mint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', symbol: 'JTO', decimals: 9 },
+  { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
 ];
 
 // ── Raydium pool addresses for WebSocket monitoring ─────────────────────────
@@ -89,24 +90,21 @@ export interface PoolRegistryEntry {
 }
 
 export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
-  // RAY/SOL — AMM V4 ($2.69M TVL)
-  { poolAddress: 'AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'amm-v4', label: 'RAY/SOL AMM' },
-  // RAY/SOL — CLMM ($1.2M TVL)
-  { poolAddress: '2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'clmm', label: 'RAY/SOL CLMM' },
+  // LSTs — primary targets, slow-moving persistent spreads
   // mSOL/SOL — CLMM ($1.07M TVL)
   { poolAddress: '8EzbUfvcRT1Q6RL462ekGkgqbxsPmwC5FMLQZhSPMjJ3', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'clmm', label: 'mSOL/SOL CLMM' },
-  // mSOL/SOL — AMM V4 ($93K TVL)
   { poolAddress: 'EGyhb2uLAsRUbRx9dNFBjMVYnFaASWMvD6RE1aEf2LxL', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'amm-v4', label: 'mSOL/SOL AMM' },
   // jitoSOL/SOL — CLMM ($1.77M TVL)
   { poolAddress: '2uoKbPEidR7KAMYtY4x7xdkHXWqYib5k4CutJauSL3Mc', tokenMint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', tokenSymbol: 'jitoSOL', poolType: 'clmm', label: 'jitoSOL/SOL CLMM' },
-  // JUP/SOL — CLMM ($37K TVL)
-  { poolAddress: 'EZVkeboWeXygtq8LMyENHyXdF5wpYrtExRNH9UwB1qYw', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'clmm', label: 'JUP/SOL CLMM' },
-  // JUP/SOL — AMM V4 ($6.3K TVL)
-  { poolAddress: 'EYErUp5muPYEEkeaUCY22JibeZX7E9UuMcJFZkmNAN7c', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'amm-v4', label: 'JUP/SOL AMM' },
-  // wBTC/SOL — AMM V4 ($1.7K TVL)
-  { poolAddress: '9Kf7NXFvkwcRoqNw7GWwUL3fuRCmTrbA2oyGcZCVfoDf', tokenMint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', tokenSymbol: 'wBTC', poolType: 'amm-v4', label: 'wBTC/SOL AMM' },
-  // bSOL/SOL — AMM V4 ($112 TVL — low, but only Raydium pool available)
+  // bSOL/SOL
   { poolAddress: '7jQLGDGb3fjELEBM6BCvnqjxUGLkeAVUgh3ZimtkDs6Q', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'amm-v4', label: 'bSOL/SOL AMM' },
+  // Mid-cap — lower competition, wider spreads
+  // RAY/SOL
+  { poolAddress: 'AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'amm-v4', label: 'RAY/SOL AMM' },
+  { poolAddress: '2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'clmm', label: 'RAY/SOL CLMM' },
+  // JUP/SOL
+  { poolAddress: 'EZVkeboWeXygtq8LMyENHyXdF5wpYrtExRNH9UwB1qYw', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'clmm', label: 'JUP/SOL CLMM' },
+  { poolAddress: 'EYErUp5muPYEEkeaUCY22JibeZX7E9UuMcJFZkmNAN7c', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'amm-v4', label: 'JUP/SOL AMM' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)

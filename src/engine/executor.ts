@@ -31,6 +31,7 @@ import {
   buildSwapTransaction,
   combineSwapsIntoSingleTx,
   combineSwapsWithTokenLedger,
+  patchComputeUnitLimit,
   TxTooLargeError,
   SwapInstructionsResponse,
 } from './transactionBuilder.js';
@@ -684,8 +685,7 @@ export class Executor {
       return this.failResult('ATOMIC: Reverse quote unavailable', startMs);
     }
 
-    // Final profitability check before committing.
-    // Single atomic TX = 1 signature + priority fee + Jito tip (for Helius Sender).
+    // Final profitability check with dynamic Jito tip.
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
 
     if (isNaN(reverseOutputLamports) || reverseOutputLamports <= 0) {
@@ -693,7 +693,9 @@ export class Executor {
     }
 
     const grossProfitLamports = reverseOutputLamports - inputLamports;
-    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS;
+    const baseFee = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS;
+    const dynamicTip = Math.min(Math.max(Math.floor(grossProfitLamports * 0.40), 1_000), 200_000);
+    const totalFeeLamports = baseFee + dynamicTip;
     const netProfitLamports = grossProfitLamports - totalFeeLamports;
 
     executionLog.info(
@@ -702,16 +704,16 @@ export class Executor {
         grossProfitLamports,
         totalFeeLamports,
         netProfitLamports,
-        tipLamports,
+        dynamicTip,
       },
-      netProfitLamports > 0
+      netProfitLamports >= 10_000
         ? 'ATOMIC: Profitability CONFIRMED'
-        : 'ATOMIC: Trade would be unprofitable — aborting',
+        : 'ATOMIC: Trade below 10k lamport threshold — aborting',
     );
 
-    if (netProfitLamports < 0) {
+    if (netProfitLamports < 10_000) {
       return this.failResult(
-        `ATOMIC: Net loss ${(netProfitLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL after fees`,
+        `ATOMIC: Net profit ${netProfitLamports} lamports below 10k threshold`,
         startMs,
       );
     }
@@ -733,21 +735,21 @@ export class Executor {
     // Solana runtime: all instructions succeed or all revert. No partial.
 
     try {
-      // Get global priority fee estimate first (fast, cached)
+      // Get global priority fee (cached 10s, ~0ms when cached)
       const globalPriorityFee = await this.connManager.getDynamicPriorityFee();
 
-      // ── STEP 4a: BUILD INITIAL TX (with generous CU for simulation) ─
+      // ── STEP 4a: BUILD TX (generous CU for simulation) ─────────
       const initialCombined = await combineSwapsWithTokenLedger(
         forwardSwap.swapTransaction,
         reverseSwapIxs,
         wallet,
         connection,
         globalPriorityFee,
-        600_000,              // generous CU limit for simulation
-        tipLamports,          // Jito tip for Helius Sender dual-routing
+        600_000,              // generous CU for simulation
+        dynamicTip,           // dynamic Jito tip based on profit
       );
 
-      // ── STEP 4b: SIMULATE TO GET ACTUAL CU + GATE BAD TXS ─────
+      // ── STEP 4b: SIMULATE — gate bad TXs + get actual CU ──────
       const simResult = await this.connManager.simulateForCU(initialCombined.transaction);
 
       if (!simResult.success) {
@@ -758,33 +760,26 @@ export class Executor {
         return this.failResult(`ATOMIC: Simulation failed: ${simResult.error}`, startMs);
       }
 
-      // ── STEP 4c: REBUILD WITH OPTIMAL CU + TX-SPECIFIC PRIORITY FEE ─
-      // Tight CU limit = higher effective priority per CU = faster inclusion
-      const optimalCU = Math.ceil(simResult.unitsConsumed * 1.1); // 10% margin
-      const txBase64 = Buffer.from(initialCombined.transaction.serialize()).toString('base64');
-      const txSpecificFee = await this.connManager.getDynamicPriorityFee(txBase64);
-
-      const combined = await combineSwapsWithTokenLedger(
-        forwardSwap.swapTransaction,
-        reverseSwapIxs,
+      // ── STEP 4c: PATCH CU LIMIT (no full rebuild) ─────────────
+      const optimalCU = Math.ceil(simResult.unitsConsumed * 1.1);
+      const patchedTx = patchComputeUnitLimit(
+        initialCombined.transaction,
+        optimalCU,
         wallet,
-        connection,
-        txSpecificFee,        // TX-specific priority fee from Helius
-        optimalCU,            // tight CU from simulation
-        tipLamports,          // Jito tip for Helius Sender
+        initialCombined.lookupTables,
       );
 
       executionLog.info(
         {
-          tokenSymbol, sizeBytes: combined.sizeBytes,
-          priorityFee: txSpecificFee, computeUnits: optimalCU,
-          simCU: simResult.unitsConsumed, jitoTip: tipLamports,
+          tokenSymbol,
+          priorityFee: globalPriorityFee, computeUnits: optimalCU,
+          simCU: simResult.unitsConsumed, jitoTip: dynamicTip,
         },
-        'ATOMIC: Optimized TX built — sending via Helius Sender (SWQoS + Jito)',
+        'ATOMIC: CU patched — sending via Helius Sender',
       );
 
-      // ── STEP 5: SEND VIA HELIUS SENDER (SWQoS + Jito dual-routing) ─
-      const rawTx = Buffer.from(combined.transaction.serialize());
+      // ── STEP 5: SEND VIA HELIUS SENDER ─────────────────────────
+      const rawTx = Buffer.from(patchedTx.serialize());
       const signature = await this.connManager.sendSmartTransaction(rawTx);
 
       executionLog.info({ tokenSymbol, signature }, 'ATOMIC: TX sent — confirming');
@@ -927,28 +922,30 @@ export class Executor {
     const inputLamports = parseInt(forwardQuote.inAmount, 10);
 
     // ── STALENESS CHECK ─────────────────────────────────────────
-    // Increased from 6s to 10s — on free tier, scan+fetch takes 4-6s,
-    // With immediate execution (await), quotes are typically 0-2s old.
-    // If somehow older than 3s, the price has likely moved — re-quote.
+    // 500ms max — quotes older than this are stale and will revert.
+    // At 5-10bps spreads, even 1s of price movement kills profitability.
     const ageMs = Date.now() - scanTimestamp;
-    if (ageMs > 3000) {
+    if (ageMs > 500) {
       executionLog.warn(
         { tokenSymbol, ageMs },
-        'FAST: Scan quotes too old (>3s), falling back to full re-quote',
+        'FAST: Scan quotes too old (>500ms) — aborting',
       );
-      return this.executeAtomicArbitrage(forwardQuote, tokenMint, tokenSymbol, solPrice, tipLamports);
+      return this.failResult(`FAST: Quotes stale (${ageMs}ms old)`, startMs);
     }
 
-    // ── PROFITABILITY SANITY CHECK ──────────────────────────────
-    // Single atomic TX = 1 signature + priority fee + Jito tip (Helius Sender).
+    // ── DYNAMIC JITO TIP ───────────────────────────────────────
+    // tip = min(max(expectedProfit * 0.40, 1000), 200000)
+    // If profit - tip < 10,000 lamports: skip (not worth the risk).
     const reverseOutputLamports = parseInt(reverseQuote.outAmount, 10);
     const grossProfitLamports = reverseOutputLamports - inputLamports;
-    const totalFeeLamports = TWO_LEG_FEE_LAMPORTS;
+    const baseFee = BASE_GAS_LAMPORTS + PRIORITY_FEE_LAMPORTS; // 15,000
+    const dynamicTip = Math.min(Math.max(Math.floor(grossProfitLamports * 0.40), 1_000), 200_000);
+    const totalFeeLamports = baseFee + dynamicTip;
     const netProfitLamports = grossProfitLamports - totalFeeLamports;
 
-    if (netProfitLamports < 0) {
+    if (netProfitLamports < 10_000) {
       return this.failResult(
-        `FAST: Net loss ${(netProfitLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`,
+        `FAST: Net profit ${netProfitLamports} lamports after ${dynamicTip} tip — below 10k threshold`,
         startMs,
       );
     }
@@ -957,21 +954,20 @@ export class Executor {
       {
         tokenSymbol, ageMs,
         grossProfitLamports, netProfitLamports,
-        tipLamports,
+        dynamicTip,
       },
-      'FAST: Using pre-fetched swap TXs — skipping re-quote',
+      'FAST: Using pre-fetched swap TXs — executing immediately',
     );
 
-    // ── BUILD SINGLE ATOMIC TX (both swaps in one transaction) ──
-    // Combines forward + reverse swap instructions into ONE TX.
-    // Solana runtime guarantees: all instructions succeed or all revert.
-    // Sent via Helius staked connection with dynamic priority fees.
+    // ── BUILD + SIMULATE + PATCH CU + SEND ─────────────────────
+    // Single pipeline: build(600k CU) → simulate(gate) → patch(optimal CU) → send
+    // No second priority fee fetch. No full rebuild. Saves ~170ms.
 
     try {
-      // Get global priority fee estimate first (fast, cached)
+      // Get global priority fee (cached 10s, ~0ms)
       const globalPriorityFee = await this.connManager.getDynamicPriorityFee();
 
-      // ── BUILD INITIAL TX (generous CU for simulation) ────────
+      // ── BUILD TX (generous CU for simulation) ────────────────
       const initialCombined = await combineSwapsWithTokenLedger(
         forwardSwapTx,
         reverseSwapIxs,
@@ -979,10 +975,10 @@ export class Executor {
         connection,
         globalPriorityFee,
         600_000,              // generous CU for simulation
-        tipLamports,          // Jito tip for Helius Sender
+        dynamicTip,           // dynamic Jito tip based on profit
       );
 
-      // ── SIMULATE TO GATE BAD TXS + GET ACTUAL CU ────────────
+      // ── SIMULATE — gate bad TXs + get actual CU ─────────────
       const simResult = await this.connManager.simulateForCU(initialCombined.transaction);
 
       if (!simResult.success) {
@@ -993,32 +989,27 @@ export class Executor {
         return this.failResult(`FAST: Simulation failed: ${simResult.error}`, startMs);
       }
 
-      // ── REBUILD WITH OPTIMAL CU + TX-SPECIFIC PRIORITY FEE ──
+      // ── PATCH CU LIMIT (no full rebuild) ─────────────────────
+      // Just replace the CU instruction, re-sign, send. Saves ~70ms.
       const optimalCU = Math.ceil(simResult.unitsConsumed * 1.1);
-      const txBase64 = Buffer.from(initialCombined.transaction.serialize()).toString('base64');
-      const txSpecificFee = await this.connManager.getDynamicPriorityFee(txBase64);
-
-      const combined = await combineSwapsWithTokenLedger(
-        forwardSwapTx,
-        reverseSwapIxs,
-        wallet,
-        connection,
-        txSpecificFee,
+      const patchedTx = patchComputeUnitLimit(
+        initialCombined.transaction,
         optimalCU,
-        tipLamports,          // Jito tip for Helius Sender
+        wallet,
+        initialCombined.lookupTables,
       );
 
       executionLog.info(
         {
-          tokenSymbol, ageMs, sizeBytes: combined.sizeBytes,
-          priorityFee: txSpecificFee, computeUnits: optimalCU,
-          simCU: simResult.unitsConsumed, jitoTip: tipLamports,
+          tokenSymbol, ageMs,
+          priorityFee: globalPriorityFee, computeUnits: optimalCU,
+          simCU: simResult.unitsConsumed, jitoTip: dynamicTip,
         },
-        'FAST: Optimized TX built — sending via Helius Sender (SWQoS + Jito)',
+        'FAST: CU patched — sending via Helius Sender',
       );
 
-      // ── SEND VIA HELIUS SENDER (SWQoS + Jito dual-routing) ──
-      const rawTx = Buffer.from(combined.transaction.serialize());
+      // ── SEND VIA HELIUS SENDER (SWQoS + Jito) ───────────────
+      const rawTx = Buffer.from(patchedTx.serialize());
       const signature = await this.connManager.sendSmartTransaction(rawTx);
 
       executionLog.info(
