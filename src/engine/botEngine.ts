@@ -398,6 +398,14 @@ export class BotEngine {
     this.startPeriodicTasks();
 
     // ── Start circular scanner (warm path — background Jupiter scanning) ──
+    // Give scanner the execution context (wallet + connection) so it can
+    // build, sign, and send transactions when profitable routes are found.
+    if (this.connectionManager.hasWallet()) {
+      this.circularScanner.setExecutionContext(
+        this.connectionManager,
+        this.connectionManager.getWallet(),
+      );
+    }
     this.startCircularScanner();
 
     engineLog.info({
