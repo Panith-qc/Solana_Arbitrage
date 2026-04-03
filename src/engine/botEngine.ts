@@ -4,7 +4,7 @@
 // Every trade: SOL → [route] → SOL
 
 import { engineLog, tradeLogger } from './logger.js';
-import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS } from './config.js';
+import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS, LAMPORTS_PER_SOL } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { BotDatabase } from './database.js';
 import { Executor, ExecutionResult } from './executor.js';
@@ -16,6 +16,8 @@ import { AlertManager } from './alertManager.js';
 import { TradeJournal } from './tradeJournal.js';
 import { GeyserClient } from './geyserClient.js';
 import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
+import { CircularScanner, CircularOpportunity } from './circularScanner.js';
+import { buildHotPathTransaction, cachePoolData, updateCachedReserves, HotPathTxResult } from './directSwapBuilder.js';
 import { decodeSwapInstruction, decodeAllSwaps } from './instructionDecoder.js';
 import { WebSocketServer as WebSocketBroadcaster } from './api/websocket.js';
 import {
@@ -76,6 +78,7 @@ export class BotEngine {
   // Data
   private geyserClient: GeyserClient;
   private poolMonitor: PoolMonitor;
+  private circularScanner: CircularScanner;
   // Adapter object wrapping the instructionDecoder module functions
   // to satisfy the local InstructionDecoder interface in sandwich/frontrun strategies
   private instructionDecoderAdapter: {
@@ -147,6 +150,7 @@ export class BotEngine {
     // Data
     this.geyserClient = new GeyserClient(this.config);
     this.poolMonitor = new PoolMonitor(this.connectionManager, this.config);
+    this.circularScanner = new CircularScanner(this.config);
     this.instructionDecoderAdapter = {
       decodeSwapInstruction,
       decodeTransaction: (tx: any) => {
@@ -346,6 +350,15 @@ export class BotEngine {
       engineLog.info({ strategy: name }, 'Strategy started');
     }
 
+    // ── Background keepers ──────────────────────────────────────
+    // Blockhash keeper: refresh every 2s so hot path always has a fresh blockhash
+    this.startBlockhashKeeper();
+    // Priority fee keeper: refresh every 10s (cached in connectionManager)
+    this.startPriorityFeeKeeper();
+
+    // ── Cache pool data for hot path (directSwapBuilder) ──────
+    await this.cachePoolDataForHotPath();
+
     // Start WebSocket pool monitoring with real Raydium pool addresses
     // PRIMARY: Instant detection when pool reserves change → trigger targeted scan
     // BACKUP: Existing poll-based scan loop continues running regardless
@@ -361,13 +374,21 @@ export class BotEngine {
     // Alert
     await this.alertManager.alertBotStarted();
 
-    // Start main scan loop
+    // Start main scan loop (poll-based backup)
     this.runScanLoop();
 
     // Start periodic tasks
     this.startPeriodicTasks();
 
-    engineLog.info('Bot engine running');
+    // ── Start circular scanner (warm path — background Jupiter scanning) ──
+    this.startCircularScanner();
+
+    engineLog.info({
+      hotPath: 'WebSocket → directSwapBuilder → Sender (no simulation)',
+      warmPath: 'CircularScanner → Jupiter quotes → executor',
+      blockhashKeeper: '2s interval',
+      priorityFeeKeeper: '10s interval',
+    }, 'Bot engine running — dual path architecture active');
   }
 
   async stop(): Promise<void> {
@@ -387,6 +408,13 @@ export class BotEngine {
       strategy.stop();
       engineLog.info({ strategy: name }, 'Strategy stopped');
     }
+
+    // Stop background keepers
+    if (this.blockhashTimer) { clearInterval(this.blockhashTimer); this.blockhashTimer = null; }
+    if (this.priorityFeeTimer) { clearInterval(this.priorityFeeTimer); this.priorityFeeTimer = null; }
+
+    // Stop circular scanner
+    this.circularScanner.stop();
 
     // Stop WebSocket pool monitoring
     if (this.wsPoolCallbackId) {
@@ -446,6 +474,108 @@ export class BotEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // BACKGROUND KEEPERS (blockhash, priority fee, pool cache)
+  // ═══════════════════════════════════════════════════════════════
+
+  /** Refresh blockhash every 2s so hot path always has a fresh one */
+  private startBlockhashKeeper(): void {
+    const refresh = async () => {
+      try {
+        const conn = this.connectionManager.getConnection();
+        const { blockhash } = await conn.getLatestBlockhash('confirmed');
+        this.cachedBlockhash = blockhash;
+        this.cachedBlockhashTs = Date.now();
+      } catch (err: any) {
+        engineLog.debug({ err: err?.message }, 'Blockhash keeper: refresh failed');
+      }
+    };
+    refresh(); // immediate first fetch
+    this.blockhashTimer = setInterval(refresh, 2_000);
+    engineLog.info('Blockhash keeper started (2s interval)');
+  }
+
+  /** Refresh global priority fee every 10s (uses connectionManager cache) */
+  private startPriorityFeeKeeper(): void {
+    const refresh = async () => {
+      try {
+        await this.connectionManager.getDynamicPriorityFee();
+      } catch {}
+    };
+    refresh();
+    this.priorityFeeTimer = setInterval(refresh, 10_000);
+    engineLog.info('Priority fee keeper started (10s interval)');
+  }
+
+  /** Cache all AMM V4 pool data for the directSwapBuilder hot path */
+  private async cachePoolDataForHotPath(): Promise<void> {
+    const conn = this.connectionManager.getConnection();
+    const ammV4Pools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
+
+    let cached = 0;
+    for (const pool of ammV4Pools) {
+      const result = await cachePoolData(conn, pool.poolAddress, pool.label);
+      if (result) cached++;
+    }
+
+    engineLog.info(
+      { cached, total: ammV4Pools.length },
+      'Pool data cached for hot path direct swap building',
+    );
+  }
+
+  /** Start the circular scanner warm path */
+  private startCircularScanner(): void {
+    // Register callback — when circular scanner finds profitable route,
+    // trigger execution through the existing warm path (Jupiter TX building)
+    this.circularScanner.onOpportunity((opp) => {
+      this.handleCircularOpportunity(opp);
+    });
+    this.circularScanner.start();
+    engineLog.info('Circular scanner (warm path) started');
+  }
+
+  /** Handle a profitable circular route from the background scanner */
+  private async handleCircularOpportunity(opp: CircularOpportunity): Promise<void> {
+    if (this.status !== 'running') return;
+
+    // Find the token info
+    const tokenInfo = SCAN_TOKENS.find(t => t.mint === opp.tokenMint);
+    if (!tokenInfo) return;
+
+    // Use cross-dex strategy for execution (it handles Jupiter TX building)
+    const crossDexStrategy = this.strategies.get('cross-dex-arbitrage') as CrossDexArbitrageStrategy | undefined;
+    if (!crossDexStrategy?.isActive()) return;
+
+    engineLog.info(
+      {
+        token: opp.tokenSymbol,
+        netProfitSol: (opp.netProfitLamports / LAMPORTS_PER_SOL).toFixed(6),
+        spreadBps: opp.spreadBps.toFixed(1),
+        buy: opp.buyRoute,
+        sell: opp.sellRoute,
+      },
+      `WARM PATH: ${opp.tokenSymbol} — triggering execution`,
+    );
+
+    try {
+      const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
+      if (opportunities.length > 0) {
+        const hasBalance = this.stats.currentBalanceSol > 0.01;
+        for (const opportunity of opportunities) {
+          if (this.status !== 'running') break;
+          this.immediatelyExecutedIds.add(opportunity.id);
+          if (hasBalance) {
+            await this.executeOpportunity(opportunity);
+          }
+        }
+        this.stats.opportunitiesFound += opportunities.length;
+      }
+    } catch (err: any) {
+      engineLog.debug({ err: err?.message, token: opp.tokenSymbol }, 'Warm path execution error');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // WEBSOCKET POOL MONITORING (PRIMARY — instant detection)
   // ═══════════════════════════════════════════════════════════════
 
@@ -455,6 +585,14 @@ export class BotEngine {
   private wsPoolCallbackId: string | null = null;
   private wsTriggeredScans = 0;
   private wsConnected = false;
+
+  // ── Background keeper state ──────────────────────────────────
+  private cachedBlockhash: string = '';
+  private cachedBlockhashTs: number = 0;
+  private blockhashTimer: ReturnType<typeof setInterval> | null = null;
+  private priorityFeeTimer: ReturnType<typeof setInterval> | null = null;
+  private hotPathExecutions = 0;
+  private hotPathProfitLamports = 0;
 
   /** Track opportunity IDs already executed via onImmediateExecute to avoid double-execution */
   private immediatelyExecutedIds: Set<string> = new Set();
@@ -593,9 +731,13 @@ export class BotEngine {
 
   /**
    * Handle a cross-pool spread detected entirely from local reserve data.
-   * This is the FASTEST path — no Jupiter quote needed for detection.
-   * Spread was calculated in-memory from cached pool reserves.
-   * Only calls Jupiter for swap TX building (not for price discovery).
+   * HOT PATH: No Jupiter. No simulation. Build raw swap TX and send immediately.
+   *
+   * Flow: cached reserves → directSwapBuilder → sign → Helius Sender
+   * Target: <56ms from WebSocket notification to TX in flight.
+   *
+   * Falls back to warm path (Jupiter scan) for CLMM pools where we
+   * don't have raw instruction building.
    */
   private async handleSpreadDetected(spread: SpreadEvent): Promise<void> {
     if (this.status !== 'running') return;
@@ -612,18 +754,115 @@ export class BotEngine {
     if (now - lastScan < this.WS_SCAN_COOLDOWN_MS) return;
     this.wsLastScanMs.set(spread.tokenMint, now);
 
+    // Check if both pools are AMM V4 (hot path only supports AMM V4)
+    const buyEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.buyPoolAddress);
+    const sellEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
+    const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
+
+    if (bothAmmV4 && this.cachedBlockhash && this.connectionManager.hasWallet()) {
+      // ═══ HOT PATH: Direct swap, no simulation ═══
+      const hotStart = Date.now();
+
+      engineLog.info(
+        {
+          token: poolEntry.tokenSymbol,
+          spreadBps: spread.spreadBps.toFixed(1),
+          buyPool: spread.buyPoolAddress.slice(0, 8),
+          sellPool: spread.sellPoolAddress.slice(0, 8),
+        },
+        `HOT PATH: ${poolEntry.tokenSymbol} ${spread.spreadBps.toFixed(1)}bps — building direct swap`,
+      );
+
+      try {
+        const wallet = this.connectionManager.getWallet();
+        const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
+        const priorityFee = await this.connectionManager.getDynamicPriorityFee();
+
+        const result = buildHotPathTransaction(
+          spread.buyPoolAddress,
+          spread.sellPoolAddress,
+          inputLamports,
+          wallet,
+          this.cachedBlockhash,
+          priorityFee,
+        );
+
+        if (!result) {
+          engineLog.debug(
+            { token: poolEntry.tokenSymbol, spreadBps: spread.spreadBps.toFixed(1) },
+            'HOT PATH: directSwapBuilder returned null (unprofitable after fees)',
+          );
+          return;
+        }
+
+        const buildMs = Date.now() - hotStart;
+
+        engineLog.info(
+          {
+            token: poolEntry.tokenSymbol,
+            expectedProfitLamports: result.expectedProfitLamports,
+            tipLamports: result.tipLamports,
+            txBytes: result.sizeBytes,
+            buildMs,
+            buyPool: result.buyPool,
+            sellPool: result.sellPool,
+          },
+          `HOT PATH: TX built in ${buildMs}ms — sending via Sender`,
+        );
+
+        // Execute via hot path executor (no simulation)
+        const solPrice = this.solPriceUsd || this.config.solPriceUsd || 150;
+        const execResult = await this.executor.executeHotPathDirect(
+          result.transaction,
+          result.expectedProfitLamports,
+          result.tipLamports,
+          result.buyPool,
+          result.sellPool,
+          solPrice,
+        );
+
+        this.hotPathExecutions++;
+        if (execResult.success) {
+          this.hotPathProfitLamports += result.expectedProfitLamports;
+          this.stats.tradesExecuted++;
+          this.stats.tradesSuccessful++;
+          this.stats.totalProfitSol += execResult.profitSol;
+          this.stats.totalProfitUsd += execResult.profitUsd;
+        } else {
+          this.stats.tradesFailed++;
+        }
+
+        const totalMs = Date.now() - hotStart;
+        engineLog.info(
+          {
+            token: poolEntry.tokenSymbol,
+            success: execResult.success,
+            totalMs,
+            buildMs,
+            hotPathExecutions: this.hotPathExecutions,
+          },
+          `HOT PATH: ${execResult.success ? 'SUCCESS' : 'FAILED'} — total ${totalMs}ms`,
+        );
+
+        return;
+      } catch (err: any) {
+        engineLog.warn(
+          { err: err?.message, token: poolEntry.tokenSymbol },
+          'HOT PATH: Error — falling through to warm path',
+        );
+      }
+    }
+
+    // ═══ WARM PATH FALLBACK: Jupiter scan for CLMM pools or hot path failure ═══
     engineLog.info(
       {
         token: poolEntry.tokenSymbol,
         spreadBps: spread.spreadBps.toFixed(1),
-        buyPool: spread.buyPoolAddress.slice(0, 8),
-        sellPool: spread.sellPoolAddress.slice(0, 8),
-        slot: spread.slot,
+        reason: bothAmmV4 ? 'hot path failed' : 'CLMM pool (no direct swap)',
       },
-      `LOCAL SPREAD: ${poolEntry.tokenSymbol} ${spread.spreadBps.toFixed(1)}bps — triggering scan`,
+      `WARM PATH: ${poolEntry.tokenSymbol} — triggering Jupiter scan`,
     );
 
-    // Trigger a targeted scan for this token (uses Jupiter for TX building only)
     const tokenInfo = SCAN_TOKENS.find(t => t.mint === spread.tokenMint);
     if (!tokenInfo) return;
 
@@ -634,16 +873,6 @@ export class BotEngine {
       const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
 
       if (opportunities.length > 0) {
-        engineLog.warn(
-          {
-            token: poolEntry.tokenSymbol,
-            localSpreadBps: spread.spreadBps.toFixed(1),
-            confirmedProfitUsd: opportunities[0].expectedProfitUsd.toFixed(4),
-            detectionLatencyMs: Date.now() - spread.timestamp,
-          },
-          `LOCAL SPREAD CONFIRMED: ${poolEntry.tokenSymbol} — executing immediately`,
-        );
-
         const hasBalance = this.stats.currentBalanceSol > 0.01;
         for (const opp of opportunities) {
           if (this.status !== 'running') break;
@@ -655,7 +884,7 @@ export class BotEngine {
         this.stats.opportunitiesFound += opportunities.length;
       }
     } catch (err) {
-      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'Spread-triggered scan error');
+      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'Warm path scan error');
     }
   }
 
