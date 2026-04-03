@@ -19,6 +19,7 @@ import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
 import { CircularScanner, CircularOpportunity } from './circularScanner.js';
 import { buildHotPathTransaction, cachePoolData, updateCachedReserves } from './directSwapBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
+import { initPriceBook, clearPriceBook } from './priceBook.js';
 import {
   startKeepers, stopKeepers, getCachedBlockhash, getCachedPriorityFee,
   enqueueSignature, onConfirmation, isWsPaused, getKeeperStats,
@@ -296,6 +297,9 @@ export class BotEngine {
   }
 
   private async completeInitialization(): Promise<void> {
+    // Initialize price book caches (Phase 3)
+    initPriceBook();
+
     // CRITICAL: Validate that config Jito tip matches the constant used in profit calculations.
     // If these diverge, scanner finds "profitable" trades that the executor pays more fees on.
     const { JITO_TIP_LAMPORTS } = await import('./config.js');
@@ -421,8 +425,9 @@ export class BotEngine {
       engineLog.info({ strategy: name }, 'Strategy stopped');
     }
 
-    // Stop background keepers (Phase 2)
+    // Stop background keepers (Phase 2) and price book (Phase 3)
     stopKeepers();
+    clearPriceBook();
 
     // Stop circular scanner
     this.circularScanner.stop();
@@ -461,8 +466,9 @@ export class BotEngine {
       this.scanLoopTimer = null;
     }
 
-    // Stop background keepers (Phase 2)
+    // Stop background keepers (Phase 2) and price book (Phase 3)
     stopKeepers();
+    clearPriceBook();
     this.circularScanner.stop();
 
     for (const strategy of this.strategies.values()) {

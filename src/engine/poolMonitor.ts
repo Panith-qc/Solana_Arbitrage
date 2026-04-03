@@ -7,6 +7,7 @@ import { PublicKey, AccountInfo, Context } from '@solana/web3.js';
 import { dataLog } from './logger.js';
 import { BotConfig } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
+import { updatePool as updatePriceBook } from './priceBook.js';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -373,6 +374,9 @@ export class PoolMonitor {
     if (isSignificant) {
       this.emitUpdate(update);
     }
+
+    // Feed the price book on every vault change (Phase 3)
+    updatePriceBook(update.poolAddress, update.reserveA, update.reserveB, update.slot, update.timestamp);
 
     // Always check cross-pool spreads
     this.detectCrossPoolSpread(update);
@@ -758,6 +762,9 @@ export class PoolMonitor {
         this.emitUpdate(update);
       }
 
+      // Feed the price book on every account change (Phase 3)
+      updatePriceBook(update.poolAddress, update.reserveA, update.reserveB, update.slot, update.timestamp);
+
       // Always check cross-pool spreads on ANY update (even small changes)
       // because a 0.01% change in one pool can create a 5bps+ spread vs another pool
       this.detectCrossPoolSpread(update);
@@ -824,9 +831,16 @@ export class PoolMonitor {
 
   /**
    * Parse a Raydium CLMM pool — price derived from sqrtPriceX64.
-   * sqrtPriceX64 is a Q64.64 fixed-point sqrt of price.
-   * We store the price ratio as pseudo-reserves for compatibility with
-   * the cross-pool spread detection (which compares reserveA/reserveB).
+   * sqrtPriceX64 is a Q64.64 fixed-point sqrt(price), where:
+   *   price = (sqrtPriceX64 / 2^64)^2 = mint0_atomic / mint1_atomic
+   * Decimal-adjusted: adjPrice = rawPrice * 10^(dec0-dec1) = mint1_human / mint0_human
+   *
+   * In our pool configs, tokenA=SOL (quote), tokenB=token (base).
+   * In CLMM, mint0=SOL, mint1=token for all our pools.
+   * So adjPrice = token_per_SOL. We want SOL_per_token = 1/adjPrice.
+   *
+   * We store as pseudo-reserves: reserveA = SOL_per_token * 1e9, reserveB = 1e9
+   * so calculatePrice(reserveA, reserveB) = SOL_per_token.
    */
   private parseClmmPoolData(
     poolAddress: string,
@@ -841,22 +855,32 @@ export class PoolMonitor {
 
     if (sqrtPriceX64 === 0n) return null;
 
-    // price = (sqrtPriceX64 / 2^64)^2, adjusted for decimals
+    // rawPrice = (sqrtPriceX64 / 2^64)^2 = mint0_atomic per mint1_atomic
     const dec0 = data[RAYDIUM_CLMM_LAYOUT.MINT_DECIMALS_0_OFFSET];
     const dec1 = data[RAYDIUM_CLMM_LAYOUT.MINT_DECIMALS_1_OFFSET];
     const sqrtPrice = Number(sqrtPriceX64) / 2 ** 64;
-    const price = sqrtPrice * sqrtPrice * (10 ** (dec0 - dec1));
+    const adjPrice = sqrtPrice * sqrtPrice * (10 ** (dec0 - dec1));
+    // adjPrice = how many mint1_human per mint0_human.
+    // Token order varies per pool:
+    //   mint0=SOL, mint1=token → adjPrice = token_per_SOL → invert to get SOL_per_token
+    //   mint0=token, mint1=SOL → adjPrice = SOL_per_token → use directly
+    const mint0 = new PublicKey(
+      data.subarray(RAYDIUM_CLMM_LAYOUT.TOKEN_MINT_0_OFFSET, RAYDIUM_CLMM_LAYOUT.TOKEN_MINT_0_OFFSET + 32),
+    );
+    const mint0IsSol = mint0.toString() === 'So11111111111111111111111111111111111111112';
+    const solPerToken = mint0IsSol
+      ? (adjPrice > 0 ? 1 / adjPrice : 0)
+      : adjPrice;
 
-    // Store as pseudo-reserves: reserveA/reserveB = price
-    // Use large scale factor for bigint precision
+    // Store as pseudo-reserves: reserveA/reserveB = SOL_per_token
     const SCALE = 1_000_000_000n; // 1e9
-    const scaledPrice = BigInt(Math.round(price * 1e9));
+    const scaledPrice = BigInt(Math.round(solPerToken * 1e9));
 
     return {
       poolAddress,
       tokenA: poolCfg?.tokenA || '',
       tokenB: poolCfg?.tokenB || '',
-      reserveA: scaledPrice,    // price × 1e9
+      reserveA: scaledPrice,    // SOL_per_token × 1e9
       reserveB: SCALE,          // 1e9 (denominator)
       timestamp: Date.now(),
       slot: context.slot,
