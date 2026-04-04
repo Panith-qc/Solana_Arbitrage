@@ -310,7 +310,7 @@ export function loadConfig(): BotConfig {
     capitalSol: parseFloat(process.env.CAPITAL_SOL || '10'),
     scanAmountSol: parseFloat(process.env.SCAN_AMOUNT_SOL || '1.0'),
     jupiterApiUrl: process.env.JUPITER_API_URL || 'https://lite-api.jup.ag',
-    jupiterApiKey: process.env.JUPITER_API_KEY || '',
+    jupiterApiKey: process.env.JUPITER_API_KEY || process.env.JUPITER_API_KEY_1 || '',
     jupiterApiKey2: process.env.JUPITER_API_KEY_2 || '',
     jupiterApiKey3: process.env.JUPITER_API_KEY_3 || '',
     jupiterApiKey4: process.env.JUPITER_API_KEY_4 || '',

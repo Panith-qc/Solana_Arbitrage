@@ -628,13 +628,23 @@ export class BotEngine {
   private startWebSocketPoolMonitoring(): void {
     const poolAddresses = RAYDIUM_POOL_REGISTRY.map(p => p.poolAddress);
 
-    // Register pool configs for proper labeling
+    // Token decimals for each monitored token (needed for AMM V4 price calculation)
+    const TOKEN_DECIMALS: Record<string, number> = {
+      'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 9,   // mSOL
+      'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 9,   // jitoSOL
+      'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1': 9,    // bSOL
+      '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 6,   // RAY
+      'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6,    // JUP
+    };
+
+    // Register pool configs for proper labeling + decimals
     for (const entry of RAYDIUM_POOL_REGISTRY) {
       this.poolMonitor.addPool({
         address: entry.poolAddress,
         tokenA: SOL_MINT,
         tokenB: entry.tokenMint,
         label: entry.label,
+        tokenDecimals: TOKEN_DECIMALS[entry.tokenMint] ?? 9,
       });
     }
 

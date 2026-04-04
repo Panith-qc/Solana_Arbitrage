@@ -48,6 +48,8 @@ export interface PoolConfig {
   tokenB: string;
   /** Label for logging (e.g. "SOL/USDC Raydium") */
   label: string;
+  /** Token B decimals (non-SOL token). Needed for AMM V4 price calculation. */
+  tokenDecimals?: number;
 }
 
 /** Callback type for pool update events */
@@ -1022,25 +1024,30 @@ export class PoolMonitor {
    */
   /**
    * Calculate price as SOL-per-token for cross-pool comparison.
-   * - CLMM pools store pseudo-reserves: reserveA = solPerToken × 1e9, reserveB = 1e9
+   * - CLMM pools: pseudo-reserves reserveA = solPerToken × 1e9, reserveB = 1e9
    *   → price = reserveA / reserveB = solPerToken ✓
-   * - AMM V4 pools store raw reserves: reserveA = token (base), reserveB = SOL (quote)
-   *   → price = reserveB / reserveA = SOL / token ✓
+   * - AMM V4 pools: raw reserves reserveA = token_raw (base), reserveB = SOL_raw (quote)
+   *   → price = (reserveB / 10^9) / (reserveA / 10^tokenDecimals) ✓
    */
   private calculatePrice(reserveA: bigint, reserveB: bigint, poolAddress?: string): number {
     if (reserveA === 0n || reserveB === 0n) return 0;
 
-    // Determine pool type from config
-    const isClmm = poolAddress
-      ? (this.poolConfigs.get(poolAddress)?.label?.toLowerCase().includes('clmm') ?? false)
-      : false;
+    const config = poolAddress ? this.poolConfigs.get(poolAddress) : undefined;
+    const isClmm = config?.label?.toLowerCase().includes('clmm') ?? false;
 
     if (isClmm) {
-      // CLMM pseudo-reserves: reserveA/reserveB = solPerToken
+      // CLMM pseudo-reserves: reserveA/reserveB already = SOL per token
       return Number(reserveA) / Number(reserveB);
     }
-    // AMM V4: reserveA = token (base), reserveB = SOL (quote) → SOL / token
-    return Number(reserveB) / Number(reserveA);
+
+    // AMM V4: raw reserves need decimal adjustment
+    // reserveA = token (base), reserveB = SOL (quote)
+    // price = (SOL_human) / (token_human) = (reserveB/10^9) / (reserveA/10^tokenDecimals)
+    const tokenDecimals = config?.tokenDecimals ?? 9; // default 9 for LSTs
+    const tokenFloat = Number(reserveA) / (10 ** tokenDecimals);
+    const solFloat = Number(reserveB) / 1e9;
+    if (tokenFloat === 0) return 0;
+    return solFloat / tokenFloat;
   }
 
   /**
