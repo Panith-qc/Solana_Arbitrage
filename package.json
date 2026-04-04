@@ -14,6 +14,8 @@
     "format": "prettier --write src/**/*.{ts,tsx,css}",
     "start": "tsx server.new.js",
     "start:legacy": "tsx server.js",
+    "clean:js": "find src/engine -name '*.js' -delete 2>/dev/null; echo 'Stale .js removed'",
+    "prebot": "npm run clean:js",
     "bot": "tsx server.new.js",
     "test": "node --test --import=tsx tests/engine.test.ts",
     "deploy": "npm run build && npm run start"
