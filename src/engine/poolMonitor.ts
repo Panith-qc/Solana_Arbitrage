@@ -356,14 +356,15 @@ export class PoolMonitor {
     const effectiveBase = state.baseReserve > state.basePnl ? state.baseReserve - state.basePnl : 0n;
     const effectiveQuote = state.quoteReserve > state.quotePnl ? state.quoteReserve - state.quotePnl : 0n;
 
-    // Build a PoolUpdate with actual reserves
+    // Build a PoolUpdate with raw reserves (Raydium AMM V4 order: base=token, quote=SOL).
+    // calculatePrice() handles the inversion for cross-pool comparisons.
     const poolCfg = this.poolConfigs.get(poolAddress);
     const update: PoolUpdate = {
       poolAddress,
       tokenA: poolCfg?.tokenA || '',
       tokenB: poolCfg?.tokenB || '',
-      reserveA: effectiveBase,
-      reserveB: effectiveQuote,
+      reserveA: effectiveBase,    // Token (base vault)
+      reserveB: effectiveQuote,   // SOL (quote vault)
       timestamp: Date.now(),
       slot: context.slot,
     };
@@ -814,12 +815,13 @@ export class PoolMonitor {
           const effectiveBase = state.baseReserve > state.basePnl ? state.baseReserve - state.basePnl : 0n;
           const effectiveQuote = state.quoteReserve > state.quotePnl ? state.quoteReserve - state.quotePnl : 0n;
 
+          // Raw order: base=token, quote=SOL. calculatePrice() handles inversion.
           return {
             poolAddress,
             tokenA: poolCfg?.tokenA || '',
             tokenB: poolCfg?.tokenB || '',
-            reserveA: effectiveBase,
-            reserveB: effectiveQuote,
+            reserveA: effectiveBase,    // Token (base)
+            reserveB: effectiveQuote,   // SOL (quote)
             timestamp: Date.now(),
             slot: context.slot,
           };
@@ -1018,9 +1020,27 @@ export class PoolMonitor {
    * For a constant-product AMM: price = reserveA / reserveB
    * (how many units of A per unit of B)
    */
-  private calculatePrice(reserveA: bigint, reserveB: bigint): number {
-    if (reserveB === 0n) return 0;
-    return Number(reserveA) / Number(reserveB);
+  /**
+   * Calculate price as SOL-per-token for cross-pool comparison.
+   * - CLMM pools store pseudo-reserves: reserveA = solPerToken × 1e9, reserveB = 1e9
+   *   → price = reserveA / reserveB = solPerToken ✓
+   * - AMM V4 pools store raw reserves: reserveA = token (base), reserveB = SOL (quote)
+   *   → price = reserveB / reserveA = SOL / token ✓
+   */
+  private calculatePrice(reserveA: bigint, reserveB: bigint, poolAddress?: string): number {
+    if (reserveA === 0n || reserveB === 0n) return 0;
+
+    // Determine pool type from config
+    const isClmm = poolAddress
+      ? (this.poolConfigs.get(poolAddress)?.label?.toLowerCase().includes('clmm') ?? false)
+      : false;
+
+    if (isClmm) {
+      // CLMM pseudo-reserves: reserveA/reserveB = solPerToken
+      return Number(reserveA) / Number(reserveB);
+    }
+    // AMM V4: reserveA = token (base), reserveB = SOL (quote) → SOL / token
+    return Number(reserveB) / Number(reserveA);
   }
 
   /**
@@ -1035,7 +1055,7 @@ export class PoolMonitor {
     const updatedConfig = this.poolConfigs.get(updatedPool.poolAddress);
     if (!updatedConfig) return;
 
-    const updatedPrice = this.calculatePrice(updatedPool.reserveA, updatedPool.reserveB);
+    const updatedPrice = this.calculatePrice(updatedPool.reserveA, updatedPool.reserveB, updatedPool.poolAddress);
     if (updatedPrice <= 0) return;
 
     // Compare against all other cached pools for the same token
@@ -1051,7 +1071,7 @@ export class PoolMonitor {
       // Check staleness — other pool must have been updated recently
       if (Date.now() - cached.cachedAt > 10_000) continue;
 
-      const otherPrice = this.calculatePrice(cached.update.reserveA, cached.update.reserveB);
+      const otherPrice = this.calculatePrice(cached.update.reserveA, cached.update.reserveB, address);
       if (otherPrice <= 0) continue;
 
       // Calculate spread in bps: (highPrice - lowPrice) / lowPrice * 10000

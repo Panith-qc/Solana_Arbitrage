@@ -321,30 +321,22 @@ export class BotEngine {
       this.config.jitoTipLamports = JITO_TIP_LAMPORTS;
     }
 
-    // Initialize strategies based on risk profile
-    this.initializeStrategies();
+    // OLD STRATEGIES DISABLED — only hot path (WS) + warm path (circular scanner) run.
+    // The old strategies (cross-dex, backrun, micro-arb, sniping, etc.) compete for
+    // Jupiter API keys and cause 429 errors. They are replaced by the circular scanner.
+    // this.initializeStrategies();
 
-    // Connect Geyser if configured (for MEV strategies)
-    if (this.config.geyserUrl) {
-      try {
-        await this.geyserClient.connect();
-        this.setupMEVEventHandlers();
-        engineLog.info('Geyser client connected - MEV strategies active');
-      } catch (err) {
-        engineLog.warn({ err }, 'Geyser client not available - MEV strategies (sandwich/frontrun/JIT) disabled');
-      }
-    } else {
-      engineLog.info('No Geyser URL configured - poll-based strategies only');
-    }
+    // Geyser disabled — MEV strategies not used in dual-path architecture
+    // if (this.config.geyserUrl) { ... }
 
     // Get initial SOL price
     await this.refreshSolPrice();
 
     engineLog.info({
       riskLevel: this.config.riskLevel,
-      strategies: Array.from(this.strategies.keys()),
+      paths: ['hot-path-ws', 'circular-scanner'],
       solPrice: this.solPriceUsd,
-    }, 'Bot engine initialized');
+    }, 'Bot engine initialized (dual-path: hot + warm)');
   }
 
   async start(): Promise<void> {
@@ -359,11 +351,10 @@ export class BotEngine {
 
     engineLog.info('Starting bot engine...');
 
-    // Start all enabled strategies
-    for (const [name, strategy] of this.strategies) {
-      strategy.start();
-      engineLog.info({ strategy: name }, 'Strategy started');
-    }
+    // Old strategies disabled — only hot path (WS) + warm path (circular scanner)
+    // for (const [name, strategy] of this.strategies) {
+    //   strategy.start();
+    // }
 
     // ── Background keepers (Phase 2: keepers.ts) ──────────────
     // 4 processes: blockhash 2s, priority fee 10s, WS health 30s, confirmation tracker 500ms
@@ -384,21 +375,19 @@ export class BotEngine {
 
     // Start WebSocket pool monitoring with real Raydium pool addresses
     // PRIMARY: Instant detection when pool reserves change → trigger targeted scan
-    // BACKUP: Existing poll-based scan loop continues running regardless
-    if (this.riskProfile.strategies.crossDexArbitrage || this.riskProfile.strategies.backrun) {
-      this.startWebSocketPoolMonitoring();
-    }
+    // Always start WebSocket pool monitoring (hot path / Eye 1)
+    this.startWebSocketPoolMonitoring();
 
     this.status = 'running';
     this.stats.status = 'running';
     this.stats.startedAt = new Date().toISOString();
-    this.stats.activeStrategies = Array.from(this.strategies.keys());
+    this.stats.activeStrategies = ['hot-path-ws', 'circular-scanner'];
 
     // Alert
     await this.alertManager.alertBotStarted();
 
-    // Start main scan loop (poll-based backup)
-    this.runScanLoop();
+    // Old scan loop disabled — replaced by circular scanner (warm path)
+    // this.runScanLoop();
 
     // Start periodic tasks
     this.startPeriodicTasks();
@@ -593,17 +582,11 @@ export class BotEngine {
     engineLog.info('Circular scanner (warm path) started');
   }
 
-  /** Handle a profitable circular route from the background scanner */
+  /** Handle a profitable circular route from the background scanner.
+   *  The circular scanner already executes its own atomic TX internally.
+   *  This callback is for stats tracking only. */
   private async handleCircularOpportunity(opp: CircularOpportunity): Promise<void> {
     if (this.status !== 'running') return;
-
-    // Find the token info
-    const tokenInfo = SCAN_TOKENS.find(t => t.mint === opp.tokenMint);
-    if (!tokenInfo) return;
-
-    // Use cross-dex strategy for execution (it handles Jupiter TX building)
-    const crossDexStrategy = this.strategies.get('cross-dex-arbitrage') as CrossDexArbitrageStrategy | undefined;
-    if (!crossDexStrategy?.isActive()) return;
 
     engineLog.info(
       {
@@ -613,25 +596,9 @@ export class BotEngine {
         buy: opp.buyRoute,
         sell: opp.sellRoute,
       },
-      `WARM PATH: ${opp.tokenSymbol} — triggering execution`,
+      `WARM PATH: ${opp.tokenSymbol} — opportunity detected (execution handled by scanner)`,
     );
-
-    try {
-      const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
-      if (opportunities.length > 0) {
-        const hasBalance = this.stats.currentBalanceSol > 0.01;
-        for (const opportunity of opportunities) {
-          if (this.status !== 'running') break;
-          this.immediatelyExecutedIds.add(opportunity.id);
-          if (hasBalance) {
-            await this.executeOpportunity(opportunity);
-          }
-        }
-        this.stats.opportunitiesFound += opportunities.length;
-      }
-    } catch (err: any) {
-      engineLog.debug({ err: err?.message, token: opp.tokenSymbol }, 'Warm path execution error');
-    }
+    this.stats.opportunitiesFound++;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -725,67 +692,18 @@ export class BotEngine {
 
     this.wsTriggeredScans++;
 
-    engineLog.info(
+    // Hot path: reserve update → detectCrossPoolSpread (in poolMonitor) → handleSpreadDetected
+    // No Jupiter call needed here. The pool monitor handles spread detection in-memory
+    // and fires the spread callback which triggers handleSpreadDetected for direct swap.
+    engineLog.debug(
       {
         pool: poolEntry.label,
         token: poolEntry.tokenSymbol,
         slot: update.slot,
         wsTriggeredScans: this.wsTriggeredScans,
       },
-      `⚡ WebSocket: ${poolEntry.tokenSymbol} pool changed — triggering targeted scan`,
+      `⚡ WS: ${poolEntry.tokenSymbol} pool changed — reserves updated`,
     );
-
-    // Find the cross-dex strategy and trigger a targeted scan for just this token
-    const crossDexStrategy = this.strategies.get('cross-dex-arbitrage') as CrossDexArbitrageStrategy | undefined;
-    if (!crossDexStrategy || !crossDexStrategy.isActive()) return;
-
-    // Find the token info from scan tokens
-    const tokenInfo = SCAN_TOKENS.find(t => t.mint === poolEntry.tokenMint);
-    if (!tokenInfo) return;
-
-    try {
-      // Use the strategy's scanSingleToken method for fast targeted scan
-      const opportunities = await crossDexStrategy.scanSingleToken(tokenInfo);
-
-      if (opportunities.length > 0) {
-        engineLog.warn(
-          {
-            token: poolEntry.tokenSymbol,
-            count: opportunities.length,
-            profitUsd: opportunities[0].expectedProfitUsd.toFixed(4),
-            triggerLatencyMs: Date.now() - update.timestamp,
-          },
-          `⚡ WebSocket PROFITABLE: ${poolEntry.tokenSymbol} — executing immediately`,
-        );
-
-        // Execute immediately
-        const hasBalance = this.stats.currentBalanceSol > 0.01;
-        for (const opp of opportunities) {
-          if (this.status !== 'running') break;
-
-          logOpportunity({
-            strategy: opp.strategy,
-            tokenPath: opp.tokenPath,
-            inputSol: Number(opp.inputAmountLamports) / 1e9,
-            expectedProfitSol: opp.expectedProfitSol,
-            expectedProfitUsd: opp.expectedProfitUsd,
-            confidence: opp.confidence,
-            spreadBps: opp.metadata?.spreadBps,
-            metadata: { ...opp.metadata, wsTriggered: true },
-            executed: hasBalance,
-            executionResult: hasBalance ? undefined : 'skipped',
-          });
-
-          if (hasBalance) {
-            await this.executeOpportunity(opp);
-          }
-        }
-
-        this.stats.opportunitiesFound += opportunities.length;
-      }
-    } catch (err) {
-      engineLog.debug({ err, token: poolEntry.tokenSymbol }, 'WebSocket-triggered scan error');
-    }
   }
 
   /**
