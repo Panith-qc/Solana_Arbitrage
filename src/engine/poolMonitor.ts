@@ -188,6 +188,14 @@ export class PoolMonitor {
   private reconnectAttempts = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 10;
 
+  // ── HTTP polling fallback (when WSS is blocked) ──────────────
+  /** Timer for HTTP polling loop */
+  private httpPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Whether we're in HTTP poll mode (WSS unavailable) */
+  private httpPollMode = false;
+  /** Poll interval in ms — 2s balances freshness vs RPC credits */
+  private readonly HTTP_POLL_INTERVAL_MS = 2_000;
+
   // ── Vault tracking for accurate reserves ──────────────────────
   // Raydium AMM V4 stores reserves in separate SPL Token vault accounts.
   // We subscribe to vaults and map them back to pool addresses.
