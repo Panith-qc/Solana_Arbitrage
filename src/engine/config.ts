@@ -75,6 +75,12 @@ export const SCAN_TOKENS: TokenInfo[] = [
   { mint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', symbol: 'RAY', decimals: 6 },
   { mint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', symbol: 'JTO', decimals: 9 },
   { mint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', symbol: 'JUP', decimals: 6 },
+  // CPMM-only memecoins (Phase C). These are the only SOL pairs available on
+  // Raydium CPMM with meaningful TVL — no major-cap token (BONK/WIF/JTO/etc.)
+  // currently runs on the new CPMM program; they all use AMM V4 instead.
+  { mint: 'Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk', symbol: 'USELESS', decimals: 6 },
+  { mint: 'egoS1kE1g4JuExTcvG6bB6cg5LWpACQ469uk6DTMuJq', symbol: 'EGO', decimals: 6 },
+  { mint: '7kN5FQMD8ja4bzysEgc5FXmryKd6gCgjiWnhksjHCFb3', symbol: 'LION', decimals: 9 },
 ];
 
 // ── Raydium pool addresses for WebSocket monitoring ─────────────────────────
@@ -125,9 +131,12 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   // legacy AMM V4 program. Candidate addresses must be verified on-VM via
   // src/engine/research/cpmm-layout.ts; cacheCpmmPoolData() rejects pools
   // whose owner != CPMM program with a warn log (non-fatal).
-  { poolAddress: '4ct8XU5tKbMNRphWy4rePsS9kBqPxNgwrkXzEXwjhyJp', tokenMint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', tokenSymbol: 'JTO', poolType: 'cpmm', label: 'JTO/SOL CPMM [TODO-VERIFY]' },
-  { poolAddress: 'BoeMUkCLHchTD31HdXsbDExuZZfcUppSLpYtV3LZTH6U', tokenMint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', tokenSymbol: 'WIF', poolType: 'cpmm', label: 'WIF/SOL CPMM [TODO-VERIFY]' },
-  { poolAddress: '6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg', tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', tokenSymbol: 'BONK', poolType: 'cpmm', label: 'BONK/SOL CPMM [TODO-VERIFY]' },
+  // Verified via Raydium API v3 (programId == CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C).
+  // Top SOL-paired CPMM pools by TVL. Major-cap tokens (BONK/WIF/JTO/JUP/RAY)
+  // do NOT have CPMM/SOL pools — they live on AMM V4 / CLMM only.
+  { poolAddress: 'Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp', tokenMint: 'Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk', tokenSymbol: 'USELESS', poolType: 'cpmm', label: 'USELESS/SOL CPMM' },
+  { poolAddress: 'HKRn6cDo5ACgWYY4N52ScCNzziAMSgS5YaEfwsBu4nu3', tokenMint: 'egoS1kE1g4JuExTcvG6bB6cg5LWpACQ469uk6DTMuJq', tokenSymbol: 'EGO', poolType: 'cpmm', label: 'EGO/SOL CPMM' },
+  { poolAddress: '9SxEcmwzHtSZu2jJSpSxuyxweYECvvtykoP3qtEprkvj', tokenMint: '7kN5FQMD8ja4bzysEgc5FXmryKd6gCgjiWnhksjHCFb3', tokenSymbol: 'LION', poolType: 'cpmm', label: 'LION/SOL CPMM' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
