@@ -18,6 +18,8 @@ import { GeyserClient } from './geyserClient.js';
 import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
 import { CircularScanner, CircularOpportunity } from './circularScanner.js';
 import { buildHotPathTransaction, cachePoolData, updateCachedReserves } from './directSwapBuilder.js';
+import { cacheClmmPoolData, updateCachedClmmFromAccount, getCachedClmmPool } from './clmmSwapBuilder.js';
+import { buildMixedHotPathTransaction } from './hotPathBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
 import { initPriceBook, clearPriceBook } from './priceBook.js';
 import {
@@ -551,20 +553,30 @@ export class BotEngine {
     }
   }
 
-  /** Cache all AMM V4 pool data for the directSwapBuilder hot path */
+  /** Cache all AMM V4 + CLMM pool data for the hot path swap builders */
   private async cachePoolDataForHotPath(): Promise<void> {
     const conn = this.connectionManager.getConnection();
     const ammV4Pools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
+    const clmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
 
-    let cached = 0;
+    let ammCached = 0;
     for (const pool of ammV4Pools) {
       const result = await cachePoolData(conn, pool.poolAddress, pool.label);
-      if (result) cached++;
+      if (result) ammCached++;
+    }
+
+    let clmmCached = 0;
+    for (const pool of clmmPools) {
+      const result = await cacheClmmPoolData(conn, pool.poolAddress, pool.label);
+      if (result) clmmCached++;
     }
 
     engineLog.info(
-      { cached, total: ammV4Pools.length },
-      'Pool data cached for hot path direct swap building',
+      {
+        ammCached, ammTotal: ammV4Pools.length,
+        clmmCached, clmmTotal: clmmPools.length,
+      },
+      'Pool data cached for hot path direct swap building (AMM V4 + CLMM)',
     );
   }
 
@@ -660,6 +672,15 @@ export class BotEngine {
       this.handleSpreadDetected(spread);
     });
 
+    // Refresh the CLMM swap builder cache from the same raw WS buffer the
+    // pool monitor consumes. Without this, hot-path quotes for CLMM legs
+    // would use stale sqrtPriceX64/liquidity from startup only.
+    this.poolMonitor.onRawPoolAccount((poolAddress, data) => {
+      if (getCachedClmmPool(poolAddress)) {
+        updateCachedClmmFromAccount(poolAddress, data);
+      }
+    });
+
     // Start monitoring — subscribes to on-chain account changes via WebSocket
     this.poolMonitor.startMonitoring(poolAddresses)
       .then(() => {
@@ -741,13 +762,17 @@ export class BotEngine {
     if (now - lastScan < this.WS_SCAN_COOLDOWN_MS) return;
     this.wsLastScanMs.set(spread.tokenMint, now);
 
-    // Check if both pools are AMM V4 (hot path only supports AMM V4)
+    // Hot path supports any combination of AMM V4 and CLMM pools.
     const buyEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.buyPoolAddress);
     const sellEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
     const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
+    const buySupported = buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm';
+    const sellSupported = sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm';
+    const hotPathSupported = buySupported && sellSupported;
+    const isMixed = hotPathSupported && !bothAmmV4;
 
     const blockhash = getCachedBlockhash();
-    if (bothAmmV4 && blockhash && this.connectionManager.hasWallet()) {
+    if (hotPathSupported && blockhash && this.connectionManager.hasWallet()) {
       // ═══ HOT PATH: Direct swap, no simulation ═══
       const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
       const tradeSol = this.config.scanAmountSol;
@@ -766,9 +791,12 @@ export class BotEngine {
           token: poolEntry.tokenSymbol,
           spreadBps: spread.spreadBps.toFixed(1),
           buyPool: spread.buyPoolAddress.slice(0, 8),
+          buyDex: buyEntry?.poolType,
           sellPool: spread.sellPoolAddress.slice(0, 8),
+          sellDex: sellEntry?.poolType,
+          mixed: isMixed,
         },
-        `HOT PATH: ${poolEntry.tokenSymbol} ${spread.spreadBps.toFixed(1)}bps — building direct swap`,
+        `HOT PATH: ${poolEntry.tokenSymbol} ${spread.spreadBps.toFixed(1)}bps — building ${isMixed ? 'mixed AMM/CLMM' : 'AMM-AMM'} swap`,
       );
 
       try {
@@ -776,14 +804,23 @@ export class BotEngine {
         // Use cached priority fee from keepers — NEVER await RPC in hot path
         const priorityFee = getCachedPriorityFee();
 
-        const result = buildHotPathTransaction(
-          spread.buyPoolAddress,
-          spread.sellPoolAddress,
-          inputLamports,
-          wallet,
-          blockhash,
-          priorityFee,
-        );
+        const result = isMixed
+          ? buildMixedHotPathTransaction(
+              spread.buyPoolAddress,
+              spread.sellPoolAddress,
+              inputLamports,
+              wallet,
+              blockhash,
+              priorityFee,
+            )
+          : buildHotPathTransaction(
+              spread.buyPoolAddress,
+              spread.sellPoolAddress,
+              inputLamports,
+              wallet,
+              blockhash,
+              priorityFee,
+            );
 
         if (!result) {
           engineLog.debug(
@@ -864,7 +901,7 @@ export class BotEngine {
       {
         token: poolEntry.tokenSymbol,
         spreadBps: spread.spreadBps.toFixed(1),
-        reason: bothAmmV4 ? 'hot path failed' : 'CLMM pool (no direct swap)',
+        reason: hotPathSupported ? 'hot path failed' : 'unsupported DEX combination',
       },
       `WARM PATH: ${poolEntry.tokenSymbol} — triggering Jupiter scan`,
     );

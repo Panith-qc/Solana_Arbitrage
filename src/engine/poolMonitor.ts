@@ -164,6 +164,11 @@ export class PoolMonitor {
   private updateCallbacks: Map<string, PoolUpdateCallback> = new Map();
   private callbackCounter = 0;
 
+  /** Raw pool-account callbacks fired BEFORE parsing — used by hot-path
+   *  swap builders (e.g. clmmSwapBuilder) to refresh cached state from the
+   *  exact same WebSocket buffer that drives spread detection. */
+  private rawAccountCallbacks: Map<string, (poolAddress: string, data: Buffer) => void> = new Map();
+
   /** Cache TTL in milliseconds */
   private cacheTtlMs: number;
 
@@ -675,6 +680,18 @@ export class PoolMonitor {
     dataLog.debug({ callbackId }, 'Pool update callback removed');
   }
 
+  /**
+   * Register a callback that fires with the raw account buffer on every
+   * pool account change (NOT throttled, NOT parsed). Used by direct swap
+   * builders to keep their own caches in sync with WebSocket data.
+   */
+  onRawPoolAccount(callback: (poolAddress: string, data: Buffer) => void): string {
+    this.callbackCounter++;
+    const id = `raw-cb-${this.callbackCounter}-${Date.now()}`;
+    this.rawAccountCallbacks.set(id, callback);
+    return id;
+  }
+
   // ─────────────────────────────────────────────
   // State queries
   // ─────────────────────────────────────────────
@@ -752,6 +769,18 @@ export class PoolMonitor {
     // Track that WS is alive
     this.lastEventReceivedMs = Date.now();
     this.reconnectAttempts = 0;
+
+    // Fire raw-account callbacks BEFORE parsing so hot-path builders can
+    // refresh their own state from the same buffer (e.g. CLMM sqrtPriceX64).
+    if (this.rawAccountCallbacks.size > 0 && accountInfo?.data) {
+      for (const cb of this.rawAccountCallbacks.values()) {
+        try {
+          cb(poolAddress, accountInfo.data);
+        } catch (err) {
+          dataLog.error({ err, pool: poolAddress }, 'Raw account callback error');
+        }
+      }
+    }
 
     try {
       const update = this.parsePoolData(poolAddress, accountInfo, context);
