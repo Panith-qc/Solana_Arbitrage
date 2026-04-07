@@ -19,6 +19,7 @@ import { PoolMonitor, SpreadEvent } from './poolMonitor.js';
 import { CircularScanner, CircularOpportunity } from './circularScanner.js';
 import { buildHotPathTransaction, cachePoolData, updateCachedReserves } from './directSwapBuilder.js';
 import { cacheClmmPoolData, updateCachedClmmFromAccount, getCachedClmmPool } from './clmmSwapBuilder.js';
+import { cacheWhirlpoolPoolData, updateCachedWhirlpoolFromAccount, getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
 import { buildMixedHotPathTransaction } from './hotPathBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
 import { initPriceBook, clearPriceBook } from './priceBook.js';
@@ -624,6 +625,7 @@ export class BotEngine {
     const conn = this.connectionManager.getConnection();
     const ammV4Pools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
     const clmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
+    const whirlpoolPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'whirlpool');
 
     let ammCached = 0;
     for (const pool of ammV4Pools) {
@@ -637,12 +639,19 @@ export class BotEngine {
       if (result) clmmCached++;
     }
 
+    let whirlpoolCached = 0;
+    for (const pool of whirlpoolPools) {
+      const result = await cacheWhirlpoolPoolData(conn, pool.poolAddress, pool.label);
+      if (result) whirlpoolCached++;
+    }
+
     engineLog.info(
       {
         ammCached, ammTotal: ammV4Pools.length,
         clmmCached, clmmTotal: clmmPools.length,
+        whirlpoolCached, whirlpoolTotal: whirlpoolPools.length,
       },
-      'Pool data cached for hot path direct swap building (AMM V4 + CLMM)',
+      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool)',
     );
   }
 
@@ -744,6 +753,8 @@ export class BotEngine {
     this.poolMonitor.onRawPoolAccount((poolAddress, data) => {
       if (getCachedClmmPool(poolAddress)) {
         updateCachedClmmFromAccount(poolAddress, data);
+      } else if (getCachedWhirlpoolPool(poolAddress)) {
+        updateCachedWhirlpoolFromAccount(poolAddress, data);
       }
     });
 
@@ -832,8 +843,10 @@ export class BotEngine {
     const buyEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.buyPoolAddress);
     const sellEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
     const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
-    const buySupported = buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm';
-    const sellSupported = sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm';
+    const buySupported =
+      buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' || buyEntry?.poolType === 'whirlpool';
+    const sellSupported =
+      sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm' || sellEntry?.poolType === 'whirlpool';
     const hotPathSupported = buySupported && sellSupported;
     const isMixed = hotPathSupported && !bothAmmV4;
 

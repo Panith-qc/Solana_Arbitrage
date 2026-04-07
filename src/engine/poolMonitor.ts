@@ -8,6 +8,9 @@ import { dataLog } from './logger.js';
 import { BotConfig } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { updatePool as updatePriceBook } from './priceBook.js';
+import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
+
+const WHIRLPOOL_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -129,6 +132,26 @@ const RAYDIUM_CLMM_LAYOUT = {
   MINT_DECIMALS_1_OFFSET: 234,
   /** Minimum account data length (includes Anchor discriminator) */
   MIN_DATA_LENGTH: 400,
+} as const;
+
+// ═══════════════════════════════════════════════════════════════
+// Orca Whirlpool layout (Phase B)
+// Whirlpool stores sqrtPrice (Q64.64) and tokenMintA/B but NOT decimals.
+// We read decimals from the cached Whirlpool entry populated at startup
+// by whirlpoolSwapBuilder.cacheWhirlpoolPoolData().
+// Mint A/B are sorted lexicographically, so SOL may be on either side.
+// ═══════════════════════════════════════════════════════════════
+const WHIRLPOOL_LAYOUT = {
+  /** sqrtPrice — u128 LE, Q64.64 */
+  SQRT_PRICE_OFFSET: 65,
+  /** tickCurrentIndex — i32 LE */
+  TICK_CURRENT_INDEX_OFFSET: 81,
+  /** tokenMintA — 32-byte pubkey */
+  TOKEN_MINT_A_OFFSET: 101,
+  /** tokenMintB — 32-byte pubkey */
+  TOKEN_MINT_B_OFFSET: 181,
+  /** Minimum account data length (incl. discriminator + reward infos) */
+  MIN_DATA_LENGTH: 261,
 } as const;
 
 // SPL Token account layout — amount field is at offset 64
@@ -825,9 +848,16 @@ export class PoolMonitor {
     if (!data || data.length < 16) return null;
 
     const poolCfg = this.poolConfigs.get(poolAddress);
-    const isClmm = poolCfg?.label?.toLowerCase().includes('clmm') ?? false;
+    const labelLower = poolCfg?.label?.toLowerCase() ?? '';
+    const isClmm = labelLower.includes('clmm');
+    const isWhirlpool = labelLower.includes('whirlpool');
 
     try {
+      // ── Whirlpool pools: derive price from sqrtPrice ───────────
+      if (isWhirlpool && data.length >= WHIRLPOOL_LAYOUT.MIN_DATA_LENGTH) {
+        return this.parseWhirlpoolPoolData(poolAddress, data, context, poolCfg);
+      }
+
       // ── CLMM pools: derive price from sqrtPriceX64 ─────────────
       if (isClmm && data.length >= RAYDIUM_CLMM_LAYOUT.MIN_DATA_LENGTH) {
         return this.parseClmmPoolData(poolAddress, data, context, poolCfg);
@@ -926,6 +956,81 @@ export class PoolMonitor {
       timestamp: Date.now(),
       slot: context.slot,
     };
+  }
+
+  /**
+   * Parse an Orca Whirlpool — price derived from sqrtPrice (Q64.64).
+   * Whirlpool does NOT store mint decimals in the pool, so we read them
+   * from the cached Whirlpool entry populated at startup by
+   * whirlpoolSwapBuilder.cacheWhirlpoolPoolData(). If the cache is not
+   * yet populated, returns null and the next account update will retry.
+   *
+   * Layout (post 8-byte Anchor discriminator):
+   *   off  65  sqrtPrice         u128 LE Q64.64
+   *   off  81  tickCurrentIndex  i32  LE
+   *   off 101  tokenMintA        Pubkey (32)
+   *   off 181  tokenMintB        Pubkey (32)
+   *
+   * Mint A/B are sorted lexicographically by Whirlpool, so SOL may be A
+   * or B. Price math:
+   *   ratio    = sqrtPrice / 2^64
+   *   priceRaw = ratio^2                       // B-atomic per A-atomic
+   *   priceAdj = priceRaw * 10^(decA - decB)   // human B per human A
+   *   solPerToken = (A==SOL) ? 1/priceAdj : priceAdj
+   *
+   * Stored as pseudo-reserves: reserveA = SOL_per_token * 1e9, reserveB = 1e9
+   * to match the CLMM convention so calculatePrice() returns SOL_per_token.
+   */
+  private parseWhirlpoolPoolData(
+    poolAddress: string,
+    data: Buffer,
+    context: Context,
+    poolCfg: PoolConfig | undefined,
+  ): PoolUpdate | null {
+    try {
+      // Decimals must come from the swap-builder cache (Whirlpool does
+      // not store them in the pool account itself). Skip until cached.
+      const cached = getCachedWhirlpoolPool(poolAddress);
+      if (!cached) return null;
+
+      // sqrtPrice u128 LE
+      const lo = data.readBigUInt64LE(WHIRLPOOL_LAYOUT.SQRT_PRICE_OFFSET);
+      const hi = data.readBigUInt64LE(WHIRLPOOL_LAYOUT.SQRT_PRICE_OFFSET + 8);
+      const sqrtPrice = (hi << 64n) | lo;
+      if (sqrtPrice === 0n) return null;
+
+      const mintA = new PublicKey(
+        data.subarray(WHIRLPOOL_LAYOUT.TOKEN_MINT_A_OFFSET, WHIRLPOOL_LAYOUT.TOKEN_MINT_A_OFFSET + 32),
+      );
+      const aIsSol = mintA.toString() === WHIRLPOOL_SOL_MINT;
+
+      const ratio = Number(sqrtPrice) / 2 ** 64;
+      const priceRaw = ratio * ratio; // B per A, raw atomic
+      const decAdj = Math.pow(10, cached.decimalsA - cached.decimalsB);
+      const bPerA = priceRaw * decAdj; // human B per human A
+      const solPerToken = aIsSol
+        ? (bPerA > 0 ? 1 / bPerA : 0)
+        : bPerA;
+
+      const SCALE = 1_000_000_000n; // 1e9
+      const scaledPrice = BigInt(Math.round(solPerToken * 1e9));
+
+      return {
+        poolAddress,
+        tokenA: poolCfg?.tokenA || '',
+        tokenB: poolCfg?.tokenB || '',
+        reserveA: scaledPrice,
+        reserveB: SCALE,
+        timestamp: Date.now(),
+        slot: context.slot,
+      };
+    } catch (err) {
+      dataLog.error(
+        { err, pool: poolAddress },
+        'Failed to parse Whirlpool data',
+      );
+      return null;
+    }
   }
 
   private parseGenericPoolData(

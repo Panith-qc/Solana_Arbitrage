@@ -85,7 +85,7 @@ export interface PoolRegistryEntry {
   poolAddress: string;
   tokenMint: string;
   tokenSymbol: string;
-  poolType: 'amm-v4' | 'clmm';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool';
   label: string;
 }
 
@@ -105,6 +105,19 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   // JUP/SOL
   { poolAddress: 'EZVkeboWeXygtq8LMyENHyXdF5wpYrtExRNH9UwB1qYw', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'clmm', label: 'JUP/SOL CLMM' },
   { poolAddress: 'EYErUp5muPYEEkeaUCY22JibeZX7E9UuMcJFZkmNAN7c', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'amm-v4', label: 'JUP/SOL AMM' },
+
+  // ── Orca Whirlpool pools (Phase B) ─────────────────────────────────────────
+  // Candidate addresses — must be verified on-VM via the B1 layout script and
+  // src/engine/research/discover-whirlpools.ts before live trading. The
+  // cacheWhirlpoolPoolData() function rejects pools whose owner is not the
+  // Orca Whirlpool program, so wrong addresses are skipped at startup with a
+  // warn log (no crash). Wiring still functions if any subset is wrong.
+  // Format mirrors Raydium entries above for symmetric handling in botEngine.
+  { poolAddress: 'HQcY5n2zP6rW74fyFEhWeBd3LnJpBcZechkvJpmdb8cx', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'whirlpool', label: 'mSOL/SOL Whirlpool [TODO-VERIFY]' },
+  { poolAddress: 'BB1B82H6Z7nA8pUiVMsKDxbB2zkfPFgWhd6E9zJtKqVe', tokenMint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', tokenSymbol: 'jitoSOL', poolType: 'whirlpool', label: 'jitoSOL/SOL Whirlpool [TODO-VERIFY]' },
+  { poolAddress: '6QNusiQ1g7fKierMQhNeAJxfLXomfcAX3tGRMwxfESsw', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'whirlpool', label: 'bSOL/SOL Whirlpool [TODO-VERIFY]' },
+  { poolAddress: 'HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'whirlpool', label: 'RAY/SOL Whirlpool [TODO-VERIFY]' },
+  { poolAddress: 'C9U2Ksk6KKWvLEeo5yUQ7Xu46X7NzeBJtd9PBfuXaUSM', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'whirlpool', label: 'JUP/SOL Whirlpool [TODO-VERIFY]' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
