@@ -394,6 +394,13 @@ export class BotEngine {
     // Start periodic tasks
     this.startPeriodicTasks();
 
+    // ── Pre-create persistent ATAs (one-time, before any trading) ──
+    // The mixed AMM/CLMM hot path TX is too tight to fit ATA creation
+    // instructions; the wsolAta and per-token ATAs must already exist.
+    if (this.connectionManager.hasWallet()) {
+      await this.precreateTradingAtas();
+    }
+
     // ── Start circular scanner (warm path — background Jupiter scanning) ──
     // Give scanner the execution context (wallet + connection) so it can
     // build, sign, and send transactions when profitable routes are found.
@@ -549,6 +556,65 @@ export class BotEngine {
           latencyMs: result.latencyMs,
         },
         `HOT PATH ${result.status.toUpperCase()} via keepers tracker`,
+      );
+    }
+  }
+
+  /**
+   * Pre-create the WSOL ATA + every token ATA the bot might trade.
+   * Runs once at startup. Idempotent — already-existing ATAs are no-ops.
+   * Required because the mixed AMM/CLMM hot path TX has no byte headroom
+   * to include createAssociatedTokenAccountIdempotent instructions.
+   */
+  private async precreateTradingAtas(): Promise<void> {
+    try {
+      const { PublicKey, TransactionMessage, VersionedTransaction, ComputeBudgetProgram } =
+        await import('@solana/web3.js');
+      const {
+        NATIVE_MINT, getAssociatedTokenAddressSync,
+        createAssociatedTokenAccountIdempotentInstruction,
+      } = await import('@solana/spl-token');
+
+      const wallet = this.connectionManager.getWallet();
+      const conn = this.connectionManager.getConnection();
+      const owner = wallet.publicKey;
+
+      // Unique token mints from the pool registry, plus WSOL
+      const mints = new Set<string>([NATIVE_MINT.toString()]);
+      for (const entry of RAYDIUM_POOL_REGISTRY) {
+        if (entry.tokenMint) mints.add(entry.tokenMint);
+      }
+
+      const ix = [];
+      ix.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }));
+      for (const mintStr of mints) {
+        const mintPk = new PublicKey(mintStr);
+        const ata = getAssociatedTokenAddressSync(mintPk, owner);
+        ix.push(
+          createAssociatedTokenAccountIdempotentInstruction(owner, ata, owner, mintPk),
+        );
+      }
+
+      const { blockhash } = await conn.getLatestBlockhash('confirmed');
+      const msg = new TransactionMessage({
+        payerKey: owner,
+        recentBlockhash: blockhash,
+        instructions: ix,
+      }).compileToV0Message();
+      const tx = new VersionedTransaction(msg);
+      tx.sign([wallet]);
+
+      const sig = await conn.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 });
+      await conn.confirmTransaction(sig, 'confirmed');
+
+      engineLog.info(
+        { mints: mints.size, signature: sig.slice(0, 12) },
+        `Pre-created ${mints.size} ATAs for hot-path trading (wsol + tokens)`,
+      );
+    } catch (err: any) {
+      engineLog.error(
+        { err: err?.message },
+        'Failed to pre-create trading ATAs — mixed AMM/CLMM hot path will revert until ATAs exist',
       );
     }
   }
