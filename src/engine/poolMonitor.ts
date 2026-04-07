@@ -11,6 +11,7 @@ import { updatePool as updatePriceBook } from './priceBook.js';
 import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
 import { getCachedCpmmPool, cpmmSolPerToken } from './cpmmSwapBuilder.js';
 import { getCachedDlmmPool, dlmmSolPerToken } from './dlmmSwapBuilder.js';
+import { getCachedDammPool, dammSolPerToken } from './dammSwapBuilder.js';
 
 const WHIRLPOOL_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
@@ -855,8 +856,16 @@ export class PoolMonitor {
     const isWhirlpool = labelLower.includes('whirlpool');
     const isCpmm = labelLower.includes('cpmm');
     const isDlmm = labelLower.includes('dlmm');
+    const isDamm = labelLower.includes('damm');
 
     try {
+      // ── DAMM (Dynamic AMM v1) pools: derive price from cached
+      // effective reserves (vault unlock-aware). Checked BEFORE DLMM
+      // because both labels can contain "mm" — we match on substring.
+      if (isDamm) {
+        return this.parseDammPoolData(poolAddress, data, context, poolCfg);
+      }
+
       // ── DLMM pools: derive price from active-bin formula ───────
       if (isDlmm) {
         return this.parseDlmmPoolData(poolAddress, data, context, poolCfg);
@@ -1081,6 +1090,40 @@ export class PoolMonitor {
       };
     } catch (err) {
       dataLog.error({ err, pool: poolAddress }, 'Failed to parse CPMM data');
+      return null;
+    }
+  }
+
+  /**
+   * Parse a Meteora DAMM (Dynamic AMM v1) pool. Like CPMM/DLMM we don't
+   * decode the buffer here — dammSwapBuilder keeps the cached pool +
+   * vaults fresh via botEngine's WS hooks. We just read SOL/token from
+   * effective reserves (vault unlock-aware).
+   */
+  private parseDammPoolData(
+    poolAddress: string,
+    _data: Buffer,
+    context: Context,
+    poolCfg: PoolConfig | undefined,
+  ): PoolUpdate | null {
+    try {
+      const cached = getCachedDammPool(poolAddress);
+      if (!cached) return null;
+      const solPerToken = dammSolPerToken(cached);
+      if (solPerToken <= 0) return null;
+      const SCALE = 1_000_000_000n;
+      const scaledPrice = BigInt(Math.round(solPerToken * 1e9));
+      return {
+        poolAddress,
+        tokenA: poolCfg?.tokenA || '',
+        tokenB: poolCfg?.tokenB || '',
+        reserveA: scaledPrice,
+        reserveB: SCALE,
+        timestamp: Date.now(),
+        slot: context.slot,
+      };
+    } catch (err) {
+      dataLog.error({ err, pool: poolAddress }, 'Failed to parse DAMM data');
       return null;
     }
   }

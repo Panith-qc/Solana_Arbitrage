@@ -22,6 +22,19 @@ import { cacheClmmPoolData, updateCachedClmmFromAccount, getCachedClmmPool } fro
 import { cacheWhirlpoolPoolData, updateCachedWhirlpoolFromAccount, getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
 import { cacheCpmmPoolData, updateCachedCpmmFromAccount, updateCachedCpmmVault, getCachedCpmmPool, getCpmmPoolByVault } from './cpmmSwapBuilder.js';
 import { cacheDlmmPoolData, updateCachedDlmmFromAccount, updateCachedDlmmVault, getCachedDlmmPool, getDlmmPoolByVault } from './dlmmSwapBuilder.js';
+import {
+  cacheDammPoolData,
+  updateCachedDammFromPool,
+  updateCachedDammVault,
+  updateCachedDammVaultLp,
+  updateCachedDammVaultLpMint,
+  updateCachedDammStakePool,
+  getCachedDammPool,
+  getDammPoolByVault,
+  getDammPoolByVaultLp,
+  getDammPoolByVaultLpMint,
+  getDammPoolByStakePool,
+} from './dammSwapBuilder.js';
 import { buildMixedHotPathTransaction } from './hotPathBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
 import { initPriceBook, clearPriceBook } from './priceBook.js';
@@ -630,6 +643,7 @@ export class BotEngine {
     const whirlpoolPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'whirlpool');
     const cpmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'cpmm');
     const dlmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'dlmm');
+    const dammPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'damm');
 
     let ammCached = 0;
     for (const pool of ammV4Pools) {
@@ -661,6 +675,12 @@ export class BotEngine {
       if (result) dlmmCached++;
     }
 
+    let dammCached = 0;
+    for (const pool of dammPools) {
+      const result = await cacheDammPoolData(conn, pool.poolAddress, pool.label);
+      if (result) dammCached++;
+    }
+
     engineLog.info(
       {
         ammCached, ammTotal: ammV4Pools.length,
@@ -668,8 +688,9 @@ export class BotEngine {
         whirlpoolCached, whirlpoolTotal: whirlpoolPools.length,
         cpmmCached, cpmmTotal: cpmmPools.length,
         dlmmCached, dlmmTotal: dlmmPools.length,
+        dammCached, dammTotal: dammPools.length,
       },
-      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool + CPMM + DLMM)',
+      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool + CPMM + DLMM + DAMM)',
     );
   }
 
@@ -787,6 +808,22 @@ export class BotEngine {
       } else if (getDlmmPoolByVault(poolAddress)) {
         // DLMM vault account change → refresh that vault's balance.
         updateCachedDlmmVault(poolAddress, data);
+      } else if (getCachedDammPool(poolAddress)) {
+        // DAMM Pool account → refresh trade fee + curve (preserves live virtual price).
+        updateCachedDammFromPool(poolAddress, data);
+      } else if (getDammPoolByVault(poolAddress)) {
+        // DAMM dynamic-vault account change → refresh total_amount + locked profit.
+        updateCachedDammVault(poolAddress, data);
+      } else if (getDammPoolByVaultLp(poolAddress)) {
+        // DAMM pool's vault-LP SPL token account change → refresh pool share.
+        updateCachedDammVaultLp(poolAddress, data);
+      } else if (getDammPoolByVaultLpMint(poolAddress)) {
+        // DAMM vault LP mint supply change → refresh lp_supply.
+        updateCachedDammVaultLpMint(poolAddress, data);
+      } else if (getDammPoolByStakePool(poolAddress)) {
+        // SPL stake pool change for a DAMM Stable+SplStake depeg pool →
+        // refresh live virtual_price.
+        updateCachedDammStakePool(poolAddress, data);
       }
     });
 
@@ -878,11 +915,11 @@ export class BotEngine {
     const buySupported =
       buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' ||
       buyEntry?.poolType === 'whirlpool' || buyEntry?.poolType === 'cpmm' ||
-      buyEntry?.poolType === 'dlmm';
+      buyEntry?.poolType === 'dlmm' || buyEntry?.poolType === 'damm';
     const sellSupported =
       sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm' ||
       sellEntry?.poolType === 'whirlpool' || sellEntry?.poolType === 'cpmm' ||
-      sellEntry?.poolType === 'dlmm';
+      sellEntry?.poolType === 'dlmm' || sellEntry?.poolType === 'damm';
     const hotPathSupported = buySupported && sellSupported;
     const isMixed = hotPathSupported && !bothAmmV4;
 

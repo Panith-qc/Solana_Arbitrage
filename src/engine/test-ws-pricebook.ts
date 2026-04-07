@@ -99,7 +99,7 @@ const poolState = new Map<string, {
 interface PriceEntry {
   label: string;
   dex: string;
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm';
   tokenSymbol: string;
   tokenMint: string;
   tokenDecimals: number;

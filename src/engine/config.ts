@@ -91,7 +91,7 @@ export interface PoolRegistryEntry {
   poolAddress: string;
   tokenMint: string;
   tokenSymbol: string;
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm';
   label: string;
 }
 
@@ -145,6 +145,16 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   // owner != DLMM program and pools that use Token-2022 (non-fatal warn log).
   { poolAddress: 'Eio6hAieGTAmKgfvbEfbnXke6o5kfEd74tqHm2Z9SFjf', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'dlmm', label: 'JUP/SOL DLMM' },
   { poolAddress: '6oFWm7KPLfxnwMb3z5xwBoXNSPP3JJyirAPqPSiVcnsp', tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', tokenSymbol: 'BONK', poolType: 'dlmm', label: 'BONK/SOL DLMM' },
+
+  // ── Meteora Dynamic AMM v1 (DAMM) pools (Phase D8) ─────────────────────────
+  // Vault-backed AMM. Program: Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB.
+  // Pool holds LP shares of dynamic-vault accounts (separate program). Stable
+  // curve with depeg (SplStake/Marinade/Lido) for the LST/SOL pairs. Verified
+  // at -0.27 bps vs Jupiter on jitoSOL/SOL. cacheDammPoolData() rejects pools
+  // whose owner != DAMM program with a warn log (non-fatal).
+  { poolAddress: 'ERgpKaq59Nnfm9YRVAAhnq16cZhHxGcDoDWCzXbhiaNw', tokenMint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', tokenSymbol: 'jitoSOL', poolType: 'damm', label: 'jitoSOL/SOL DAMM' },
+  { poolAddress: 'HcjZvfeSNJbNkfLD4eEcRBr96AD3w1GpmMppaeRZf7ur', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'damm', label: 'mSOL/SOL DAMM' },
+  { poolAddress: 'DvWpLaNUPqoCGn4foM6hekAPKqMtADJJbJWhwuMiT6vK', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'damm', label: 'bSOL/SOL DAMM' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
