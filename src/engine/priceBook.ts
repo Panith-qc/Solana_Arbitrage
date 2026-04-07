@@ -34,7 +34,7 @@ export interface PriceBookEntry {
   poolAddress: string;
   label: string;
   dex: string;             // 'Raydium AMM' | 'Raydium CLMM' | 'Orca' | 'Meteora'
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm';
   tokenMint: string;
   tokenSymbol: string;
   tokenDecimals: number;
@@ -157,12 +157,12 @@ export function calculateDecimalPrice(
   baseReserve: bigint,
   quoteReserve: bigint,
   tokenDecimals: number,
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm',
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm',
 ): number {
   if (baseReserve === 0n || quoteReserve === 0n) return 0;
 
-  if (poolType === 'clmm' || poolType === 'whirlpool' || poolType === 'cpmm') {
-    // CLMM/Whirlpool/CPMM pseudo-reserves: reserveA = price * 1e9, reserveB = 1e9
+  if (poolType === 'clmm' || poolType === 'whirlpool' || poolType === 'cpmm' || poolType === 'dlmm') {
+    // CLMM/Whirlpool/CPMM/DLMM pseudo-reserves: reserveA = price * 1e9, reserveB = 1e9
     // So price = Number(reserveA) / Number(reserveB) is already decimal-adjusted
     return Number(baseReserve) / Number(quoteReserve);
   }
@@ -213,7 +213,9 @@ export function updatePool(
       ? 'Raydium CLMM'
       : registry.poolType === 'whirlpool'
       ? 'Orca Whirlpool'
-      : 'Raydium CPMM';
+      : registry.poolType === 'cpmm'
+      ? 'Raydium CPMM'
+      : 'Meteora DLMM';
   const price = calculateDecimalPrice(baseReserve, quoteReserve, tokenDecimals, registry.poolType);
 
   if (price <= 0) return;

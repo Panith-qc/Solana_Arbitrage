@@ -10,6 +10,7 @@ import { ConnectionManager } from './connectionManager.js';
 import { updatePool as updatePriceBook } from './priceBook.js';
 import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
 import { getCachedCpmmPool, cpmmSolPerToken } from './cpmmSwapBuilder.js';
+import { getCachedDlmmPool, dlmmSolPerToken } from './dlmmSwapBuilder.js';
 
 const WHIRLPOOL_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
@@ -853,8 +854,14 @@ export class PoolMonitor {
     const isClmm = labelLower.includes('clmm');
     const isWhirlpool = labelLower.includes('whirlpool');
     const isCpmm = labelLower.includes('cpmm');
+    const isDlmm = labelLower.includes('dlmm');
 
     try {
+      // ── DLMM pools: derive price from active-bin formula ───────
+      if (isDlmm) {
+        return this.parseDlmmPoolData(poolAddress, data, context, poolCfg);
+      }
+
       // ── CPMM pools: derive price from cached vault balances ────
       if (isCpmm) {
         return this.parseCpmmPoolData(poolAddress, data, context, poolCfg);
@@ -1074,6 +1081,39 @@ export class PoolMonitor {
       };
     } catch (err) {
       dataLog.error({ err, pool: poolAddress }, 'Failed to parse CPMM data');
+      return null;
+    }
+  }
+
+  /**
+   * Parse a Meteora DLMM pool. Like CPMM, we don't decode the buffer here —
+   * dlmmSwapBuilder keeps the cached LbPair fresh via botEngine's pool-account
+   * and vault WS hooks. We just read the active-bin price from the cache.
+   */
+  private parseDlmmPoolData(
+    poolAddress: string,
+    _data: Buffer,
+    context: Context,
+    poolCfg: PoolConfig | undefined,
+  ): PoolUpdate | null {
+    try {
+      const cached = getCachedDlmmPool(poolAddress);
+      if (!cached) return null;
+      const solPerToken = dlmmSolPerToken(cached);
+      if (solPerToken <= 0) return null;
+      const SCALE = 1_000_000_000n;
+      const scaledPrice = BigInt(Math.round(solPerToken * 1e9));
+      return {
+        poolAddress,
+        tokenA: poolCfg?.tokenA || '',
+        tokenB: poolCfg?.tokenB || '',
+        reserveA: scaledPrice,
+        reserveB: SCALE,
+        timestamp: Date.now(),
+        slot: context.slot,
+      };
+    } catch (err) {
+      dataLog.error({ err, pool: poolAddress }, 'Failed to parse DLMM data');
       return null;
     }
   }

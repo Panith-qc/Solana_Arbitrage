@@ -91,7 +91,7 @@ export interface PoolRegistryEntry {
   poolAddress: string;
   tokenMint: string;
   tokenSymbol: string;
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm';
   label: string;
 }
 
@@ -137,6 +137,14 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   { poolAddress: 'Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp', tokenMint: 'Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk', tokenSymbol: 'USELESS', poolType: 'cpmm', label: 'USELESS/SOL CPMM' },
   { poolAddress: 'HKRn6cDo5ACgWYY4N52ScCNzziAMSgS5YaEfwsBu4nu3', tokenMint: 'egoS1kE1g4JuExTcvG6bB6cg5LWpACQ469uk6DTMuJq', tokenSymbol: 'EGO', poolType: 'cpmm', label: 'EGO/SOL CPMM' },
   { poolAddress: '9SxEcmwzHtSZu2jJSpSxuyxweYECvvtykoP3qtEprkvj', tokenMint: '7kN5FQMD8ja4bzysEgc5FXmryKd6gCgjiWnhksjHCFb3', tokenSymbol: 'LION', poolType: 'cpmm', label: 'LION/SOL CPMM' },
+
+  // ── Meteora DLMM pools (Phase D) ───────────────────────────────────────────
+  // LB CLMM (bin-based concentrated liquidity). Program:
+  // LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo. Verified via Jupiter direct
+  // routing + on-chain owner check. cacheDlmmPoolData() rejects pools whose
+  // owner != DLMM program and pools that use Token-2022 (non-fatal warn log).
+  { poolAddress: 'Eio6hAieGTAmKgfvbEfbnXke6o5kfEd74tqHm2Z9SFjf', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'dlmm', label: 'JUP/SOL DLMM' },
+  { poolAddress: '6oFWm7KPLfxnwMb3z5xwBoXNSPP3JJyirAPqPSiVcnsp', tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', tokenSymbol: 'BONK', poolType: 'dlmm', label: 'BONK/SOL DLMM' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)

@@ -50,6 +50,12 @@ import {
   calculateCpmmAmountOut,
   type CachedCpmmPool,
 } from './cpmmSwapBuilder.js';
+import {
+  getCachedDlmmPool,
+  buildDlmmSwapInstruction,
+  calculateDlmmAmountOut,
+  type CachedDlmmPool,
+} from './dlmmSwapBuilder.js';
 
 export interface MixedHotPathResult {
   transaction: VersionedTransaction;
@@ -57,8 +63,8 @@ export interface MixedHotPathResult {
   expectedProfitLamports: bigint;
   buyPool: string;
   sellPool: string;
-  buyDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
-  sellDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
+  buyDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm';
+  sellDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm';
   tipLamports: bigint;
 }
 
@@ -66,7 +72,8 @@ type Resolved =
   | { kind: 'amm'; pool: CachedAmmPool; tokenMint: PublicKey; isSolQuote: boolean }
   | { kind: 'clmm'; pool: CachedClmmPool; tokenMint: PublicKey }
   | { kind: 'whirlpool'; pool: CachedWhirlpoolPool; tokenMint: PublicKey }
-  | { kind: 'cpmm'; pool: CachedCpmmPool; tokenMint: PublicKey };
+  | { kind: 'cpmm'; pool: CachedCpmmPool; tokenMint: PublicKey }
+  | { kind: 'dlmm'; pool: CachedDlmmPool; tokenMint: PublicKey };
 
 function resolvePool(addr: string): Resolved | null {
   const amm = getCachedAmmPool(addr);
@@ -93,6 +100,12 @@ function resolvePool(addr: string): Resolved | null {
       cpmm.token0Mint.toString() === SOL_MINT ? cpmm.token1Mint : cpmm.token0Mint;
     return { kind: 'cpmm', pool: cpmm, tokenMint };
   }
+  const dlmm = getCachedDlmmPool(addr);
+  if (dlmm) {
+    const tokenMint =
+      dlmm.tokenXMint.toString() === SOL_MINT ? dlmm.tokenYMint : dlmm.tokenXMint;
+    return { kind: 'dlmm', pool: dlmm, tokenMint };
+  }
   return null;
 }
 
@@ -117,7 +130,10 @@ function quoteBuy(r: Resolved, solIn: bigint): bigint {
   if (r.kind === 'whirlpool') {
     return calculateWhirlpoolAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
   }
-  return calculateCpmmAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
+  if (r.kind === 'cpmm') {
+    return calculateCpmmAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
+  }
+  return calculateDlmmAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
 }
 
 /**
@@ -141,7 +157,10 @@ function quoteSell(r: Resolved, tokenIn: bigint): bigint {
   if (r.kind === 'whirlpool') {
     return calculateWhirlpoolAmountOut(r.pool, tokenIn, r.tokenMint);
   }
-  return calculateCpmmAmountOut(r.pool, tokenIn, r.tokenMint);
+  if (r.kind === 'cpmm') {
+    return calculateCpmmAmountOut(r.pool, tokenIn, r.tokenMint);
+  }
+  return calculateDlmmAmountOut(r.pool, tokenIn, r.tokenMint);
 }
 
 /**
@@ -192,8 +211,19 @@ function buildLegInstruction(
       minimumAmountOut,
     });
   }
-  // cpmm — uses input/output named accounts like CLMM
-  return buildCpmmSwapInstruction({
+  if (r.kind === 'cpmm') {
+    return buildCpmmSwapInstruction({
+      pool: r.pool,
+      payer: walletPk,
+      userInputTokenAccount: userInputAta,
+      userOutputTokenAccount: userOutputAta,
+      inputMint,
+      amountIn,
+      minimumAmountOut,
+    });
+  }
+  // dlmm — uses input/output named accounts like CLMM/CPMM
+  return buildDlmmSwapInstruction({
     pool: r.pool,
     payer: walletPk,
     userInputTokenAccount: userInputAta,
@@ -204,11 +234,12 @@ function buildLegInstruction(
   });
 }
 
-function dexTag(r: Resolved): 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' {
+function dexTag(r: Resolved): 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' {
   if (r.kind === 'amm') return 'amm-v4';
   if (r.kind === 'clmm') return 'clmm';
   if (r.kind === 'whirlpool') return 'whirlpool';
-  return 'cpmm';
+  if (r.kind === 'cpmm') return 'cpmm';
+  return 'dlmm';
 }
 
 function poolLabel(r: Resolved): string {
