@@ -20,6 +20,7 @@ import { CircularScanner, CircularOpportunity } from './circularScanner.js';
 import { buildHotPathTransaction, cachePoolData, updateCachedReserves } from './directSwapBuilder.js';
 import { cacheClmmPoolData, updateCachedClmmFromAccount, getCachedClmmPool } from './clmmSwapBuilder.js';
 import { cacheWhirlpoolPoolData, updateCachedWhirlpoolFromAccount, getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
+import { cacheCpmmPoolData, updateCachedCpmmFromAccount, updateCachedCpmmVault, getCachedCpmmPool, getCpmmPoolByVault } from './cpmmSwapBuilder.js';
 import { buildMixedHotPathTransaction } from './hotPathBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
 import { initPriceBook, clearPriceBook } from './priceBook.js';
@@ -626,6 +627,7 @@ export class BotEngine {
     const ammV4Pools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
     const clmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
     const whirlpoolPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'whirlpool');
+    const cpmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'cpmm');
 
     let ammCached = 0;
     for (const pool of ammV4Pools) {
@@ -645,13 +647,20 @@ export class BotEngine {
       if (result) whirlpoolCached++;
     }
 
+    let cpmmCached = 0;
+    for (const pool of cpmmPools) {
+      const result = await cacheCpmmPoolData(conn, pool.poolAddress, pool.label);
+      if (result) cpmmCached++;
+    }
+
     engineLog.info(
       {
         ammCached, ammTotal: ammV4Pools.length,
         clmmCached, clmmTotal: clmmPools.length,
         whirlpoolCached, whirlpoolTotal: whirlpoolPools.length,
+        cpmmCached, cpmmTotal: cpmmPools.length,
       },
-      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool)',
+      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool + CPMM)',
     );
   }
 
@@ -755,6 +764,14 @@ export class BotEngine {
         updateCachedClmmFromAccount(poolAddress, data);
       } else if (getCachedWhirlpoolPool(poolAddress)) {
         updateCachedWhirlpoolFromAccount(poolAddress, data);
+      } else if (getCachedCpmmPool(poolAddress)) {
+        // CPMM pool account → refresh fee accumulators only.
+        // Vault balances are refreshed separately via the vault hook below.
+        updateCachedCpmmFromAccount(poolAddress, data);
+      } else if (getCpmmPoolByVault(poolAddress)) {
+        // CPMM vault account change → refresh that vault's balance in the
+        // owning pool's cache.
+        updateCachedCpmmVault(poolAddress, data);
       }
     });
 
@@ -844,9 +861,11 @@ export class BotEngine {
     const sellEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
     const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
     const buySupported =
-      buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' || buyEntry?.poolType === 'whirlpool';
+      buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' ||
+      buyEntry?.poolType === 'whirlpool' || buyEntry?.poolType === 'cpmm';
     const sellSupported =
-      sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm' || sellEntry?.poolType === 'whirlpool';
+      sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm' ||
+      sellEntry?.poolType === 'whirlpool' || sellEntry?.poolType === 'cpmm';
     const hotPathSupported = buySupported && sellSupported;
     const isMixed = hotPathSupported && !bothAmmV4;
 

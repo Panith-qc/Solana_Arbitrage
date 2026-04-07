@@ -44,6 +44,12 @@ import {
   calculateWhirlpoolAmountOut,
   type CachedWhirlpoolPool,
 } from './whirlpoolSwapBuilder.js';
+import {
+  getCachedCpmmPool,
+  buildCpmmSwapInstruction,
+  calculateCpmmAmountOut,
+  type CachedCpmmPool,
+} from './cpmmSwapBuilder.js';
 
 export interface MixedHotPathResult {
   transaction: VersionedTransaction;
@@ -51,15 +57,16 @@ export interface MixedHotPathResult {
   expectedProfitLamports: bigint;
   buyPool: string;
   sellPool: string;
-  buyDex: 'amm-v4' | 'clmm' | 'whirlpool';
-  sellDex: 'amm-v4' | 'clmm' | 'whirlpool';
+  buyDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
+  sellDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
   tipLamports: bigint;
 }
 
 type Resolved =
   | { kind: 'amm'; pool: CachedAmmPool; tokenMint: PublicKey; isSolQuote: boolean }
   | { kind: 'clmm'; pool: CachedClmmPool; tokenMint: PublicKey }
-  | { kind: 'whirlpool'; pool: CachedWhirlpoolPool; tokenMint: PublicKey };
+  | { kind: 'whirlpool'; pool: CachedWhirlpoolPool; tokenMint: PublicKey }
+  | { kind: 'cpmm'; pool: CachedCpmmPool; tokenMint: PublicKey };
 
 function resolvePool(addr: string): Resolved | null {
   const amm = getCachedAmmPool(addr);
@@ -79,6 +86,12 @@ function resolvePool(addr: string): Resolved | null {
     const tokenMint =
       whirl.tokenMintA.toString() === SOL_MINT ? whirl.tokenMintB : whirl.tokenMintA;
     return { kind: 'whirlpool', pool: whirl, tokenMint };
+  }
+  const cpmm = getCachedCpmmPool(addr);
+  if (cpmm) {
+    const tokenMint =
+      cpmm.token0Mint.toString() === SOL_MINT ? cpmm.token1Mint : cpmm.token0Mint;
+    return { kind: 'cpmm', pool: cpmm, tokenMint };
   }
   return null;
 }
@@ -101,7 +114,10 @@ function quoteBuy(r: Resolved, solIn: bigint): bigint {
   if (r.kind === 'clmm') {
     return calculateClmmAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
   }
-  return calculateWhirlpoolAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
+  if (r.kind === 'whirlpool') {
+    return calculateWhirlpoolAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
+  }
+  return calculateCpmmAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
 }
 
 /**
@@ -122,7 +138,10 @@ function quoteSell(r: Resolved, tokenIn: bigint): bigint {
   if (r.kind === 'clmm') {
     return calculateClmmAmountOut(r.pool, tokenIn, r.tokenMint);
   }
-  return calculateWhirlpoolAmountOut(r.pool, tokenIn, r.tokenMint);
+  if (r.kind === 'whirlpool') {
+    return calculateWhirlpoolAmountOut(r.pool, tokenIn, r.tokenMint);
+  }
+  return calculateCpmmAmountOut(r.pool, tokenIn, r.tokenMint);
 }
 
 /**
@@ -158,26 +177,38 @@ function buildLegInstruction(
       minimumAmountOut,
     });
   }
-  // whirlpool — Whirlpool ix takes A/B accounts in fixed slots, not in/out.
-  // The caller passes the user's WSOL ata as "input" and token ata as "output"
-  // for the buy leg (and vice versa for sell). We map them to A/B based on
-  // which mint side the input is on.
-  const inputIsA = r.pool.tokenMintA.equals(inputMint);
-  const userTokenAccountA = inputIsA ? userInputAta : userOutputAta;
-  const userTokenAccountB = inputIsA ? userOutputAta : userInputAta;
-  return buildWhirlpoolSwapInstruction({
+  if (r.kind === 'whirlpool') {
+    // Whirlpool ix takes A/B accounts in fixed slots, not in/out.
+    const inputIsA = r.pool.tokenMintA.equals(inputMint);
+    const userTokenAccountA = inputIsA ? userInputAta : userOutputAta;
+    const userTokenAccountB = inputIsA ? userOutputAta : userInputAta;
+    return buildWhirlpoolSwapInstruction({
+      pool: r.pool,
+      payer: walletPk,
+      userTokenAccountA,
+      userTokenAccountB,
+      inputMint,
+      amountIn,
+      minimumAmountOut,
+    });
+  }
+  // cpmm — uses input/output named accounts like CLMM
+  return buildCpmmSwapInstruction({
     pool: r.pool,
     payer: walletPk,
-    userTokenAccountA,
-    userTokenAccountB,
+    userInputTokenAccount: userInputAta,
+    userOutputTokenAccount: userOutputAta,
     inputMint,
     amountIn,
     minimumAmountOut,
   });
 }
 
-function dexTag(r: Resolved): 'amm-v4' | 'clmm' | 'whirlpool' {
-  return r.kind === 'amm' ? 'amm-v4' : r.kind === 'clmm' ? 'clmm' : 'whirlpool';
+function dexTag(r: Resolved): 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' {
+  if (r.kind === 'amm') return 'amm-v4';
+  if (r.kind === 'clmm') return 'clmm';
+  if (r.kind === 'whirlpool') return 'whirlpool';
+  return 'cpmm';
 }
 
 function poolLabel(r: Resolved): string {

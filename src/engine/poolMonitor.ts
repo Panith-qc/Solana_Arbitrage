@@ -9,6 +9,7 @@ import { BotConfig } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { updatePool as updatePriceBook } from './priceBook.js';
 import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
+import { getCachedCpmmPool, cpmmSolPerToken } from './cpmmSwapBuilder.js';
 
 const WHIRLPOOL_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
@@ -851,8 +852,14 @@ export class PoolMonitor {
     const labelLower = poolCfg?.label?.toLowerCase() ?? '';
     const isClmm = labelLower.includes('clmm');
     const isWhirlpool = labelLower.includes('whirlpool');
+    const isCpmm = labelLower.includes('cpmm');
 
     try {
+      // ── CPMM pools: derive price from cached vault balances ────
+      if (isCpmm) {
+        return this.parseCpmmPoolData(poolAddress, data, context, poolCfg);
+      }
+
       // ── Whirlpool pools: derive price from sqrtPrice ───────────
       if (isWhirlpool && data.length >= WHIRLPOOL_LAYOUT.MIN_DATA_LENGTH) {
         return this.parseWhirlpoolPoolData(poolAddress, data, context, poolCfg);
@@ -1029,6 +1036,44 @@ export class PoolMonitor {
         { err, pool: poolAddress },
         'Failed to parse Whirlpool data',
       );
+      return null;
+    }
+  }
+
+  /**
+   * Parse a Raydium CPMM pool. Unlike CLMM/Whirlpool, CPMM doesn't store
+   * a price field — reserves come from vault SPL Token accounts. This
+   * parser doesn't decode the data buffer at all; instead it pulls the
+   * already-cached effective reserves from cpmmSwapBuilder (which is kept
+   * in sync via the bot engine's pool-account and vault WS hooks).
+   *
+   * Stored as pseudo-reserves matching the CLMM/Whirlpool convention so
+   * priceBook.calculateDecimalPrice() can treat all three uniformly.
+   */
+  private parseCpmmPoolData(
+    poolAddress: string,
+    _data: Buffer,
+    context: Context,
+    poolCfg: PoolConfig | undefined,
+  ): PoolUpdate | null {
+    try {
+      const cached = getCachedCpmmPool(poolAddress);
+      if (!cached) return null;
+      const solPerToken = cpmmSolPerToken(cached);
+      if (solPerToken <= 0) return null;
+      const SCALE = 1_000_000_000n;
+      const scaledPrice = BigInt(Math.round(solPerToken * 1e9));
+      return {
+        poolAddress,
+        tokenA: poolCfg?.tokenA || '',
+        tokenB: poolCfg?.tokenB || '',
+        reserveA: scaledPrice,
+        reserveB: SCALE,
+        timestamp: Date.now(),
+        slot: context.slot,
+      };
+    } catch (err) {
+      dataLog.error({ err, pool: poolAddress }, 'Failed to parse CPMM data');
       return null;
     }
   }

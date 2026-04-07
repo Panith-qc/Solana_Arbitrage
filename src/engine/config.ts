@@ -85,7 +85,7 @@ export interface PoolRegistryEntry {
   poolAddress: string;
   tokenMint: string;
   tokenSymbol: string;
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm';
   label: string;
 }
 
@@ -118,6 +118,16 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   { poolAddress: '6QNusiQ1g7fKierMQhNeAJxfLXomfcAX3tGRMwxfESsw', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'whirlpool', label: 'bSOL/SOL Whirlpool [TODO-VERIFY]' },
   { poolAddress: 'HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ', tokenMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', tokenSymbol: 'RAY', poolType: 'whirlpool', label: 'RAY/SOL Whirlpool [TODO-VERIFY]' },
   { poolAddress: 'C9U2Ksk6KKWvLEeo5yUQ7Xu46X7NzeBJtd9PBfuXaUSM', tokenMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', tokenSymbol: 'JUP', poolType: 'whirlpool', label: 'JUP/SOL Whirlpool [TODO-VERIFY]' },
+
+  // ── Raydium CPMM pools (Phase C) ───────────────────────────────────────────
+  // CPMM = the new Anchor-based constant-product Raydium program
+  // (CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C). NOT the same as the
+  // legacy AMM V4 program. Candidate addresses must be verified on-VM via
+  // src/engine/research/cpmm-layout.ts; cacheCpmmPoolData() rejects pools
+  // whose owner != CPMM program with a warn log (non-fatal).
+  { poolAddress: '4ct8XU5tKbMNRphWy4rePsS9kBqPxNgwrkXzEXwjhyJp', tokenMint: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', tokenSymbol: 'JTO', poolType: 'cpmm', label: 'JTO/SOL CPMM [TODO-VERIFY]' },
+  { poolAddress: 'BoeMUkCLHchTD31HdXsbDExuZZfcUppSLpYtV3LZTH6U', tokenMint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', tokenSymbol: 'WIF', poolType: 'cpmm', label: 'WIF/SOL CPMM [TODO-VERIFY]' },
+  { poolAddress: '6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg', tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', tokenSymbol: 'BONK', poolType: 'cpmm', label: 'BONK/SOL CPMM [TODO-VERIFY]' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
