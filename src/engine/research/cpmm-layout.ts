@@ -56,11 +56,12 @@ import { execSync } from 'child_process';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const RAYDIUM_CPMM_PROGRAM = 'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C';
 
-// Known CPMM pools to inspect — verify on VM, candidates flagged.
+// Verified CPMM/SOL pools (programId == CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C)
+// from Raydium API v3, top SOL-paired CPMM pools by TVL.
 const POOLS: Array<{ label: string; address: string }> = [
-  { label: 'JTO/SOL CPMM (candidate)', address: '4ct8XU5tKbMNRphWy4rePsS9kBqPxNgwrkXzEXwjhyJp' },
-  { label: 'WIF/SOL CPMM (candidate)', address: 'BoeMUkCLHchTD31HdXsbDExuZZfcUppSLpYtV3LZTH6U' },
-  { label: 'BONK/SOL CPMM (candidate)', address: '6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg' },
+  { label: 'USELESS/SOL CPMM', address: 'Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp' },
+  { label: 'EGO/SOL CPMM', address: 'HKRn6cDo5ACgWYY4N52ScCNzziAMSgS5YaEfwsBu4nu3' },
+  { label: 'LION/SOL CPMM', address: '9SxEcmwzHtSZu2jJSpSxuyxweYECvvtykoP3qtEprkvj' },
 ];
 
 const RPC_URLS: string[] = [

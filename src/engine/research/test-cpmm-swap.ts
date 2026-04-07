@@ -23,8 +23,11 @@ import { PublicKey } from '@solana/web3.js';
 import { execSync } from 'child_process';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-// Default candidate; override via POOL env var.
-const POOL = process.env.POOL || '4ct8XU5tKbMNRphWy4rePsS9kBqPxNgwrkXzEXwjhyJp';
+// Default: USELESS/SOL CPMM (top SOL-paired CPMM pool by TVL, ~$1.31M).
+// Override via POOL env var. Other verified options:
+//   EGO/SOL  HKRn6cDo5ACgWYY4N52ScCNzziAMSgS5YaEfwsBu4nu3
+//   LION/SOL 9SxEcmwzHtSZu2jJSpSxuyxweYECvvtykoP3qtEprkvj
+const POOL = process.env.POOL || 'Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp';
 const AMOUNT_IN_LAMPORTS = 100_000_000n; // 0.1 SOL
 
 const RPC_URLS: string[] = [
