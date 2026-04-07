@@ -31,10 +31,11 @@ import { PublicKey } from '@solana/web3.js';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const METEORA_DLMM_PROGRAM = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
 
-// Default: BONK/SOL DLMM (verified D1). Override via POOL env var.
-//   JUP/SOL  Eio6hAieGTAmKgfvbEfbnXke6o5kfEd74tqHm2Z9SFjf
+// Default: JUP/SOL DLMM (Jupiter routes JUP through DLMM directly).
+// Override via POOL env var.
+//   BONK/SOL 6oFWm7KPLfxnwMb3z5xwBoXNSPP3JJyirAPqPSiVcnsp
 //   JLP/SOL  G7ixPyiyNeggVf1VanSetFMNbVuVCPtimJmd9axfQqng
-const POOL = process.env.POOL || '6oFWm7KPLfxnwMb3z5xwBoXNSPP3JJyirAPqPSiVcnsp';
+const POOL = process.env.POOL || 'Eio6hAieGTAmKgfvbEfbnXke6o5kfEd74tqHm2Z9SFjf';
 // Tiny size to keep the swap inside the active bin.
 const AMOUNT_IN_LAMPORTS = 10_000_000n; // 0.01 SOL
 
@@ -131,18 +132,15 @@ function dlmmSwapSingleBin(
   activeId: number,
   binStep: number,
   baseFactor: number,
-  decimalsIn: number,
-  decimalsOut: number,
 ): bigint {
   if (amountIn === 0n) return 0n;
-  // Price of 1 unit of X expressed in units of Y, in human terms.
+  // Meteora bin price formula gives raw_Y_per_raw_X directly (not human).
   // bin_step is in basis points: factor = 1 + bin_step/10000.
+  // priceYperX = factor ^ active_id  — units: Y_lamports per X_lamports.
+  // No decimal adjustment is needed because the formula already operates
+  // on base units; activeId implicitly encodes the decimal difference.
   const factor = 1 + binStep / 10_000;
-  const priceXinY = Math.pow(factor, activeId);
-  // Convert to "raw out per raw in" by adjusting decimals.
-  // raw_y_per_raw_x = priceXinY * 10^decY / 10^decX
-  const decAdjust = Math.pow(10, decimalsOut - decimalsIn);
-  const rawXtoY = priceXinY * decAdjust;
+  const priceYperX = Math.pow(factor, activeId);
 
   // Base fee: (base_factor * bin_step) / 10000  in bps
   const baseFeeBps = (baseFactor * binStep) / 10_000;
@@ -150,8 +148,8 @@ function dlmmSwapSingleBin(
 
   const amountInF = Number(amountIn);
   const outF = swapXForY
-    ? amountInF * feeMul * rawXtoY
-    : (amountInF * feeMul) / rawXtoY;
+    ? amountInF * feeMul * priceYperX        // X -> Y
+    : (amountInF * feeMul) / priceYperX;     // Y -> X
   if (!isFinite(outF) || outF < 0) return 0n;
   return BigInt(Math.floor(outF));
 }
@@ -193,7 +191,6 @@ async function main(): Promise<void> {
   // 3. Math
   console.log('\nStep 3: simulate single-bin DLMM swap');
   const swapXForY = xIsSol; // SOL is X, swapping X for Y
-  const decimalsIn = swapXForY ? decX : decY;
   const decimalsOut = swapXForY ? decY : decX;
   const ourOut = dlmmSwapSingleBin(
     AMOUNT_IN_LAMPORTS,
@@ -201,8 +198,6 @@ async function main(): Promise<void> {
     pair.activeId,
     pair.binStep,
     pair.baseFactor,
-    decimalsIn,
-    decimalsOut,
   );
   const ourHuman = Number(ourOut) / 10 ** decimalsOut;
   const baseFeeBps = (pair.baseFactor * pair.binStep) / 10_000;
