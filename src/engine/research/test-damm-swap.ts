@@ -1,47 +1,21 @@
 /**
- * Phase D — Step D7: Meteora Dynamic AMM v1 swap math verification
+ * Phase D - Step D7: Meteora Dynamic AMM v1 swap math verification.
  *
- * Goal: simulate a small SOL -> token swap using ONLY decoded Pool state
- * plus the underlying dynamic-vault accounts, and compare against Jupiter
- * /quote (direct route, Meteora DAMM only).
+ * The pool stores no token reserves directly; instead it holds LP shares of
+ * Meteora dynamic-vaults. Effective reserves per side are computed as:
  *
- * Effective reserves (per side):
+ *   unlocked = vault.total_amount - locked_profit_at(now)
+ *   reserveX = floor(pool.vault_lp.amount * unlocked / vault.lp_mint.supply)
  *
- *   unlocked   = vault.total_amount - locked_profit_at(now)
- *   reserveX   = floor(pool.vault_lp.amount * unlocked / vault_lp_mint.supply)
+ * The pool's curve is either ConstantProduct OR Stable. For SOL liquid-staking
+ * pairs (jitoSOL/SOL, mSOL/SOL, bSOL/SOL) the curve is Stable with depeg
+ * (SplStake / Marinade / Lido), which uses Saber-style stable swap math
+ * combined with a virtual-price scaling on the depeg side.
  *
- * locked_profit_at(t):
- *   duration = t - vault.last_report
- *   ratio    = min(duration * locked_profit_degradation, 1e12)
- *   locked   = vault.last_updated_locked_profit * (1e12 - ratio) / 1e12
- *
- * Swap math (Uniswap V2 constant product with DAMM trade fee):
- *
- *   amountInAfterFee = amountIn * (tradeFeeDen - tradeFeeNum) / tradeFeeDen
- *   amountOut        = amountInAfterFee * reserveOut
- *                      / (reserveIn + amountInAfterFee)
- *
- * Reference:
+ * Sources:
  *   https://github.com/MeteoraAg/damm-v1-sdk
- *   programs/dynamic-vault/src/state.rs  (Vault, LockedProfitTracker)
- *   programs/dynamic-amm/src/state.rs    (Pool, PoolFees)
- *
- * Vault layout (post 8-byte Anchor discriminator):
- *   off    0  enabled                            u8
- *   off    1  bumps.vault_bump                   u8
- *   off    2  bumps.token_vault_bump             u8
- *   off    3  total_amount                       u64
- *   off   11  token_vault                        Pubkey
- *   off   43  fee_vault                          Pubkey
- *   off   75  token_mint                         Pubkey
- *   off  107  lp_mint                            Pubkey
- *   off  139  strategies [Pubkey;30]             (960 bytes)
- *   off 1099  base                               Pubkey
- *   off 1131  admin                              Pubkey
- *   off 1163  operator                           Pubkey
- *   off 1195  locked_profit_tracker.last_updated u64
- *   off 1203  locked_profit_tracker.last_report  u64
- *   off 1211  locked_profit_tracker.degradation  u64
+ *   https://github.com/MeteoraAg/stable-swap   (compute_d2 / compute_y_raw2)
+ *   https://github.com/MeteoraAg/vault-sdk     (Vault state + locked profit)
  */
 
 import { PublicKey } from '@solana/web3.js';
@@ -50,9 +24,7 @@ import { execSync } from 'child_process';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const DAMM_PROGRAM = 'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB';
 
-// Default: jitoSOL/SOL DAMM (highest TVL). Override via POOL env var.
-//   mSOL/SOL HcjZvfeSNJbNkfLD4eEcRBr96AD3w1GpmMppaeRZf7ur
-//   bSOL/SOL DvWpLaNUPqoCGn4foM6hekAPKqMtADJJbJWhwuMiT6vK
+// Default: jitoSOL/SOL DAMM (Stable + SplStake depeg). Override via POOL env var.
 const POOL = process.env.POOL || 'ERgpKaq59Nnfm9YRVAAhnq16cZhHxGcDoDWCzXbhiaNw';
 const AMOUNT_IN_LAMPORTS = 100_000_000n; // 0.1 SOL
 
@@ -63,10 +35,13 @@ const RPC_URLS: string[] = [
 ].filter(Boolean);
 
 const LOCKED_PROFIT_DEGRADATION_DENOMINATOR = 1_000_000_000_000n;
-const SPL_TOKEN_AMOUNT_OFFSET = 64;     // SPL Token account: amount u64
-const SPL_MINT_SUPPLY_OFFSET = 36;      // SPL Mint: supply u64
+const SPL_TOKEN_AMOUNT_OFFSET = 64;
+const SPL_MINT_SUPPLY_OFFSET = 36;
+const STAKE_POOL_TOTAL_LAMPORTS_OFFSET = 258;
+const STAKE_POOL_TOKEN_SUPPLY_OFFSET   = 266;
+const PRECISION = 1_000_000n;
 
-// Pool offsets (post-disc)
+// Pool offsets (post 8-byte Anchor discriminator)
 const P = {
   TOKEN_A_MINT:  32,
   TOKEN_B_MINT:  64,
@@ -76,9 +51,11 @@ const P = {
   B_VAULT_LP:   192,
   TRADE_FEE_NUM: 322,
   TRADE_FEE_DEN: 330,
+  STAKE_POOL_PK: 355,
+  CURVE_TYPE:    866, // last field; tag (1) + Stable variant (50) = 51 bytes
 } as const;
 
-// Vault offsets (post-disc)
+// Vault offsets (post 8-byte Anchor discriminator)
 const V = {
   TOTAL_AMOUNT:  3,
   LP_MINT:       107,
@@ -151,11 +128,144 @@ function calcUnlockedAmount(v: VaultState, nowSec: bigint): bigint {
   return v.totalAmount > locked ? v.totalAmount - locked : 0n;
 }
 
+// === Curve type decoding ===
+//
+// Pool's curve_type is the LAST field in the struct (offset 866 post-disc).
+// Encoding:
+//   tag u8                     // 0 = ConstantProduct, 1 = Stable
+//   if Stable:
+//     amp                       u64
+//     token_a_multiplier        u64
+//     token_b_multiplier        u64
+//     precision_factor          u8
+//     depeg.base_virtual_price  u64
+//     depeg.base_cache_updated  u64
+//     depeg.depeg_type          u8   // 0 None, 1 Marinade, 2 Lido, 3 SplStake
+//     last_amp_updated_timestamp u64
+
+type DepegType = 'None' | 'Marinade' | 'Lido' | 'SplStake';
+
+interface ConstantProductCurve {
+  kind: 'ConstantProduct';
+}
+interface StableCurve {
+  kind: 'Stable';
+  amp: bigint;
+  tokenAMultiplier: bigint;
+  tokenBMultiplier: bigint;
+  precisionFactor: number;
+  depegBaseVirtualPrice: bigint;
+  depegType: DepegType;
+}
+type Curve = ConstantProductCurve | StableCurve;
+
+function decodeCurveType(poolBody: Buffer): Curve {
+  const tag = readU8(poolBody, P.CURVE_TYPE);
+  if (tag === 0) return { kind: 'ConstantProduct' };
+  if (tag !== 1) throw new Error(`unknown curve_type tag ${tag}`);
+  const o = P.CURVE_TYPE + 1;
+  const amp                = readU64LE(poolBody, o);
+  const tokenAMultiplier   = readU64LE(poolBody, o + 8);
+  const tokenBMultiplier   = readU64LE(poolBody, o + 16);
+  const precisionFactor    = readU8   (poolBody, o + 24);
+  const depegBaseVirtualPrice = readU64LE(poolBody, o + 25);
+  // base_cache_updated u64 at o+33
+  const depegTypeTag       = readU8   (poolBody, o + 41);
+  const depegTypes: DepegType[] = ['None', 'Marinade', 'Lido', 'SplStake'];
+  const depegType = depegTypes[depegTypeTag] || 'None';
+  return {
+    kind: 'Stable',
+    amp,
+    tokenAMultiplier,
+    tokenBMultiplier,
+    precisionFactor,
+    depegBaseVirtualPrice,
+    depegType,
+  };
+}
+
+// === Constant-product swap math ===
 function cpSwap(amountIn: bigint, reserveIn: bigint, reserveOut: bigint,
                 feeNum: bigint, feeDen: bigint): bigint {
   if (reserveIn === 0n || reserveOut === 0n || amountIn === 0n) return 0n;
   const amountInAfterFee = (amountIn * (feeDen - feeNum)) / feeDen;
   return (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
+}
+
+// === Saber-style stable swap math (n=2) ===
+const N_COINS = 2n;
+
+function computeD(amp: bigint, x: bigint, y: bigint): bigint {
+  const sumX = x + y;
+  if (sumX === 0n) return 0n;
+  const ann = amp * N_COINS;
+  const aN = x * N_COINS;
+  const bN = y * N_COINS;
+  let d = sumX;
+  for (let i = 0; i < 256; i++) {
+    let dProd = d;
+    dProd = (dProd * d) / aN;
+    dProd = (dProd * d) / bN;
+    const dPrev = d;
+    const leverage = sumX * ann;
+    const numerator = d * (dProd * N_COINS + leverage);
+    const denominator = d * (ann - 1n) + dProd * (N_COINS + 1n);
+    d = numerator / denominator;
+    const diff = d > dPrev ? d - dPrev : dPrev - d;
+    if (diff <= 1n) break;
+  }
+  return d;
+}
+
+function computeY(amp: bigint, x: bigint, d: bigint): bigint {
+  const ann = amp * N_COINS;
+  let c = (d * d) / (x * N_COINS);
+  c = (c * d) / (ann * N_COINS);
+  const b = d / ann + x;
+  let y = d;
+  for (let i = 0; i < 256; i++) {
+    const yPrev = y;
+    const num = y * y + c;
+    const den = 2n * y + b - d;
+    y = num / den;
+    const diff = y > yPrev ? y - yPrev : yPrev - y;
+    if (diff <= 1n) break;
+  }
+  return y;
+}
+
+// Upscale a token amount per the Meteora StableSwap rules:
+//   side=A: amount * token_a_multiplier * (PRECISION if depeg)
+//   side=B: amount * token_b_multiplier * (base_virtual_price if depeg)
+function upscale(curve: StableCurve, side: 'A' | 'B', amt: bigint): bigint {
+  const mul = side === 'A' ? curve.tokenAMultiplier : curve.tokenBMultiplier;
+  const scale = side === 'A' ? PRECISION : curve.depegBaseVirtualPrice;
+  if (curve.depegType === 'None') return amt * mul;
+  return amt * mul * scale;
+}
+function downscale(curve: StableCurve, side: 'A' | 'B', amt: bigint): bigint {
+  const mul = side === 'A' ? curve.tokenAMultiplier : curve.tokenBMultiplier;
+  const scale = side === 'A' ? PRECISION : curve.depegBaseVirtualPrice;
+  if (curve.depegType === 'None') return amt / mul;
+  return amt / mul / scale;
+}
+
+function stableSwap(
+  curve: StableCurve,
+  amountInAfterFee: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  inSide: 'A' | 'B',
+  outSide: 'A' | 'B',
+): bigint {
+  const usrc = upscale(curve, inSide, amountInAfterFee);
+  const uIn  = upscale(curve, inSide, reserveIn);
+  const uOut = upscale(curve, outSide, reserveOut);
+  const d = computeD(curve.amp, uIn, uOut);
+  const y = computeY(curve.amp, uIn + usrc, d);
+  if (uOut <= y + 1n) return 0n;
+  const dy = uOut - y - 1n;
+  return downscale(curve, outSide, dy);
 }
 
 interface JupQuote {
@@ -201,6 +311,7 @@ async function main(): Promise<void> {
   const bVaultLp = readPubkey(poolBody, P.B_VAULT_LP);
   const tradeFeeNum = readU64LE(poolBody, P.TRADE_FEE_NUM);
   const tradeFeeDen = readU64LE(poolBody, P.TRADE_FEE_DEN);
+  const curve = decodeCurveType(poolBody);
   console.log('  tokenAMint:', tokenAMint, tokenAMint === SOL_MINT ? '(SOL)' : '');
   console.log('  tokenBMint:', tokenBMint, tokenBMint === SOL_MINT ? '(SOL)' : '');
   console.log('  aVault    :', aVault);
@@ -209,13 +320,27 @@ async function main(): Promise<void> {
   console.log('  bVaultLp  :', bVaultLp);
   console.log('  tradeFee  :', tradeFeeNum.toString(), '/', tradeFeeDen.toString(),
     `(${Number(tradeFeeNum * 10_000n / (tradeFeeDen || 1n))} bps)`);
+  if (curve.kind === 'ConstantProduct') {
+    console.log('  curveType : ConstantProduct');
+  } else {
+    console.log('  curveType : Stable');
+    console.log('    amp                :', curve.amp.toString());
+    console.log('    tokenAMultiplier   :', curve.tokenAMultiplier.toString());
+    console.log('    tokenBMultiplier   :', curve.tokenBMultiplier.toString());
+    console.log('    precisionFactor    :', curve.precisionFactor);
+    console.log('    depegType          :', curve.depegType);
+    console.log('    base_virtual_price :', curve.depegBaseVirtualPrice.toString(),
+      curve.depegBaseVirtualPrice > 0n
+        ? `(~${(Number(curve.depegBaseVirtualPrice) / 1e6).toFixed(6)})`
+        : '');
+  }
 
   const aIsSol = tokenAMint === SOL_MINT;
   const bIsSol = tokenBMint === SOL_MINT;
   if (!aIsSol && !bIsSol) { console.error('FAIL: no SOL side'); process.exit(1); }
   const outputMint = aIsSol ? tokenBMint : tokenAMint;
 
-  // 2. Fetch vaults (in parallel)
+  // 2. Fetch vaults
   console.log('\nStep 2: fetch both dynamic-vaults');
   const [aVaultAcct, bVaultAcct] = await Promise.all([fetchAccount(aVault), fetchAccount(bVault)]);
   if (!aVaultAcct || !bVaultAcct) { console.error('FAIL: vault fetch'); process.exit(1); }
@@ -224,7 +349,7 @@ async function main(): Promise<void> {
   console.log('  A vault total:', aV.totalAmount.toString(), ' lpMint:', aV.lpMint);
   console.log('  B vault total:', bV.totalAmount.toString(), ' lpMint:', bV.lpMint);
 
-  // 3. Fetch vault-lp token accounts (pool's shares) + lp mint supplies
+  // 3. Fetch vault-lp token accounts + lp mint supplies
   console.log('\nStep 3: fetch pool vault-LP balances + vault LP mint supplies');
   const [aVaultLpAcct, bVaultLpAcct, aLpMintAcct, bLpMintAcct] = await Promise.all([
     fetchAccount(aVaultLp),
@@ -252,11 +377,43 @@ async function main(): Promise<void> {
   console.log('  A unlocked :', aUnlocked.toString(), ' -> reserveA:', reserveA.toString());
   console.log('  B unlocked :', bUnlocked.toString(), ' -> reserveB:', reserveB.toString());
 
-  // 5. Simulate swap
+  // 4b. For Stable+SplStake, refresh base_virtual_price from the live stake pool
+  let activeCurve = curve;
+  if (activeCurve.kind === 'Stable' && activeCurve.depegType === 'SplStake') {
+    console.log('\nStep 4b: refresh base_virtual_price from live SPL stake pool');
+    const stakePoolPk = readPubkey(poolBody, P.STAKE_POOL_PK);
+    console.log('  stake pool:', stakePoolPk);
+    const stakeAcct = await fetchAccount(stakePoolPk);
+    if (!stakeAcct) {
+      console.log('  WARN: stake pool fetch failed; using cached virtual price');
+    } else {
+      const sb = Buffer.from(stakeAcct.data[0], 'base64');
+      const totalLamports = sb.readBigUInt64LE(STAKE_POOL_TOTAL_LAMPORTS_OFFSET);
+      const tokenSupply   = sb.readBigUInt64LE(STAKE_POOL_TOKEN_SUPPLY_OFFSET);
+      if (tokenSupply > 0n) {
+        const livePrice = (totalLamports * PRECISION) / tokenSupply;
+        console.log(`  live virtual_price = ${livePrice} (cached: ${activeCurve.depegBaseVirtualPrice})`);
+        activeCurve = { ...activeCurve, depegBaseVirtualPrice: livePrice };
+      }
+    }
+  }
+
+  // 5. Simulate swap (apply trade fee, then run curve)
   console.log('\nStep 5: simulate DAMM swap');
-  const reserveIn = aIsSol ? reserveA : reserveB;
+  const reserveIn  = aIsSol ? reserveA : reserveB;
   const reserveOut = aIsSol ? reserveB : reserveA;
-  const amountOut = cpSwap(AMOUNT_IN_LAMPORTS, reserveIn, reserveOut, tradeFeeNum, tradeFeeDen);
+  const inSide:  'A' | 'B' = aIsSol ? 'A' : 'B';
+  const outSide: 'A' | 'B' = aIsSol ? 'B' : 'A';
+  const tradeFee = (AMOUNT_IN_LAMPORTS * tradeFeeNum) / tradeFeeDen;
+  const amountInAfterFee = AMOUNT_IN_LAMPORTS - tradeFee;
+  console.log(`  trade fee: ${tradeFee} -> after fee: ${amountInAfterFee}`);
+
+  let amountOut: bigint;
+  if (activeCurve.kind === 'ConstantProduct') {
+    amountOut = cpSwap(AMOUNT_IN_LAMPORTS, reserveIn, reserveOut, tradeFeeNum, tradeFeeDen);
+  } else {
+    amountOut = stableSwap(activeCurve, amountInAfterFee, reserveIn, reserveOut, inSide, outSide);
+  }
 
   // Mint decimals for the output side
   const outMintAcct = await fetchAccount(outputMint);
@@ -290,9 +447,6 @@ async function main(): Promise<void> {
     console.log('\nPASS: within 50 bps. DAMM math verified.');
   } else {
     console.log('\nFAIL: > 50 bps. Investigate before D8.');
-    console.log('  - Confirm vault offsets (total_amount, lp_mint, tracker)');
-    console.log('  - Check pool vault_lp SPL account balance');
-    console.log('  - Verify locked profit subtraction');
     process.exit(2);
   }
 }

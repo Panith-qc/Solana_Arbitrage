@@ -15,7 +15,7 @@
  * Program: Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB
  * Source : https://github.com/MeteoraAg/damm-v1-sdk
  *          programs/dynamic-amm/src/state.rs
- * Account: Pool (1260 bytes incl. 8-byte Anchor discriminator)
+ * Account: Pool (944 bytes incl. 8-byte Anchor discriminator)
  *
  * Pool layout (post 8-byte Anchor discriminator):
  *
@@ -179,7 +179,7 @@ async function main(): Promise<void> {
 
     const data = Buffer.from(acct.data[0], 'base64');
     console.log('  owner program :', acct.owner);
-    console.log('  data length   :', data.length, 'bytes (expect 1260)');
+    console.log('  data length   :', data.length, 'bytes (expect 944)');
     console.log('  discriminator :', data.subarray(0, 8).toString('hex'));
 
     const body = data.subarray(8);
