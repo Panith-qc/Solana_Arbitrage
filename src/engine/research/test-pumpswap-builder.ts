@@ -2,22 +2,25 @@
  * Phase E — Step E5 verification: PumpSwap (pump.fun AMM) builder
  * end-to-end check.
  *
- * 1. Discovers a live PumpSwap pool dynamically by calling
- *    getProgramAccounts on the PumpSwap program with an Anchor
- *    discriminator memcmp filter, decoding SOL-quoted pools, batch
- *    fetching their quote vault balances, and picking the pool with
- *    the most SOL liquidity (≥ MIN_QUOTE_LIQUIDITY_LAMPORTS). This
- *    replaces the previous Jupiter-based resolution which depended on
- *    a hardcoded meme token list — BONK/WIF are NOT on PumpSwap, so
- *    the old approach always failed. Manual override via POOL env.
+ * 1. Picks a PumpSwap pool:
+ *      - POOL env (explicit override), else
+ *      - resolve a PumpSwap pool for a known pump.fun-graduated token
+ *        via Jupiter /quote with dexes=Pump.fun+Amm. Default token is
+ *        Fartcoin (9BB6NF...pump), which has the largest confirmed live
+ *        PumpSwap pool at the time of writing. TOKEN env overrides.
+ *      - as a last resort, use the hardcoded known-good pool address.
+ *    A previous version tried getProgramAccounts on PUMPSWAP_PROGRAM,
+ *    but the program now owns 5M+ accounts — even Helius refuses. The
+ *    Jupiter route is both faster and more targeted.
  * 2. Caches the pool via pumpSwapBuilder.cachePumpSwapPoolData with
  *    skipSafetyChecks=true (the meme-safety gates intentionally kill
  *    almost all pools on first sight — that's the point — so for
  *    offline verification we bypass them). Passes dummy globalConfig
  *    and protocolFeeRecipient so buildPumpSwapInstruction can run.
  * 3. Calls calculatePumpSwapAmountOut for 0.1 SOL -> token.
- * 4. Compares the result against Jupiter /quote (direct route) for the
- *    same exact-in. Must match within 50 bps.
+ * 4. Compares the result against Jupiter /quote (dexes=Pump.fun+Amm,
+ *    onlyDirectRoutes=true) for the same exact-in. Must match within
+ *    50 bps.
  * 5. Builds the swap instruction (dry, not sent) with dummy user ATAs.
  * 6. Verifies programId == pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA,
  *    keys.length == 17, the event_authority PDA slot, the account
@@ -38,7 +41,6 @@
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { createHash } from 'crypto';
 import { execSync } from 'child_process';
-import bs58 from 'bs58';
 import {
   PUMPSWAP_PROGRAM,
   cachePumpSwapPoolData,
@@ -50,26 +52,20 @@ const SOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
 const AMOUNT_IN_LAMPORTS = 100_000_000n; // 0.1 SOL
 const TOLERANCE_BPS = 50;
 
-// Liquidity floor for pool selection — mirrors MIN_QUOTE_LIQUIDITY_LAMPORTS
-// in pumpSwapBuilder.ts (~30 SOL ≈ $5k at $170/SOL). Only pools with at
-// least this much SOL in the quote vault are considered for verification.
-const MIN_SELECTION_LAMPORTS = 30n * 1_000_000_000n;
-
-// Cap how many candidate pools we decode before stopping. PumpSwap has
-// thousands of graduated pools; we don't need them all, just enough to
-// find one fat pool.
-const MAX_CANDIDATES = 400;
-
-// Pool account layout offsets (post 8-byte Anchor discriminator)
-const OFF_BASE_MINT = 43;
-const OFF_QUOTE_MINT = 75;
-const OFF_POOL_BASE_TOKEN_ACCOUNT = 139;
-const OFF_POOL_QUOTE_TOKEN_ACCOUNT = 171;
-// Minimum slice length to decode all of the fields we need (up through
-// pool_quote_token_account = 171 + 32 = 203 bytes).
-const POOL_SLICE_LEN = 203;
-// SPL Token account amount field is at offset 64.
-const SPL_TOKEN_AMOUNT_OFFSET = 64;
+// ── Known-good PumpSwap pool ───────────────────────────────────────────────
+// Fartcoin/SOL PumpSwap pool. Fartcoin is a ~$1B pump.fun graduate and has
+// consistently been one of the largest PumpSwap-hosted pools. Confirmed
+// via `curl lite-api.jup.ag/swap/v1/quote dexes=Pump.fun+Amm`:
+//   ammKey  = AmmpSnW5xVeKHTAU9fMjyKEMPgrzmUj3ah5vgvHhAB5J
+//   label   = Pump.fun Amm
+//   token   = 9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump (Fartcoin)
+//
+// Checked alternatives (MOODENG, PNUT, GOAT, CHILLGUY, MEW) did NOT
+// return a Pump.fun Amm route — they route through Raydium / Scorch.
+// The set of tokens with active PumpSwap pools is smaller than one would
+// guess; list will grow over time.
+const DEFAULT_POOL_ADDRESS = 'AmmpSnW5xVeKHTAU9fMjyKEMPgrzmUj3ah5vgvHhAB5J';
+const DEFAULT_POOL_TOKEN = '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump';
 
 const RPC_URL =
   process.env.HELIUS_RPC_URL ||
@@ -84,14 +80,21 @@ interface JupQuote {
   outAmount: string;
   routePlan: Array<{ swapInfo: { ammKey: string; label: string } }>;
 }
-function jupiterQuote(outputMint: string): JupQuote | null {
+
+/**
+ * Query Jupiter for a SOL → outputMint quote, restricted to the Pump.fun
+ * AMM dex so Jupiter can only route through PumpSwap. Returns null if no
+ * PumpSwap route exists for the token.
+ */
+function jupiterPumpSwapQuote(outputMint: string): JupQuote | null {
   const url =
     `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT.toString()}` +
     `&outputMint=${outputMint}&amount=${AMOUNT_IN_LAMPORTS}&slippageBps=200` +
-    `&onlyDirectRoutes=true&swapMode=ExactIn`;
+    `&onlyDirectRoutes=true&swapMode=ExactIn&dexes=Pump.fun+Amm`;
   try {
     const json = JSON.parse(curlGet(url));
     if (json?.outAmount) return json as JupQuote;
+    if (json?.errorCode === 'NO_ROUTES_FOUND') return null;
     console.error('  Jupiter response had no outAmount:', JSON.stringify(json).slice(0, 200));
     return null;
   } catch (err) {
@@ -100,100 +103,16 @@ function jupiterQuote(outputMint: string): JupQuote | null {
   }
 }
 
-interface CandidatePool {
-  address: PublicKey;
-  baseMint: PublicKey;
-  poolQuoteVault: PublicKey;
-}
-
 /**
- * Discover a live PumpSwap pool by querying the program directly for
- * its Pool accounts. Returns the address of the pool with the largest
- * SOL-denominated liquidity above MIN_SELECTION_LAMPORTS, or null if
- * nothing qualifies.
+ * Resolve a PumpSwap pool address for a known pump.fun token via Jupiter
+ * with dexes=Pump.fun+Amm. Returns the pool's ammKey or null.
  */
-async function discoverLivePumpSwapPool(
-  connection: Connection,
-): Promise<{ address: string; baseMint: string; quoteReserve: bigint } | null> {
-  // Anchor account discriminator for Pool = sha256("account:Pool")[:8]
-  const poolDiscriminator = createHash('sha256')
-    .update('account:Pool')
-    .digest()
-    .subarray(0, 8);
-  const discB58 = bs58.encode(poolDiscriminator);
-  const solMintB58 = SOL_MINT.toBase58();
-
-  console.log('  discriminator :', poolDiscriminator.toString('hex'));
-  console.log('  filter memcmp : offset 0, bytes', discB58);
-  console.log('  filter memcmp : offset', OFF_QUOTE_MINT, 'bytes', solMintB58, '(SOL)');
-  console.log('  dataSlice     : offset 0, length', POOL_SLICE_LEN);
-
-  let accounts: Array<{ pubkey: PublicKey; account: { data: Buffer } }>;
-  try {
-    accounts = await connection.getProgramAccounts(PUMPSWAP_PROGRAM, {
-      commitment: 'confirmed',
-      dataSlice: { offset: 0, length: POOL_SLICE_LEN },
-      filters: [
-        { memcmp: { offset: 0, bytes: discB58 } },
-        // Further filter on-chain to SOL-quoted pools so we don't
-        // download thousands of non-SOL pools.
-        { memcmp: { offset: OFF_QUOTE_MINT, bytes: solMintB58 } },
-      ],
-    });
-  } catch (err: any) {
-    console.error('  getProgramAccounts failed:', err?.message);
-    console.error('  (public mainnet-beta RPC may reject gPA on PumpSwap — use Helius)');
-    return null;
-  }
-  console.log('  raw pool matches :', accounts.length);
-  if (accounts.length === 0) return null;
-
-  // Decode candidates.
-  const candidates: CandidatePool[] = [];
-  for (const acc of accounts) {
-    const data = acc.account.data;
-    if (data.length < POOL_SLICE_LEN) continue;
-    const baseMint = new PublicKey(data.subarray(OFF_BASE_MINT, OFF_BASE_MINT + 32));
-    const poolQuoteVault = new PublicKey(
-      data.subarray(OFF_POOL_QUOTE_TOKEN_ACCOUNT, OFF_POOL_QUOTE_TOKEN_ACCOUNT + 32),
-    );
-    candidates.push({ address: acc.pubkey, baseMint, poolQuoteVault });
-    if (candidates.length >= MAX_CANDIDATES) break;
-  }
-  console.log('  decoded candidates :', candidates.length);
-
-  // Batch-fetch quote vault balances in chunks of 100
-  // (getMultipleAccountsInfo limit).
-  let best: { cand: CandidatePool; lamports: bigint } | null = null;
-  for (let i = 0; i < candidates.length; i += 100) {
-    const chunk = candidates.slice(i, i + 100);
-    const vaults = await connection.getMultipleAccountsInfo(
-      chunk.map((c) => c.poolQuoteVault),
-      'confirmed',
-    );
-    for (let j = 0; j < chunk.length; j++) {
-      const va = vaults[j];
-      if (!va?.data || va.data.length < SPL_TOKEN_AMOUNT_OFFSET + 8) continue;
-      const lamports = va.data.readBigUInt64LE(SPL_TOKEN_AMOUNT_OFFSET);
-      if (lamports < MIN_SELECTION_LAMPORTS) continue;
-      if (!best || lamports > best.lamports) {
-        best = { cand: chunk[j], lamports };
-      }
-    }
-  }
-
-  if (!best) {
-    console.log('  no pools above MIN_SELECTION_LAMPORTS');
-    return null;
-  }
-  console.log('  BEST pool :', best.cand.address.toBase58());
-  console.log('  BEST base :', best.cand.baseMint.toBase58());
-  console.log('  BEST sol  :', (Number(best.lamports) / 1e9).toFixed(3), 'SOL');
-  return {
-    address: best.cand.address.toBase58(),
-    baseMint: best.cand.baseMint.toBase58(),
-    quoteReserve: best.lamports,
-  };
+function resolvePumpSwapPoolViaJupiter(tokenMint: string): string | null {
+  const q = jupiterPumpSwapQuote(tokenMint);
+  if (!q) return null;
+  const route = q.routePlan?.[0]?.swapInfo;
+  if (!route || !route.label?.toLowerCase().includes('pump')) return null;
+  return route.ammKey;
 }
 
 async function main(): Promise<void> {
@@ -204,18 +123,25 @@ async function main(): Promise<void> {
   const connection = new Connection(RPC_URL, 'confirmed');
 
   // Step 0: pick a PumpSwap pool.
-  // Priority: POOL env (explicit override) → live discovery via
-  // getProgramAccounts on PUMPSWAP_PROGRAM (no hardcoded tokens).
+  // Priority:
+  //   1. POOL env (explicit pool address override)
+  //   2. TOKEN env (resolve pool via Jupiter Pump.fun Amm filter)
+  //   3. DEFAULT_POOL_TOKEN → Jupiter Pump.fun Amm (re-confirms freshness)
+  //   4. DEFAULT_POOL_ADDRESS (hardcoded known-good, last-ditch fallback)
   let poolAddr = process.env.POOL || null;
   if (!poolAddr) {
-    console.log('Step 0: discover live PumpSwap pool via getProgramAccounts');
-    const picked = await discoverLivePumpSwapPool(connection);
-    if (!picked) {
-      console.error('FAIL: no live PumpSwap pool with ≥30 SOL liquidity found');
-      console.error('      Check that HELIUS_RPC_URL supports getProgramAccounts.');
-      process.exit(1);
+    const tokenMint = process.env.TOKEN || DEFAULT_POOL_TOKEN;
+    console.log('Step 0: resolve PumpSwap pool via Jupiter (dexes=Pump.fun+Amm)');
+    console.log('  token :', tokenMint, tokenMint === DEFAULT_POOL_TOKEN ? '(Fartcoin, hardcoded default)' : '');
+    const resolved = resolvePumpSwapPoolViaJupiter(tokenMint);
+    if (resolved) {
+      console.log('  resolved pool :', resolved);
+      poolAddr = resolved;
+    } else {
+      console.log('  Jupiter returned no PumpSwap route — falling back to hardcoded default pool');
+      poolAddr = DEFAULT_POOL_ADDRESS;
+      console.log('  default pool  :', poolAddr);
     }
-    poolAddr = picked.address;
   } else {
     console.log('Step 0: using POOL env =', poolAddr);
   }
@@ -262,11 +188,12 @@ async function main(): Promise<void> {
   console.log('  amountIn  :', AMOUNT_IN_LAMPORTS.toString(), 'lamports SOL');
   console.log('  amountOut :', ourOut.toString(), `(${ourHuman.toFixed(8)})`);
 
-  // Step 3: Jupiter compare
-  console.log('\nStep 3: Jupiter /quote (direct route)');
-  const jup = jupiterQuote(cached.baseMint.toString());
+  // Step 3: Jupiter compare — restricted to Pump.fun Amm so Jupiter
+  // quotes the same pool we just cached (not a Raydium/Orca fallback).
+  console.log('\nStep 3: Jupiter /quote (dexes=Pump.fun+Amm)');
+  const jup = jupiterPumpSwapQuote(cached.baseMint.toString());
   if (!jup) {
-    console.error('FAIL: no Jupiter quote');
+    console.error('FAIL: no Jupiter PumpSwap quote for base mint');
     process.exit(1);
   }
   const jupRaw = BigInt(jup.outAmount);
@@ -275,10 +202,11 @@ async function main(): Promise<void> {
   console.log('  ammKey    :', route?.ammKey, `(${route?.label})`);
   console.log('  outAmount :', jupRaw.toString(), `(${jupHuman.toFixed(8)})`);
   if (route && route.ammKey !== poolAddr) {
-    console.log('  WARN: Jupiter routed through a different pool than ours.');
+    console.log('  WARN: Jupiter routed through a different PumpSwap pool than ours.');
   }
   if (route && route.label && !route.label.toLowerCase().includes('pump')) {
-    console.log('  WARN: Jupiter route label does not contain "pump" —', route.label);
+    console.error(`FAIL: Jupiter route label is not PumpSwap — ${route.label}`);
+    process.exit(1);
   }
 
   const diff = ourHuman - jupHuman;
