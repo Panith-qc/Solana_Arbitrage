@@ -361,6 +361,26 @@ export function onSpread(cb: PriceBookSpreadCallback): void {
   spreadCallbacks.push(cb);
 }
 
+/**
+ * Register a pool registry entry at runtime. Used by research/integration
+ * tests that discover pools dynamically (e.g. via Jupiter /quote) instead of
+ * relying on the static RAYDIUM_POOL_REGISTRY baked into config. Production
+ * code paths still use initPriceBook() with the config; this is additive.
+ *
+ * Also ensures the tokenMint's decimals are cached so updatePool() can price
+ * AMM V4 pools (which pass raw reserves). Pass the decimals explicitly since
+ * tokens discovered at runtime may not be in SCAN_TOKENS.
+ */
+export function registerPool(
+  entry: PoolRegistryEntry,
+  tokenDecimals: number,
+  tokenSymbol?: string,
+): void {
+  registryCache.set(entry.poolAddress, entry);
+  decimalsCache.set(entry.tokenMint, tokenDecimals);
+  if (tokenSymbol) symbolCache.set(entry.tokenMint, tokenSymbol);
+}
+
 /** Clear all callbacks (for shutdown) */
 export function clearPriceBookCallbacks(): void {
   updateCallbacks.length = 0;

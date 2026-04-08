@@ -834,8 +834,16 @@ export function getRequiredDammAlts(_pool: CachedDammPool): PublicKey[] {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * SOL-per-token from cached DAMM (for the price book). Uses effective
- * reserves (vault unlock-aware) and inverts based on which side SOL sits on.
+ * SOL-per-token from cached DAMM (for the price book).
+ *
+ * ConstantProduct pools: simple decimal-adjusted reserve ratio (bvp=1).
+ * Stable+depeg pools (LST/SOL): the reserve ratio is NOT the spot price —
+ *   the stable curve upscales the depeg side by `base_virtual_price`, so
+ *   the balanced pool sits at A*mul_A*PRECISION ≈ B*mul_B*bvp, which does
+ *   NOT correspond to market SOL/LST. Probe the curve with a tiny swap
+ *   (0.001 SOL → token) through the already-verified swap math and use
+ *   the realized rate. This is accurate to 1 bp for probe sizes << TVL,
+ *   which is always true for our pools (smallest is ~400 SOL TVL).
  */
 export function dammSolPerToken(pool: CachedDammPool): number {
   const aIsSol = pool.tokenAMint.toString() === SOL_MINT_STR;
@@ -843,10 +851,18 @@ export function dammSolPerToken(pool: CachedDammPool): number {
   if (!aIsSol && !bIsSol) return 0;
   const { reserveA, reserveB } = effectiveDammReserves(pool);
   if (reserveA === 0n || reserveB === 0n) return 0;
-  const aHuman = Number(reserveA) / 10 ** pool.decimalsA;
-  const bHuman = Number(reserveB) / 10 ** pool.decimalsB;
-  if (aIsSol) {
-    return bHuman === 0 ? 0 : aHuman / bHuman;
-  }
-  return aHuman === 0 ? 0 : bHuman / aHuman;
+
+  const tokenDecimals = aIsSol ? pool.decimalsB : pool.decimalsA;
+  const solMintPk = aIsSol ? pool.tokenAMint : pool.tokenBMint;
+
+  // 0.001 SOL probe (1_000_000 lamports). Small enough that stable-curve
+  // slippage ≪ 1 bp on any pool with >= 1 SOL TVL.
+  const probeSolLamports = 1_000_000n;
+  const tokenOutRaw = calculateDammAmountOut(pool, probeSolLamports, solMintPk);
+  if (tokenOutRaw === 0n) return 0;
+
+  const solHuman = Number(probeSolLamports) / 1e9;
+  const tokenHuman = Number(tokenOutRaw) / 10 ** tokenDecimals;
+  if (tokenHuman <= 0) return 0;
+  return solHuman / tokenHuman;
 }
