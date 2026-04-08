@@ -62,6 +62,13 @@ import {
   calculateDammAmountOut,
   type CachedDammPool,
 } from './dammSwapBuilder.js';
+import {
+  getCachedPumpSwapPool,
+  buildPumpSwapInstruction,
+  calculatePumpSwapAmountOut,
+  MAX_PUMPSWAP_TRADE_LAMPORTS,
+  type CachedPumpSwapPool,
+} from './pumpSwapBuilder.js';
 
 export interface MixedHotPathResult {
   transaction: VersionedTransaction;
@@ -69,8 +76,8 @@ export interface MixedHotPathResult {
   expectedProfitLamports: bigint;
   buyPool: string;
   sellPool: string;
-  buyDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm';
-  sellDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm';
+  buyDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap';
+  sellDex: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap';
   tipLamports: bigint;
 }
 
@@ -80,7 +87,8 @@ type Resolved =
   | { kind: 'whirlpool'; pool: CachedWhirlpoolPool; tokenMint: PublicKey }
   | { kind: 'cpmm'; pool: CachedCpmmPool; tokenMint: PublicKey }
   | { kind: 'dlmm'; pool: CachedDlmmPool; tokenMint: PublicKey }
-  | { kind: 'damm'; pool: CachedDammPool; tokenMint: PublicKey };
+  | { kind: 'damm'; pool: CachedDammPool; tokenMint: PublicKey }
+  | { kind: 'pumpswap'; pool: CachedPumpSwapPool; tokenMint: PublicKey };
 
 function resolvePool(addr: string): Resolved | null {
   const amm = getCachedAmmPool(addr);
@@ -119,6 +127,11 @@ function resolvePool(addr: string): Resolved | null {
       damm.tokenAMint.toString() === SOL_MINT ? damm.tokenBMint : damm.tokenAMint;
     return { kind: 'damm', pool: damm, tokenMint };
   }
+  const pump = getCachedPumpSwapPool(addr);
+  if (pump) {
+    // PumpSwap quote is always SOL; base is the meme token.
+    return { kind: 'pumpswap', pool: pump, tokenMint: pump.baseMint };
+  }
   return null;
 }
 
@@ -149,7 +162,10 @@ function quoteBuy(r: Resolved, solIn: bigint): bigint {
   if (r.kind === 'dlmm') {
     return calculateDlmmAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
   }
-  return calculateDammAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
+  if (r.kind === 'damm') {
+    return calculateDammAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
+  }
+  return calculatePumpSwapAmountOut(r.pool, solIn, new PublicKey(SOL_MINT));
 }
 
 /**
@@ -179,7 +195,10 @@ function quoteSell(r: Resolved, tokenIn: bigint): bigint {
   if (r.kind === 'dlmm') {
     return calculateDlmmAmountOut(r.pool, tokenIn, r.tokenMint);
   }
-  return calculateDammAmountOut(r.pool, tokenIn, r.tokenMint);
+  if (r.kind === 'damm') {
+    return calculateDammAmountOut(r.pool, tokenIn, r.tokenMint);
+  }
+  return calculatePumpSwapAmountOut(r.pool, tokenIn, r.tokenMint);
 }
 
 /**
@@ -253,25 +272,42 @@ function buildLegInstruction(
       minimumAmountOut,
     });
   }
-  // damm — vault-backed AMM, same input/output ATA shape
-  return buildDammSwapInstruction({
+  if (r.kind === 'damm') {
+    // damm — vault-backed AMM, same input/output ATA shape
+    return buildDammSwapInstruction({
+      pool: r.pool,
+      payer: walletPk,
+      userInputTokenAccount: userInputAta,
+      userOutputTokenAccount: userOutputAta,
+      inputMint,
+      amountIn,
+      minimumAmountOut,
+    });
+  }
+  // pumpswap — base/quote ATA layout. quote is always SOL (WSOL ATA).
+  // The WSOL ATA is userInputAta when buying and userOutputAta when selling.
+  const isBuy = r.pool.quoteMint.equals(inputMint);
+  const userQuoteAta = isBuy ? userInputAta : userOutputAta;
+  const userBaseAta = isBuy ? userOutputAta : userInputAta;
+  return buildPumpSwapInstruction({
     pool: r.pool,
     payer: walletPk,
-    userInputTokenAccount: userInputAta,
-    userOutputTokenAccount: userOutputAta,
+    userQuoteTokenAccount: userQuoteAta,
+    userBaseTokenAccount: userBaseAta,
     inputMint,
     amountIn,
     minimumAmountOut,
   });
 }
 
-function dexTag(r: Resolved): 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' {
+function dexTag(r: Resolved): 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap' {
   if (r.kind === 'amm') return 'amm-v4';
   if (r.kind === 'clmm') return 'clmm';
   if (r.kind === 'whirlpool') return 'whirlpool';
   if (r.kind === 'cpmm') return 'cpmm';
   if (r.kind === 'dlmm') return 'dlmm';
-  return 'damm';
+  if (r.kind === 'damm') return 'damm';
+  return 'pumpswap';
 }
 
 function poolLabel(r: Resolved): string {
@@ -299,6 +335,23 @@ export function buildMixedHotPathTransaction(
     executionLog.warn(
       { buy: buy.tokenMint.toString(), sell: sell.tokenMint.toString() },
       'MIXED HOT: token mismatch between legs',
+    );
+    return null;
+  }
+
+  // ── PumpSwap trade-size clamp ───────────────────────────────────
+  // Meme pools rug hard; never put more than MAX_PUMPSWAP_TRADE_LAMPORTS
+  // (default 0.1 SOL) through a PumpSwap leg, even if the scan amount
+  // is larger. The clamp applies if either the buy or sell leg is
+  // PumpSwap — whichever leg the SOL is about to touch.
+  const hasPumpLeg = buy.kind === 'pumpswap' || sell.kind === 'pumpswap';
+  if (hasPumpLeg && inputLamports > MAX_PUMPSWAP_TRADE_LAMPORTS) {
+    executionLog.debug(
+      {
+        inputLamports: inputLamports.toString(),
+        maxPumpSwapLamports: MAX_PUMPSWAP_TRADE_LAMPORTS.toString(),
+      },
+      'MIXED HOT: pumpswap leg exceeds max trade size — skipping',
     );
     return null;
   }

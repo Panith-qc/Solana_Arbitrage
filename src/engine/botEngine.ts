@@ -35,6 +35,12 @@ import {
   getDammPoolByVaultLpMint,
   getDammPoolByStakePool,
 } from './dammSwapBuilder.js';
+import {
+  cachePumpSwapPoolData,
+  updateCachedPumpSwapVault,
+  getCachedPumpSwapPool,
+  getPumpSwapPoolByVault,
+} from './pumpSwapBuilder.js';
 import { buildMixedHotPathTransaction } from './hotPathBuilder.js';
 import { decodeSwapInstruction } from './instructionDecoder.js';
 import { initPriceBook, clearPriceBook } from './priceBook.js';
@@ -644,6 +650,7 @@ export class BotEngine {
     const cpmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'cpmm');
     const dlmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'dlmm');
     const dammPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'damm');
+    const pumpSwapPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'pumpswap');
 
     let ammCached = 0;
     for (const pool of ammV4Pools) {
@@ -681,6 +688,18 @@ export class BotEngine {
       if (result) dammCached++;
     }
 
+    // PumpSwap meme pools — cachePumpSwapPoolData() applies age +
+    // liquidity + freeze-authority safety gates. Rejected pools log a
+    // warn and return null (non-fatal). Without globalConfig +
+    // protocolFeeRecipient these pools are read-only for quoting;
+    // actual swap building requires GlobalConfig wiring (added at a
+    // later step once the bot operator fills in the 8 recipient ATAs).
+    let pumpSwapCached = 0;
+    for (const pool of pumpSwapPools) {
+      const result = await cachePumpSwapPoolData(conn, pool.poolAddress, pool.label);
+      if (result) pumpSwapCached++;
+    }
+
     engineLog.info(
       {
         ammCached, ammTotal: ammV4Pools.length,
@@ -689,8 +708,9 @@ export class BotEngine {
         cpmmCached, cpmmTotal: cpmmPools.length,
         dlmmCached, dlmmTotal: dlmmPools.length,
         dammCached, dammTotal: dammPools.length,
+        pumpSwapCached, pumpSwapTotal: pumpSwapPools.length,
       },
-      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool + CPMM + DLMM + DAMM)',
+      'Pool data cached for hot path direct swap building (AMM V4 + CLMM + Whirlpool + CPMM + DLMM + DAMM + PumpSwap)',
     );
   }
 
@@ -761,6 +781,8 @@ export class BotEngine {
       'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1': 9,    // bSOL
       '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 6,   // RAY
       'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6,    // JUP
+      'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 5,   // BONK (PumpSwap)
+      'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 6,   // WIF  (PumpSwap)
     };
 
     // Register pool configs for proper labeling + decimals
@@ -824,6 +846,13 @@ export class BotEngine {
         // SPL stake pool change for a DAMM Stable+SplStake depeg pool →
         // refresh live virtual_price.
         updateCachedDammStakePool(poolAddress, data);
+      } else if (getPumpSwapPoolByVault(poolAddress)) {
+        // PumpSwap vault (base or quote SPL Token account) changed →
+        // refresh that vault's balance in the owning pool's cache.
+        // There is no separate pool-account hook: PumpSwap pool state
+        // (feeBps, globalConfig) is loaded once at cache time and does
+        // not change at runtime, so only the vaults need live updates.
+        updateCachedPumpSwapVault(poolAddress, data);
       }
     });
 
@@ -915,11 +944,13 @@ export class BotEngine {
     const buySupported =
       buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' ||
       buyEntry?.poolType === 'whirlpool' || buyEntry?.poolType === 'cpmm' ||
-      buyEntry?.poolType === 'dlmm' || buyEntry?.poolType === 'damm';
+      buyEntry?.poolType === 'dlmm' || buyEntry?.poolType === 'damm' ||
+      buyEntry?.poolType === 'pumpswap';
     const sellSupported =
       sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm' ||
       sellEntry?.poolType === 'whirlpool' || sellEntry?.poolType === 'cpmm' ||
-      sellEntry?.poolType === 'dlmm' || sellEntry?.poolType === 'damm';
+      sellEntry?.poolType === 'dlmm' || sellEntry?.poolType === 'damm' ||
+      sellEntry?.poolType === 'pumpswap';
     const hotPathSupported = buySupported && sellSupported;
     const isMixed = hotPathSupported && !bothAmmV4;
 

@@ -33,8 +33,8 @@ import {
 export interface PriceBookEntry {
   poolAddress: string;
   label: string;
-  dex: string;             // 'Raydium AMM' | 'Raydium CLMM' | 'Orca' | 'Meteora'
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm';
+  dex: string;             // 'Raydium AMM' | 'Raydium CLMM' | 'Orca' | 'Meteora' | 'PumpSwap'
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap';
   tokenMint: string;
   tokenSymbol: string;
   tokenDecimals: number;
@@ -157,13 +157,13 @@ export function calculateDecimalPrice(
   baseReserve: bigint,
   quoteReserve: bigint,
   tokenDecimals: number,
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm',
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap',
 ): number {
   if (baseReserve === 0n || quoteReserve === 0n) return 0;
 
   if (poolType === 'clmm' || poolType === 'whirlpool' || poolType === 'cpmm' ||
-      poolType === 'dlmm' || poolType === 'damm') {
-    // CLMM/Whirlpool/CPMM/DLMM/DAMM pseudo-reserves: reserveA = price * 1e9, reserveB = 1e9
+      poolType === 'dlmm' || poolType === 'damm' || poolType === 'pumpswap') {
+    // CLMM/Whirlpool/CPMM/DLMM/DAMM/PumpSwap pseudo-reserves: reserveA = price * 1e9, reserveB = 1e9
     // So price = Number(reserveA) / Number(reserveB) is already decimal-adjusted
     return Number(baseReserve) / Number(quoteReserve);
   }
@@ -218,7 +218,9 @@ export function updatePool(
       ? 'Raydium CPMM'
       : registry.poolType === 'dlmm'
       ? 'Meteora DLMM'
-      : 'Meteora DAMM';
+      : registry.poolType === 'damm'
+      ? 'Meteora DAMM'
+      : 'PumpSwap AMM';
   const price = calculateDecimalPrice(baseReserve, quoteReserve, tokenDecimals, registry.poolType);
 
   if (price <= 0) return;

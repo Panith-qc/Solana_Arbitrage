@@ -91,7 +91,7 @@ export interface PoolRegistryEntry {
   poolAddress: string;
   tokenMint: string;
   tokenSymbol: string;
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm';
+  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap';
   label: string;
 }
 
@@ -155,6 +155,23 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   { poolAddress: 'ERgpKaq59Nnfm9YRVAAhnq16cZhHxGcDoDWCzXbhiaNw', tokenMint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', tokenSymbol: 'jitoSOL', poolType: 'damm', label: 'jitoSOL/SOL DAMM' },
   { poolAddress: 'HcjZvfeSNJbNkfLD4eEcRBr96AD3w1GpmMppaeRZf7ur', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'damm', label: 'mSOL/SOL DAMM' },
   { poolAddress: 'DvWpLaNUPqoCGn4foM6hekAPKqMtADJJbJWhwuMiT6vK', tokenMint: 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', tokenSymbol: 'bSOL', poolType: 'damm', label: 'bSOL/SOL DAMM' },
+
+  // ── PumpSwap AMM pools (Phase E) ──────────────────────────────────────────
+  // PumpSwap is the constant-product AMM hosting pump.fun-graduated meme
+  // tokens. Program: PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP1. Math is
+  // Uniswap V2 with a default 25 bps fee on input (verified in E2 at -0.76 bps
+  // vs Jupiter). Pool layout is decoded by src/engine/research/pumpswap-layout.ts.
+  // Meme-token safety gates in cachePumpSwapPoolData() REJECT:
+  //   - pools younger than 1 hour  (rug window)
+  //   - pools with < 30 SOL quote liquidity
+  //   - base mints with an active freeze authority
+  // Any addresses that fail these checks are skipped at startup with a warn log
+  // (non-fatal). Max per-leg trade size is clamped to 0.1 SOL via
+  // MAX_PUMPSWAP_TRADE_LAMPORTS in pumpSwapBuilder.ts. Candidate addresses are
+  // marked [TODO-VERIFY] — verify on-VM via E5 (test-pumpswap-builder) before
+  // live trading.
+  { poolAddress: '9h7q5e9a9YQyHY8tQa1p6pwnqCZMXKdqcQBTcS2XpR8C', tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', tokenSymbol: 'BONK', poolType: 'pumpswap', label: 'BONK/SOL PumpSwap [TODO-VERIFY]' },
+  { poolAddress: '7jTQxsH3BZLBt7Q3tQ3pZc8YpoBDNHaEwcCuGvhKxxDh', tokenMint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', tokenSymbol: 'WIF', poolType: 'pumpswap', label: 'WIF/SOL PumpSwap [TODO-VERIFY]' },
 ];
 
 // Jito Block Engine endpoints (ordered by geography)

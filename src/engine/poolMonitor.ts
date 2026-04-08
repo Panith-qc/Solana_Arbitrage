@@ -12,6 +12,7 @@ import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
 import { getCachedCpmmPool, cpmmSolPerToken } from './cpmmSwapBuilder.js';
 import { getCachedDlmmPool, dlmmSolPerToken } from './dlmmSwapBuilder.js';
 import { getCachedDammPool, dammSolPerToken } from './dammSwapBuilder.js';
+import { getCachedPumpSwapPool, pumpSwapSolPerToken } from './pumpSwapBuilder.js';
 
 const WHIRLPOOL_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
@@ -857,8 +858,16 @@ export class PoolMonitor {
     const isCpmm = labelLower.includes('cpmm');
     const isDlmm = labelLower.includes('dlmm');
     const isDamm = labelLower.includes('damm');
+    const isPumpSwap = labelLower.includes('pumpswap');
 
     try {
+      // ── PumpSwap pools: derive price from cached vault balances.
+      // Checked first so the "pumpswap" label keyword wins over other
+      // substring matches.
+      if (isPumpSwap) {
+        return this.parsePumpSwapPoolData(poolAddress, data, context, poolCfg);
+      }
+
       // ── DAMM (Dynamic AMM v1) pools: derive price from cached
       // effective reserves (vault unlock-aware). Checked BEFORE DLMM
       // because both labels can contain "mm" — we match on substring.
@@ -1124,6 +1133,40 @@ export class PoolMonitor {
       };
     } catch (err) {
       dataLog.error({ err, pool: poolAddress }, 'Failed to parse DAMM data');
+      return null;
+    }
+  }
+
+  /**
+   * Parse a PumpSwap AMM pool. Like CPMM/DLMM/DAMM, reserves live in the
+   * cached pool state maintained by pumpSwapBuilder (refreshed via the
+   * engine's vault WS hooks). We just compute SOL_per_token from the
+   * cached vault balances and return the pseudo-reserve envelope.
+   */
+  private parsePumpSwapPoolData(
+    poolAddress: string,
+    _data: Buffer,
+    context: Context,
+    poolCfg: PoolConfig | undefined,
+  ): PoolUpdate | null {
+    try {
+      const cached = getCachedPumpSwapPool(poolAddress);
+      if (!cached) return null;
+      const solPerToken = pumpSwapSolPerToken(cached);
+      if (solPerToken <= 0) return null;
+      const SCALE = 1_000_000_000n;
+      const scaledPrice = BigInt(Math.round(solPerToken * 1e9));
+      return {
+        poolAddress,
+        tokenA: poolCfg?.tokenA || '',
+        tokenB: poolCfg?.tokenB || '',
+        reserveA: scaledPrice,
+        reserveB: SCALE,
+        timestamp: Date.now(),
+        slot: context.slot,
+      };
+    } catch (err) {
+      dataLog.error({ err, pool: poolAddress }, 'Failed to parse PumpSwap data');
       return null;
     }
   }
