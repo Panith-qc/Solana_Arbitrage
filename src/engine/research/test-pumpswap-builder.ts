@@ -13,7 +13,7 @@
  * 4. Compares the result against Jupiter /quote (direct route) for the
  *    same exact-in. Must match within 50 bps.
  * 5. Builds the swap instruction (dry, not sent) with dummy user ATAs.
- * 6. Verifies programId == PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP1,
+ * 6. Verifies programId == pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA,
  *    keys.length == 17, the event_authority PDA slot, the account
  *    ordering, and the discriminator+args encoding.
  *

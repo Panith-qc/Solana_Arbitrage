@@ -63,7 +63,7 @@ import { executionLog } from './logger.js';
 // ═══════════════════════════════════════════════════════════════
 
 export const PUMPSWAP_PROGRAM = new PublicKey(
-  'PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP1',
+  'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',
 );
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');

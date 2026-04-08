@@ -53,7 +53,7 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 // Program ID for the PumpSwap AMM — specified by Phase E directive.
 // Verify on-VM: getProgramAccounts should return pool accounts owned by
 // this program.
-const PUMPSWAP_PROGRAM = 'PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP1';
+const PUMPSWAP_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
 
 // Known pump.fun-graduated meme tokens to search for on PumpSwap.
 // Used to resolve candidate pool addresses via Jupiter /quote

@@ -24,7 +24,7 @@ import { PublicKey } from '@solana/web3.js';
 import { execSync } from 'child_process';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const PUMPSWAP_PROGRAM = 'PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP1';
+const PUMPSWAP_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
 const AMOUNT_IN_LAMPORTS = 100_000_000n; // 0.1 SOL
 
 // Default target token — BONK. Override via TOKEN env or POOL env.

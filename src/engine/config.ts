@@ -158,7 +158,7 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
 
   // ── PumpSwap AMM pools (Phase E) ──────────────────────────────────────────
   // PumpSwap is the constant-product AMM hosting pump.fun-graduated meme
-  // tokens. Program: PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP1. Math is
+  // tokens. Program: pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA. Math is
   // Uniswap V2 with a default 25 bps fee on input (verified in E2 at -0.76 bps
   // vs Jupiter). Pool layout is decoded by src/engine/research/pumpswap-layout.ts.
   // Meme-token safety gates in cachePumpSwapPoolData() REJECT:
