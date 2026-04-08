@@ -2,8 +2,14 @@
  * Phase E — Step E5 verification: PumpSwap (pump.fun AMM) builder
  * end-to-end check.
  *
- * 1. Resolves a live PumpSwap pool via Jupiter direct route on a known
- *    meme token (default BONK, override via TOKEN / POOL env).
+ * 1. Discovers a live PumpSwap pool dynamically by calling
+ *    getProgramAccounts on the PumpSwap program with an Anchor
+ *    discriminator memcmp filter, decoding SOL-quoted pools, batch
+ *    fetching their quote vault balances, and picking the pool with
+ *    the most SOL liquidity (≥ MIN_QUOTE_LIQUIDITY_LAMPORTS). This
+ *    replaces the previous Jupiter-based resolution which depended on
+ *    a hardcoded meme token list — BONK/WIF are NOT on PumpSwap, so
+ *    the old approach always failed. Manual override via POOL env.
  * 2. Caches the pool via pumpSwapBuilder.cachePumpSwapPoolData with
  *    skipSafetyChecks=true (the meme-safety gates intentionally kill
  *    almost all pools on first sight — that's the point — so for
@@ -32,6 +38,7 @@
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { createHash } from 'crypto';
 import { execSync } from 'child_process';
+import bs58 from 'bs58';
 import {
   PUMPSWAP_PROGRAM,
   cachePumpSwapPoolData,
@@ -40,12 +47,29 @@ import {
 } from '../pumpSwapBuilder.js';
 
 const SOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
-// Default meme token — BONK is a well-known pump.fun graduate with a live
-// PumpSwap pool that Jupiter routes through.
-const TOKEN_MINT_STR =
-  process.env.TOKEN || 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
 const AMOUNT_IN_LAMPORTS = 100_000_000n; // 0.1 SOL
 const TOLERANCE_BPS = 50;
+
+// Liquidity floor for pool selection — mirrors MIN_QUOTE_LIQUIDITY_LAMPORTS
+// in pumpSwapBuilder.ts (~30 SOL ≈ $5k at $170/SOL). Only pools with at
+// least this much SOL in the quote vault are considered for verification.
+const MIN_SELECTION_LAMPORTS = 30n * 1_000_000_000n;
+
+// Cap how many candidate pools we decode before stopping. PumpSwap has
+// thousands of graduated pools; we don't need them all, just enough to
+// find one fat pool.
+const MAX_CANDIDATES = 400;
+
+// Pool account layout offsets (post 8-byte Anchor discriminator)
+const OFF_BASE_MINT = 43;
+const OFF_QUOTE_MINT = 75;
+const OFF_POOL_BASE_TOKEN_ACCOUNT = 139;
+const OFF_POOL_QUOTE_TOKEN_ACCOUNT = 171;
+// Minimum slice length to decode all of the fields we need (up through
+// pool_quote_token_account = 171 + 32 = 203 bytes).
+const POOL_SLICE_LEN = 203;
+// SPL Token account amount field is at offset 64.
+const SPL_TOKEN_AMOUNT_OFFSET = 64;
 
 const RPC_URL =
   process.env.HELIUS_RPC_URL ||
@@ -76,35 +100,122 @@ function jupiterQuote(outputMint: string): JupQuote | null {
   }
 }
 
-async function resolvePumpSwapPool(outputMint: string): Promise<string | null> {
-  const q = jupiterQuote(outputMint);
-  if (!q) return null;
-  for (const r of q.routePlan) {
-    const label = (r.swapInfo?.label || '').toLowerCase();
-    if (label.includes('pump')) return r.swapInfo.ammKey;
+interface CandidatePool {
+  address: PublicKey;
+  baseMint: PublicKey;
+  poolQuoteVault: PublicKey;
+}
+
+/**
+ * Discover a live PumpSwap pool by querying the program directly for
+ * its Pool accounts. Returns the address of the pool with the largest
+ * SOL-denominated liquidity above MIN_SELECTION_LAMPORTS, or null if
+ * nothing qualifies.
+ */
+async function discoverLivePumpSwapPool(
+  connection: Connection,
+): Promise<{ address: string; baseMint: string; quoteReserve: bigint } | null> {
+  // Anchor account discriminator for Pool = sha256("account:Pool")[:8]
+  const poolDiscriminator = createHash('sha256')
+    .update('account:Pool')
+    .digest()
+    .subarray(0, 8);
+  const discB58 = bs58.encode(poolDiscriminator);
+  const solMintB58 = SOL_MINT.toBase58();
+
+  console.log('  discriminator :', poolDiscriminator.toString('hex'));
+  console.log('  filter memcmp : offset 0, bytes', discB58);
+  console.log('  filter memcmp : offset', OFF_QUOTE_MINT, 'bytes', solMintB58, '(SOL)');
+  console.log('  dataSlice     : offset 0, length', POOL_SLICE_LEN);
+
+  let accounts: Array<{ pubkey: PublicKey; account: { data: Buffer } }>;
+  try {
+    accounts = await connection.getProgramAccounts(PUMPSWAP_PROGRAM, {
+      commitment: 'confirmed',
+      dataSlice: { offset: 0, length: POOL_SLICE_LEN },
+      filters: [
+        { memcmp: { offset: 0, bytes: discB58 } },
+        // Further filter on-chain to SOL-quoted pools so we don't
+        // download thousands of non-SOL pools.
+        { memcmp: { offset: OFF_QUOTE_MINT, bytes: solMintB58 } },
+      ],
+    });
+  } catch (err: any) {
+    console.error('  getProgramAccounts failed:', err?.message);
+    console.error('  (public mainnet-beta RPC may reject gPA on PumpSwap — use Helius)');
+    return null;
   }
-  return null;
+  console.log('  raw pool matches :', accounts.length);
+  if (accounts.length === 0) return null;
+
+  // Decode candidates.
+  const candidates: CandidatePool[] = [];
+  for (const acc of accounts) {
+    const data = acc.account.data;
+    if (data.length < POOL_SLICE_LEN) continue;
+    const baseMint = new PublicKey(data.subarray(OFF_BASE_MINT, OFF_BASE_MINT + 32));
+    const poolQuoteVault = new PublicKey(
+      data.subarray(OFF_POOL_QUOTE_TOKEN_ACCOUNT, OFF_POOL_QUOTE_TOKEN_ACCOUNT + 32),
+    );
+    candidates.push({ address: acc.pubkey, baseMint, poolQuoteVault });
+    if (candidates.length >= MAX_CANDIDATES) break;
+  }
+  console.log('  decoded candidates :', candidates.length);
+
+  // Batch-fetch quote vault balances in chunks of 100
+  // (getMultipleAccountsInfo limit).
+  let best: { cand: CandidatePool; lamports: bigint } | null = null;
+  for (let i = 0; i < candidates.length; i += 100) {
+    const chunk = candidates.slice(i, i + 100);
+    const vaults = await connection.getMultipleAccountsInfo(
+      chunk.map((c) => c.poolQuoteVault),
+      'confirmed',
+    );
+    for (let j = 0; j < chunk.length; j++) {
+      const va = vaults[j];
+      if (!va?.data || va.data.length < SPL_TOKEN_AMOUNT_OFFSET + 8) continue;
+      const lamports = va.data.readBigUInt64LE(SPL_TOKEN_AMOUNT_OFFSET);
+      if (lamports < MIN_SELECTION_LAMPORTS) continue;
+      if (!best || lamports > best.lamports) {
+        best = { cand: chunk[j], lamports };
+      }
+    }
+  }
+
+  if (!best) {
+    console.log('  no pools above MIN_SELECTION_LAMPORTS');
+    return null;
+  }
+  console.log('  BEST pool :', best.cand.address.toBase58());
+  console.log('  BEST base :', best.cand.baseMint.toBase58());
+  console.log('  BEST sol  :', (Number(best.lamports) / 1e9).toFixed(3), 'SOL');
+  return {
+    address: best.cand.address.toBase58(),
+    baseMint: best.cand.baseMint.toBase58(),
+    quoteReserve: best.lamports,
+  };
 }
 
 async function main(): Promise<void> {
   console.log('=== Phase E5 verification: PumpSwap builder end-to-end ===');
-  console.log('RPC   :', RPC_URL);
-  console.log('Token :', TOKEN_MINT_STR);
+  console.log('RPC :', RPC_URL);
   console.log('');
 
   const connection = new Connection(RPC_URL, 'confirmed');
 
-  // Step 0: resolve pool via Jupiter (or POOL env)
+  // Step 0: pick a PumpSwap pool.
+  // Priority: POOL env (explicit override) → live discovery via
+  // getProgramAccounts on PUMPSWAP_PROGRAM (no hardcoded tokens).
   let poolAddr = process.env.POOL || null;
   if (!poolAddr) {
-    console.log('Step 0: resolve PumpSwap pool via Jupiter direct route');
-    poolAddr = await resolvePumpSwapPool(TOKEN_MINT_STR);
-    if (!poolAddr) {
-      console.error('FAIL: no PumpSwap route found for token');
-      console.error('      Try a different TOKEN env (e.g. another pump.fun graduate).');
+    console.log('Step 0: discover live PumpSwap pool via getProgramAccounts');
+    const picked = await discoverLivePumpSwapPool(connection);
+    if (!picked) {
+      console.error('FAIL: no live PumpSwap pool with ≥30 SOL liquidity found');
+      console.error('      Check that HELIUS_RPC_URL supports getProgramAccounts.');
       process.exit(1);
     }
-    console.log('  pool :', poolAddr);
+    poolAddr = picked.address;
   } else {
     console.log('Step 0: using POOL env =', poolAddr);
   }

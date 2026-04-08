@@ -167,11 +167,17 @@ export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
   //   - base mints with an active freeze authority
   // Any addresses that fail these checks are skipped at startup with a warn log
   // (non-fatal). Max per-leg trade size is clamped to 0.1 SOL via
-  // MAX_PUMPSWAP_TRADE_LAMPORTS in pumpSwapBuilder.ts. Candidate addresses are
-  // marked [TODO-VERIFY] — verify on-VM via E5 (test-pumpswap-builder) before
-  // live trading.
-  { poolAddress: '9h7q5e9a9YQyHY8tQa1p6pwnqCZMXKdqcQBTcS2XpR8C', tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', tokenSymbol: 'BONK', poolType: 'pumpswap', label: 'BONK/SOL PumpSwap [TODO-VERIFY]' },
-  { poolAddress: '7jTQxsH3BZLBt7Q3tQ3pZc8YpoBDNHaEwcCuGvhKxxDh', tokenMint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', tokenSymbol: 'WIF', poolType: 'pumpswap', label: 'WIF/SOL PumpSwap [TODO-VERIFY]' },
+  // MAX_PUMPSWAP_TRADE_LAMPORTS in pumpSwapBuilder.ts.
+  //
+  // NO hardcoded entries: major-cap memes BONK / WIF / POPCAT / etc. are
+  // NOT on PumpSwap — they predate it and live on Raydium AMM V4 / Orca
+  // Whirlpool / Meteora. PumpSwap's universe is entirely pump.fun graduates
+  // whose top-by-liquidity set rotates faster than we'd want to maintain in
+  // source. Populate this list at runtime (or at deploy time) using the
+  // live discovery path in src/engine/research/test-pumpswap-builder.ts
+  // (getProgramAccounts + Anchor discriminator filter + SOL quote vault
+  // balance sort). An empty list here means the hot path will simply never
+  // pick a PumpSwap leg until entries are added.
 ];
 
 // Jito Block Engine endpoints (ordered by geography)
