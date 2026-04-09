@@ -95,7 +95,7 @@ export interface PoolRegistryEntry {
   label: string;
 }
 
-export const RAYDIUM_POOL_REGISTRY: PoolRegistryEntry[] = [
+export const ALL_POOL_REGISTRY: PoolRegistryEntry[] = [
   // LSTs — primary targets, slow-moving persistent spreads
   // mSOL/SOL — CLMM ($1.07M TVL)
   { poolAddress: '8EzbUfvcRT1Q6RL462ekGkgqbxsPmwC5FMLQZhSPMjJ3', tokenMint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', tokenSymbol: 'mSOL', poolType: 'clmm', label: 'mSOL/SOL CLMM' },

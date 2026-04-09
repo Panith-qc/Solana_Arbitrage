@@ -4,7 +4,7 @@
 // Every trade: SOL → [route] → SOL
 
 import { engineLog, tradeLogger } from './logger.js';
-import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, RAYDIUM_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS, LAMPORTS_PER_SOL } from './config.js';
+import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, ALL_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS, LAMPORTS_PER_SOL } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { BotDatabase } from './database.js';
 import { Executor, ExecutionResult } from './executor.js';
@@ -434,7 +434,7 @@ export class BotEngine {
     }
     this.startCircularScanner();
 
-    const poolCount = RAYDIUM_POOL_REGISTRY.length;
+    const poolCount = ALL_POOL_REGISTRY.length;
     const pairCount = SCAN_TOKENS.length;
     const scannerStats = this.circularScanner.getStats();
 
@@ -603,7 +603,7 @@ export class BotEngine {
 
       // Unique token mints from the pool registry, plus WSOL
       const mints = new Set<string>([NATIVE_MINT.toString()]);
-      for (const entry of RAYDIUM_POOL_REGISTRY) {
+      for (const entry of ALL_POOL_REGISTRY) {
         if (entry.tokenMint) mints.add(entry.tokenMint);
       }
 
@@ -644,13 +644,13 @@ export class BotEngine {
   /** Cache all AMM V4 + CLMM pool data for the hot path swap builders */
   private async cachePoolDataForHotPath(): Promise<void> {
     const conn = this.connectionManager.getConnection();
-    const ammV4Pools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
-    const clmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
-    const whirlpoolPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'whirlpool');
-    const cpmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'cpmm');
-    const dlmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'dlmm');
-    const dammPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'damm');
-    const pumpSwapPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'pumpswap');
+    const ammV4Pools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
+    const clmmPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
+    const whirlpoolPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'whirlpool');
+    const cpmmPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'cpmm');
+    const dlmmPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'dlmm');
+    const dammPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'damm');
+    const pumpSwapPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'pumpswap');
 
     let ammCached = 0;
     for (const pool of ammV4Pools) {
@@ -772,7 +772,7 @@ export class BotEngine {
    * Falls back to poll-based scanning if WebSocket fails or disconnects.
    */
   private startWebSocketPoolMonitoring(): void {
-    const poolAddresses = RAYDIUM_POOL_REGISTRY.map(p => p.poolAddress);
+    const poolAddresses = ALL_POOL_REGISTRY.map(p => p.poolAddress);
 
     // Token decimals for each monitored token (needed for AMM V4 price calculation)
     const TOKEN_DECIMALS: Record<string, number> = {
@@ -786,7 +786,7 @@ export class BotEngine {
     };
 
     // Register pool configs for proper labeling + decimals
-    for (const entry of RAYDIUM_POOL_REGISTRY) {
+    for (const entry of ALL_POOL_REGISTRY) {
       this.poolMonitor.addPool({
         address: entry.poolAddress,
         tokenA: SOL_MINT,
@@ -861,7 +861,7 @@ export class BotEngine {
       .then(() => {
         this.wsConnected = true;
         engineLog.info(
-          { pools: poolAddresses.length, tokens: new Set(RAYDIUM_POOL_REGISTRY.map(p => p.tokenSymbol)).size },
+          { pools: poolAddresses.length, tokens: new Set(ALL_POOL_REGISTRY.map(p => p.tokenSymbol)).size },
           'WebSocket pool monitoring ACTIVE — instant price detection enabled',
         );
       })
@@ -887,7 +887,7 @@ export class BotEngine {
     updateCachedReserves(update.poolAddress, update.reserveA, update.reserveB);
 
     // Find which token this pool belongs to
-    const poolEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === update.poolAddress);
+    const poolEntry = ALL_POOL_REGISTRY.find(p => p.poolAddress === update.poolAddress);
     if (!poolEntry) return;
 
     // Cooldown — don't re-scan same token too frequently
@@ -926,7 +926,7 @@ export class BotEngine {
     if (this.status !== 'running') return;
 
     // Find the token info
-    const poolEntry = RAYDIUM_POOL_REGISTRY.find(
+    const poolEntry = ALL_POOL_REGISTRY.find(
       p => p.poolAddress === spread.buyPoolAddress || p.poolAddress === spread.sellPoolAddress,
     );
     if (!poolEntry) return;
@@ -938,8 +938,8 @@ export class BotEngine {
     this.wsLastScanMs.set(spread.tokenMint, now);
 
     // Hot path supports any combination of AMM V4 and CLMM pools.
-    const buyEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.buyPoolAddress);
-    const sellEntry = RAYDIUM_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
+    const buyEntry = ALL_POOL_REGISTRY.find(p => p.poolAddress === spread.buyPoolAddress);
+    const sellEntry = ALL_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
     const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
     const buySupported =
       buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' ||

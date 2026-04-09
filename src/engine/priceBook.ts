@@ -18,7 +18,7 @@
 import { dataLog } from './logger.js';
 import {
   SCAN_TOKENS,
-  RAYDIUM_POOL_REGISTRY,
+  ALL_POOL_REGISTRY,
   SOL_MINT,
   LAMPORTS_PER_SOL,
   type PoolRegistryEntry,
@@ -117,7 +117,7 @@ export function initPriceBook(): void {
   }
 
   // Cache pool registry entries
-  for (const entry of RAYDIUM_POOL_REGISTRY) {
+  for (const entry of ALL_POOL_REGISTRY) {
     registryCache.set(entry.poolAddress, entry);
   }
 
@@ -366,7 +366,7 @@ export function onSpread(cb: PriceBookSpreadCallback): void {
 /**
  * Register a pool registry entry at runtime. Used by research/integration
  * tests that discover pools dynamically (e.g. via Jupiter /quote) instead of
- * relying on the static RAYDIUM_POOL_REGISTRY baked into config. Production
+ * relying on the static ALL_POOL_REGISTRY baked into config. Production
  * code paths still use initPriceBook() with the config; this is additive.
  *
  * Also ensures the tokenMint's decimals are cached so updatePool() can price

@@ -23,7 +23,7 @@ dotenv.config();
 
 import {
   SCAN_TOKENS,
-  RAYDIUM_POOL_REGISTRY,
+  ALL_POOL_REGISTRY,
   SOL_MINT,
   type PoolRegistryEntry,
 } from './config.js';
@@ -80,7 +80,7 @@ for (const t of SCAN_TOKENS) symbols.set(t.mint, t.symbol);
 
 /** Pool registry map: poolAddress → entry */
 const registry = new Map<string, PoolRegistryEntry>();
-for (const e of RAYDIUM_POOL_REGISTRY) registry.set(e.poolAddress, e);
+for (const e of ALL_POOL_REGISTRY) registry.set(e.poolAddress, e);
 
 /** Vault → pool mapping */
 const vaultToPool = new Map<string, { poolAddress: string; side: 'base' | 'quote' }>();
@@ -227,11 +227,11 @@ async function main(): Promise<void> {
   console.log(`RPC validated — current slot: ${slot}\n`);
 
   // Step 2: Subscribe to pools
-  const ammV4Pools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
-  const clmmPools = RAYDIUM_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
+  const ammV4Pools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'amm-v4');
+  const clmmPools = ALL_POOL_REGISTRY.filter(p => p.poolType === 'clmm');
 
-  console.log(`Pool registry: ${ammV4Pools.length} AMM V4, ${clmmPools.length} CLMM, ${RAYDIUM_POOL_REGISTRY.length} total`);
-  console.log(`Tokens: ${[...new Set(RAYDIUM_POOL_REGISTRY.map(p => p.tokenSymbol))].join(', ')}\n`);
+  console.log(`Pool registry: ${ammV4Pools.length} AMM V4, ${clmmPools.length} CLMM, ${ALL_POOL_REGISTRY.length} total`);
+  console.log(`Tokens: ${[...new Set(ALL_POOL_REGISTRY.map(p => p.tokenSymbol))].join(', ')}\n`);
 
   let totalSubscriptions = 0;
 
