@@ -252,6 +252,12 @@ export function updatePool(
 
   book.set(poolAddress, entry);
 
+  // DEBUG: trace pipeline — remove after verifying hot path works
+  dataLog.info(
+    { token: registry.tokenSymbol, pool: poolAddress.slice(0, 8), price: price.toFixed(8), poolType: registry.poolType, slot },
+    `PRICE BOOK UPDATE: ${registry.tokenSymbol} pool=${poolAddress.slice(0, 8)} price=${price.toFixed(8)}`,
+  );
+
   // Fire update callbacks
   for (const cb of updateCallbacks) {
     try { cb(entry); } catch (err: any) {

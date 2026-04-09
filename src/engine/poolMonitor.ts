@@ -486,7 +486,7 @@ export class PoolMonitor {
         }
 
         dataLog.debug(
-          { pool: address, subId, isClmm, label: poolConfig?.label },
+          { pool: address, subId, isAmmV4, label: poolConfig?.label },
           'Subscribed to pool account changes',
         );
       } catch (err) {
@@ -802,6 +802,13 @@ export class PoolMonitor {
     // Track that WS is alive
     this.lastEventReceivedMs = Date.now();
     this.reconnectAttempts = 0;
+
+    // DEBUG: trace pipeline — remove after verifying hot path works
+    const poolCfg = this.poolConfigs.get(poolAddress);
+    dataLog.info(
+      { pool: poolCfg?.label || poolAddress.slice(0, 8), slot: context.slot, dataLen: accountInfo?.data?.length ?? 0 },
+      `WS CALLBACK: ${poolCfg?.label || poolAddress.slice(0, 8)}`,
+    );
 
     // Fire raw-account callbacks BEFORE parsing so hot-path builders can
     // refresh their own state from the same buffer (e.g. CLMM sqrtPriceX64).
@@ -1335,7 +1342,8 @@ export class PoolMonitor {
    */
   /**
    * Calculate price as SOL-per-token for cross-pool comparison.
-   * - CLMM pools: pseudo-reserves reserveA = solPerToken × 1e9, reserveB = 1e9
+   * - CLMM/Whirlpool/CPMM/DLMM/DAMM/PumpSwap: pseudo-reserves
+   *   reserveA = solPerToken × 1e9, reserveB = 1e9
    *   → price = reserveA / reserveB = solPerToken ✓
    * - AMM V4 pools: raw reserves reserveA = token_raw (base), reserveB = SOL_raw (quote)
    *   → price = (reserveB / 10^9) / (reserveA / 10^tokenDecimals) ✓
@@ -1344,10 +1352,17 @@ export class PoolMonitor {
     if (reserveA === 0n || reserveB === 0n) return 0;
 
     const config = poolAddress ? this.poolConfigs.get(poolAddress) : undefined;
-    const isClmm = config?.label?.toLowerCase().includes('clmm') ?? false;
+    const labelLower = config?.label?.toLowerCase() ?? '';
 
-    if (isClmm) {
-      // CLMM pseudo-reserves: reserveA/reserveB already = SOL per token
+    // AMM V4 uses raw reserves; everything else (CLMM, Whirlpool, CPMM, DLMM, DAMM, PumpSwap)
+    // uses pseudo-reserves where reserveA/reserveB = SOL per token directly.
+    const isAmmV4 = labelLower.includes('amm') &&
+      !labelLower.includes('clmm') &&
+      !labelLower.includes('damm') &&
+      !labelLower.includes('cpmm');
+
+    if (!isAmmV4) {
+      // Pseudo-reserves: reserveA/reserveB already = SOL per token
       return Number(reserveA) / Number(reserveB);
     }
 
