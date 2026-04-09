@@ -5,7 +5,7 @@
 
 import { PublicKey, AccountInfo, Context } from '@solana/web3.js';
 import { dataLog } from './logger.js';
-import { BotConfig } from './config.js';
+import { BotConfig, TOKEN_DECIMALS, SOL_MINT } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { updatePool as updatePriceBook } from './priceBook.js';
 import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
@@ -13,8 +13,6 @@ import { getCachedCpmmPool, cpmmSolPerToken } from './cpmmSwapBuilder.js';
 import { getCachedDlmmPool, dlmmSolPerToken } from './dlmmSwapBuilder.js';
 import { getCachedDammPool, dammSolPerToken } from './dammSwapBuilder.js';
 import { getCachedPumpSwapPool, pumpSwapSolPerToken } from './pumpSwapBuilder.js';
-
-const WHIRLPOOL_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -65,6 +63,7 @@ export type PoolUpdateCallback = (update: PoolUpdate) => void;
 /** Cross-pool spread event — detected entirely in memory, no RPC calls */
 export interface SpreadEvent {
   tokenMint: string;
+  tokenSymbol: string;
   spreadBps: number;
   buyPoolAddress: string;
   sellPoolAddress: string;
@@ -241,6 +240,8 @@ export class PoolMonitor {
   private poolVaultState: Map<string, {
     baseVault: string;
     quoteVault: string;
+    baseMint: string;
+    quoteMint: string;
     baseReserve: bigint;
     quoteReserve: bigint;
     basePnl: bigint;
@@ -285,6 +286,14 @@ export class PoolMonitor {
         data.subarray(RAYDIUM_AMM_V4_LAYOUT.QUOTE_VAULT_OFFSET, RAYDIUM_AMM_V4_LAYOUT.QUOTE_VAULT_OFFSET + 32),
       );
 
+      // Read mint pubkeys to determine SOL/token orientation
+      const baseMint = new PublicKey(
+        data.subarray(RAYDIUM_AMM_V4_LAYOUT.BASE_MINT_OFFSET, RAYDIUM_AMM_V4_LAYOUT.BASE_MINT_OFFSET + 32),
+      );
+      const quoteMint = new PublicKey(
+        data.subarray(RAYDIUM_AMM_V4_LAYOUT.QUOTE_MINT_OFFSET, RAYDIUM_AMM_V4_LAYOUT.QUOTE_MINT_OFFSET + 32),
+      );
+
       // Read PnL values to subtract from vault amounts
       const basePnl = data.readBigUInt64LE(RAYDIUM_AMM_V4_LAYOUT.BASE_NEED_TAKE_PNL_OFFSET);
       const quotePnl = data.readBigUInt64LE(RAYDIUM_AMM_V4_LAYOUT.QUOTE_NEED_TAKE_PNL_OFFSET);
@@ -296,6 +305,8 @@ export class PoolMonitor {
       this.poolVaultState.set(poolAddress, {
         baseVault: baseVaultStr,
         quoteVault: quoteVaultStr,
+        baseMint: baseMint.toString(),
+        quoteMint: quoteMint.toString(),
         baseReserve: 0n,
         quoteReserve: 0n,
         basePnl,
@@ -390,15 +401,15 @@ export class PoolMonitor {
     const effectiveBase = state.baseReserve > state.basePnl ? state.baseReserve - state.basePnl : 0n;
     const effectiveQuote = state.quoteReserve > state.quotePnl ? state.quoteReserve - state.quotePnl : 0n;
 
-    // Build a PoolUpdate with raw reserves (Raydium AMM V4 order: base=token, quote=SOL).
-    // calculatePrice() handles the inversion for cross-pool comparisons.
+    // Build a PoolUpdate with raw reserves (base/quote order from AMM account).
+    // These raw reserves feed directSwapBuilder via emitUpdate → updateCachedReserves.
     const poolCfg = this.poolConfigs.get(poolAddress);
     const update: PoolUpdate = {
       poolAddress,
       tokenA: poolCfg?.tokenA || '',
       tokenB: poolCfg?.tokenB || '',
-      reserveA: effectiveBase,    // Token (base vault)
-      reserveB: effectiveQuote,   // SOL (quote vault)
+      reserveA: effectiveBase,
+      reserveB: effectiveQuote,
       timestamp: Date.now(),
       slot: context.slot,
     };
@@ -418,10 +429,15 @@ export class PoolMonitor {
       this.emitUpdate(update);
     }
 
-    // Feed the price book on every vault change (Phase 3)
-    updatePriceBook(update.poolAddress, update.reserveA, update.reserveB, update.slot, update.timestamp);
+    // Feed the price book with pseudo-reserves (solPerToken * 1e9 / 1e9)
+    // so priceBook treats all pool types uniformly.
+    const solPerToken = this.ammV4SolPerToken(poolAddress, effectiveBase, effectiveQuote);
+    if (solPerToken > 0) {
+      const SCALE = 1_000_000_000n;
+      updatePriceBook(poolAddress, BigInt(Math.round(solPerToken * 1e9)), SCALE, update.slot, update.timestamp);
+    }
 
-    // Always check cross-pool spreads
+    // Cross-pool spread detection (calculatePrice handles AMM V4 via ammV4SolPerToken)
     this.detectCrossPoolSpread(update);
   }
 
@@ -842,8 +858,20 @@ export class PoolMonitor {
         this.emitUpdate(update);
       }
 
-      // Feed the price book on every account change (Phase 3)
-      updatePriceBook(update.poolAddress, update.reserveA, update.reserveB, update.slot, update.timestamp);
+      // Feed the price book on every account change (Phase 3).
+      // For AMM V4 pools (raw reserves), convert to pseudo-reserves so
+      // priceBook treats all pool types uniformly.
+      const vaultState = this.poolVaultState.get(update.poolAddress);
+      if (vaultState && vaultState.poolType === 'amm-v4') {
+        const solPerToken = this.ammV4SolPerToken(update.poolAddress, update.reserveA, update.reserveB);
+        if (solPerToken > 0) {
+          const SCALE = 1_000_000_000n;
+          updatePriceBook(update.poolAddress, BigInt(Math.round(solPerToken * 1e9)), SCALE, update.slot, update.timestamp);
+        }
+      } else {
+        // Non-AMM-V4: already pseudo-reserves from parsers
+        updatePriceBook(update.poolAddress, update.reserveA, update.reserveB, update.slot, update.timestamp);
+      }
 
       // Always check cross-pool spreads on ANY update (even small changes)
       // because a 0.01% change in one pool can create a 5bps+ spread vs another pool
@@ -983,7 +1011,7 @@ export class PoolMonitor {
     const mint0 = new PublicKey(
       data.subarray(RAYDIUM_CLMM_LAYOUT.TOKEN_MINT_0_OFFSET, RAYDIUM_CLMM_LAYOUT.TOKEN_MINT_0_OFFSET + 32),
     );
-    const mint0IsSol = mint0.toString() === 'So11111111111111111111111111111111111111112';
+    const mint0IsSol = mint0.toString() === SOL_MINT;
     const solPerToken = mint0IsSol
       ? (adjPrice > 0 ? 1 / adjPrice : 0)
       : adjPrice;
@@ -1047,7 +1075,7 @@ export class PoolMonitor {
       const mintA = new PublicKey(
         data.subarray(WHIRLPOOL_LAYOUT.TOKEN_MINT_A_OFFSET, WHIRLPOOL_LAYOUT.TOKEN_MINT_A_OFFSET + 32),
       );
-      const aIsSol = mintA.toString() === WHIRLPOOL_SOL_MINT;
+      const aIsSol = mintA.toString() === SOL_MINT;
 
       const ratio = Number(sqrtPrice) / 2 ** 64;
       const priceRaw = ratio * ratio; // B per A, raw atomic
@@ -1336,26 +1364,47 @@ export class PoolMonitor {
   }
 
   /**
-   * Calculate implied price from reserves: price of tokenB in terms of tokenA.
-   * For a constant-product AMM: price = reserveA / reserveB
-   * (how many units of A per unit of B)
+   * Compute SOL-per-token for an AMM V4 pool from raw vault reserves.
+   * Uses baseMint/quoteMint from vault state to determine which side is SOL,
+   * and TOKEN_DECIMALS for correct decimal adjustment.
+   * Same math as cpmmSolPerToken / pumpSwapSolPerToken:
+   *   price = (solReserve / 10^9) / (tokenReserve / 10^tokenDecimals)
    */
+  private ammV4SolPerToken(poolAddress: string, baseReserve: bigint, quoteReserve: bigint): number {
+    if (baseReserve === 0n || quoteReserve === 0n) return 0;
+
+    const state = this.poolVaultState.get(poolAddress);
+    if (!state) return 0;
+
+    const baseIsSol = state.baseMint === SOL_MINT;
+    const quoteIsSol = state.quoteMint === SOL_MINT;
+    if (!baseIsSol && !quoteIsSol) return 0;
+
+    const solReserve = baseIsSol ? baseReserve : quoteReserve;
+    const tokenReserve = baseIsSol ? quoteReserve : baseReserve;
+    const tokenMint = baseIsSol ? state.quoteMint : state.baseMint;
+    const tokenDecimals = TOKEN_DECIMALS[tokenMint] ?? 9;
+
+    const solHuman = Number(solReserve) / 1e9;
+    const tokenHuman = Number(tokenReserve) / (10 ** tokenDecimals);
+    if (tokenHuman === 0) return 0;
+    return solHuman / tokenHuman;
+  }
+
   /**
    * Calculate price as SOL-per-token for cross-pool comparison.
    * - CLMM/Whirlpool/CPMM/DLMM/DAMM/PumpSwap: pseudo-reserves
    *   reserveA = solPerToken × 1e9, reserveB = 1e9
    *   → price = reserveA / reserveB = solPerToken ✓
-   * - AMM V4 pools: raw reserves reserveA = token_raw (base), reserveB = SOL_raw (quote)
-   *   → price = (reserveB / 10^9) / (reserveA / 10^tokenDecimals) ✓
+   * - AMM V4: raw vault reserves — delegates to ammV4SolPerToken()
+   *   which reads baseMint/quoteMint to determine SOL side ✓
    */
   private calculatePrice(reserveA: bigint, reserveB: bigint, poolAddress?: string): number {
     if (reserveA === 0n || reserveB === 0n) return 0;
+    if (!poolAddress) return 0;
 
-    const config = poolAddress ? this.poolConfigs.get(poolAddress) : undefined;
+    const config = this.poolConfigs.get(poolAddress);
     const labelLower = config?.label?.toLowerCase() ?? '';
-
-    // AMM V4 uses raw reserves; everything else (CLMM, Whirlpool, CPMM, DLMM, DAMM, PumpSwap)
-    // uses pseudo-reserves where reserveA/reserveB = SOL per token directly.
     const isAmmV4 = labelLower.includes('amm') &&
       !labelLower.includes('clmm') &&
       !labelLower.includes('damm') &&
@@ -1366,14 +1415,8 @@ export class PoolMonitor {
       return Number(reserveA) / Number(reserveB);
     }
 
-    // AMM V4: raw reserves need decimal adjustment
-    // reserveA = token (base), reserveB = SOL (quote)
-    // price = (SOL_human) / (token_human) = (reserveB/10^9) / (reserveA/10^tokenDecimals)
-    const tokenDecimals = config?.tokenDecimals ?? 9; // default 9 for LSTs
-    const tokenFloat = Number(reserveA) / (10 ** tokenDecimals);
-    const solFloat = Number(reserveB) / 1e9;
-    if (tokenFloat === 0) return 0;
-    return solFloat / tokenFloat;
+    // AMM V4: delegate to ammV4SolPerToken which handles SOL/token orientation
+    return this.ammV4SolPerToken(poolAddress, reserveA, reserveB);
   }
 
   /**
@@ -1420,6 +1463,7 @@ export class PoolMonitor {
 
         const spreadEvent: SpreadEvent = {
           tokenMint: updatedConfig.tokenB,
+          tokenSymbol: updatedConfig.label?.split('/')[0] ?? updatedConfig.tokenB.slice(0, 8),
           spreadBps,
           buyPoolAddress: buyPool,
           sellPoolAddress: sellPool,

@@ -163,29 +163,21 @@ export function initPriceBook(): void {
  * //   tokenDecimals = 5, solDecimals = 9
  * //   price = 90 / 50_000_000_000 = 0.0000000018 SOL per BONK ✓
  */
+/**
+ * Convert pseudo-reserves to decimal-adjusted SOL-per-token price.
+ * ALL pool types now pass pseudo-reserves: reserveA = solPerToken × 1e9,
+ * reserveB = 1e9. poolMonitor handles the conversion from raw reserves
+ * (AMM V4) or on-chain math (CLMM sqrtPriceX64, DLMM bins, etc.)
+ * before calling updatePool().
+ */
 export function calculateDecimalPrice(
   baseReserve: bigint,
   quoteReserve: bigint,
-  tokenDecimals: number,
-  poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap',
+  _tokenDecimals: number,
+  _poolType: 'amm-v4' | 'clmm' | 'whirlpool' | 'cpmm' | 'dlmm' | 'damm' | 'pumpswap',
 ): number {
   if (baseReserve === 0n || quoteReserve === 0n) return 0;
-
-  if (poolType === 'clmm' || poolType === 'whirlpool' || poolType === 'cpmm' ||
-      poolType === 'dlmm' || poolType === 'damm' || poolType === 'pumpswap') {
-    // CLMM/Whirlpool/CPMM/DLMM/DAMM/PumpSwap pseudo-reserves: reserveA = price * 1e9, reserveB = 1e9
-    // So price = Number(reserveA) / Number(reserveB) is already decimal-adjusted
-    return Number(baseReserve) / Number(quoteReserve);
-  }
-
-  // AMM V4: raw reserves need decimal adjustment
-  // price (SOL per token) = (quoteReserve / 10^9) / (baseReserve / 10^tokenDecimals)
-  const solDecimals = 9;
-  const baseFloat = Number(baseReserve) / (10 ** tokenDecimals);
-  const quoteFloat = Number(quoteReserve) / (10 ** solDecimals);
-
-  if (baseFloat === 0) return 0;
-  return quoteFloat / baseFloat;
+  return Number(baseReserve) / Number(quoteReserve);
 }
 
 // ═══════════════════════════════════════════════════════════════

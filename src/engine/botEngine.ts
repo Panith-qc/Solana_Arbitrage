@@ -916,14 +916,14 @@ export class BotEngine {
     // DEBUG: trace pipeline — remove after verifying hot path works
     engineLog.info(
       {
-        token: spread.tokenMint.slice(0, 8),
+        token: spread.tokenSymbol,
         spreadBps: spread.spreadBps.toFixed(1),
         buyPool: spread.buyPoolAddress.slice(0, 8),
         sellPool: spread.sellPoolAddress.slice(0, 8),
         buyPrice: spread.buyPrice,
         sellPrice: spread.sellPrice,
       },
-      `SPREAD CHECK: ${spread.tokenMint.slice(0, 8)} buy=${spread.buyPrice.toFixed(8)} sell=${spread.sellPrice.toFixed(8)} spread=${spread.spreadBps.toFixed(1)}bps`,
+      `SPREAD CHECK: ${spread.tokenSymbol} buy=${spread.buyPrice.toFixed(8)} sell=${spread.sellPrice.toFixed(8)} spread=${spread.spreadBps.toFixed(1)}bps`,
     );
 
     if (this.status !== 'running') return;
