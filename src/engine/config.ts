@@ -83,6 +83,36 @@ export const SCAN_TOKENS: TokenInfo[] = [
   { mint: '7kN5FQMD8ja4bzysEgc5FXmryKd6gCgjiWnhksjHCFb3', symbol: 'LION', decimals: 9 },
 ];
 
+// ── Comprehensive token decimals (all tokens supported by the pool registry) ──
+// Single source of truth for decimal precision. Used by priceBook, botEngine,
+// and poolMonitor to correctly price any token that appears in ALL_POOL_REGISTRY.
+export const TOKEN_DECIMALS: Record<string, number> = {
+  'So11111111111111111111111111111111111111112': 9,   // SOL
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 6, // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6, // USDT
+  'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 9,  // mSOL
+  'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 9, // jitoSOL
+  'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1': 9,  // bSOL
+  '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 6, // RAY
+  'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE': 6,  // ORCA
+  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6,  // JUP
+  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 5, // BONK
+  'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 6, // WIF
+  'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL': 9,  // JTO
+  'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3': 6, // PYTH
+  'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof': 8,  // RENDER
+  '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ': 6, // W
+  'TNSRxcUxoT9xBG3de7PiJyTDYu7kskLqcpddxnEJAS6': 9,  // TENSOR
+  'DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7': 6, // DRIFT
+  'MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey': 9,  // MNDE
+  'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux': 8,  // HNT
+  '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr': 9, // POPCAT
+  // CPMM-only tokens
+  'Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk': 6, // USELESS
+  'egoS1kE1g4JuExTcvG6bB6cg5LWpACQ469uk6DTMuJq': 6,  // EGO
+  '7kN5FQMD8ja4bzysEgc5FXmryKd6gCgjiWnhksjHCFb3': 9, // LION
+};
+
 // ── Raydium pool addresses for WebSocket monitoring ─────────────────────────
 // These are the highest-liquidity Raydium pools for each scan token paired with SOL.
 // Used by PoolMonitor to subscribe via Helius WebSocket for instant price change detection.

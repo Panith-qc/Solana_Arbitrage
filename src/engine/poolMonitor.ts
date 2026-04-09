@@ -462,7 +462,11 @@ export class PoolMonitor {
         const poolConfig = this.poolConfigs.get(address);
 
         // Determine pool type from config label
-        const isClmm = poolConfig?.label?.toLowerCase().includes('clmm') ?? false;
+        const labelLower = poolConfig?.label?.toLowerCase() ?? '';
+        const isAmmV4 = labelLower.includes('amm') &&
+          !labelLower.includes('clmm') &&
+          !labelLower.includes('damm') &&
+          !labelLower.includes('cpmm');
 
         // Subscribe to the pool account itself (for CLMM sqrtPriceX64 or AMM PnL fields)
         const subId = connection.onAccountChange(
@@ -474,8 +478,10 @@ export class PoolMonitor {
         );
         this.subscriptions.set(address, subId);
 
-        // For AMM V4: read vault pubkeys and subscribe to vault token accounts
-        if (!isClmm) {
+        // Only AMM V4 pools store reserves in separate SPL Token vault accounts.
+        // CLMM/Whirlpool use sqrtPriceX64; CPMM/DLMM/DAMM/PumpSwap use cached
+        // swap-builder state refreshed via raw-account callbacks.
+        if (isAmmV4) {
           await this.subscribeToVaults(connection, address, pubkey);
         }
 

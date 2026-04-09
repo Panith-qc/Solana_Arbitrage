@@ -4,7 +4,7 @@
 // Every trade: SOL → [route] → SOL
 
 import { engineLog, tradeLogger } from './logger.js';
-import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, ALL_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS, LAMPORTS_PER_SOL } from './config.js';
+import { BotConfig, loadConfig, RISK_PROFILES, RiskProfile, SCAN_TOKENS, ALL_POOL_REGISTRY, SOL_MINT, JUPITER_MAX_ACCOUNTS, LAMPORTS_PER_SOL, TOKEN_DECIMALS } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { BotDatabase } from './database.js';
 import { Executor, ExecutionResult } from './executor.js';
@@ -774,18 +774,8 @@ export class BotEngine {
   private startWebSocketPoolMonitoring(): void {
     const poolAddresses = ALL_POOL_REGISTRY.map(p => p.poolAddress);
 
-    // Token decimals for each monitored token (needed for AMM V4 price calculation)
-    const TOKEN_DECIMALS: Record<string, number> = {
-      'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 9,   // mSOL
-      'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 9,   // jitoSOL
-      'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1': 9,    // bSOL
-      '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 6,   // RAY
-      'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 6,    // JUP
-      'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 5,   // BONK (PumpSwap)
-      'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 6,   // WIF  (PumpSwap)
-    };
-
     // Register pool configs for proper labeling + decimals
+    // TOKEN_DECIMALS imported from config.ts covers all 20+ supported tokens.
     for (const entry of ALL_POOL_REGISTRY) {
       this.poolMonitor.addPool({
         address: entry.poolAddress,

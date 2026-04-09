@@ -31,13 +31,18 @@ import { getRandomTipAccount } from './transactionBuilder.js';
 const RAYDIUM_AMM_V4_PROGRAM = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
 
 // OpenBook DEX (Serum V3) market layout offsets
+// Layout: blob(5) | accountFlags(u64) | ownAddress(32) | vaultSignerNonce(u64)
+//         | baseMint(32) | quoteMint(32) | baseVault(32) | baseDepositsTotal(u64)
+//         | baseFeesAccrued(u64) | quoteVault(32) | quoteDepositsTotal(u64)
+//         | quoteFeesAccrued(u64) | quoteDustThreshold(u64) | requestQueue(32)
+//         | eventQueue(32) | bids(32) | asks(32) | ...
 const OPENBOOK_MARKET_LAYOUT = {
-  BIDS_OFFSET: 53,            // 32-byte pubkey
-  ASKS_OFFSET: 85,            // 32-byte pubkey
-  EVENT_QUEUE_OFFSET: 117,    // 32-byte pubkey
-  BASE_VAULT_OFFSET: 149,     // 32-byte pubkey (coin vault)
-  QUOTE_VAULT_OFFSET: 181,    // 32-byte pubkey (pc vault)
-  VAULT_SIGNER_NONCE_OFFSET: 213, // u64
+  VAULT_SIGNER_NONCE_OFFSET: 45,  // u64 (after blob5 + flags8 + ownAddr32)
+  BASE_VAULT_OFFSET: 117,         // 32-byte pubkey (coin vault)
+  QUOTE_VAULT_OFFSET: 165,        // 32-byte pubkey (pc vault)
+  EVENT_QUEUE_OFFSET: 253,        // 32-byte pubkey
+  BIDS_OFFSET: 285,               // 32-byte pubkey
+  ASKS_OFFSET: 317,               // 32-byte pubkey
 } as const;
 
 // Raydium AMM V4 account layout offsets (from state.rs AmmInfo struct)

@@ -21,6 +21,7 @@ import {
   ALL_POOL_REGISTRY,
   SOL_MINT,
   LAMPORTS_PER_SOL,
+  TOKEN_DECIMALS,
   type PoolRegistryEntry,
   type TokenInfo,
 } from './config.js';
@@ -116,9 +117,18 @@ export function initPriceBook(): void {
     symbolCache.set(token.mint, token.symbol);
   }
 
-  // Cache pool registry entries
+  // Cache decimals for ALL tokens in the pool registry (not just SCAN_TOKENS).
+  // Discovered pools may include tokens (USDC, USDT, HNT, POPCAT, ORCA, etc.)
+  // not listed in SCAN_TOKENS. Without this, updatePool() silently drops them.
   for (const entry of ALL_POOL_REGISTRY) {
     registryCache.set(entry.poolAddress, entry);
+    if (!decimalsCache.has(entry.tokenMint)) {
+      const dec = TOKEN_DECIMALS[entry.tokenMint];
+      if (dec !== undefined) {
+        decimalsCache.set(entry.tokenMint, dec);
+        symbolCache.set(entry.tokenMint, entry.tokenSymbol);
+      }
+    }
   }
 
   dataLog.info(
