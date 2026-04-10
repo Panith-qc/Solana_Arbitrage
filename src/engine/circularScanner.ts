@@ -219,8 +219,11 @@ export class CircularScanner {
       executionLog.warn('CircularScanner: No Jupiter API keys configured — scanner disabled');
     }
 
-    // Scan at configured amount and half that amount
-    const baseLamports = BigInt(Math.round(config.scanAmountSol * LAMPORTS_PER_SOL));
+    // Dynamic sizing: 5% of capital, capped at risk manager max (0.5 SOL)
+    const maxFromCapital = config.capitalSol * 0.05;
+    const maxFromRisk = 0.5; // MAX_SINGLE_TRADE_SOL in riskManager
+    const tradeSol = Math.min(maxFromCapital, maxFromRisk, 0.5);
+    const baseLamports = BigInt(Math.round(tradeSol * LAMPORTS_PER_SOL));
     this.scanAmounts = [baseLamports, baseLamports / 2n];
 
     executionLog.info(

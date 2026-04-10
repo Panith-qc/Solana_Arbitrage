@@ -960,8 +960,11 @@ export class BotEngine {
     const blockhash = getCachedBlockhash();
     if (hotPathSupported && blockhash && this.connectionManager.hasWallet()) {
       // ═══ HOT PATH: Direct swap, no simulation ═══
-      const inputLamports = BigInt(Math.round(this.config.scanAmountSol * LAMPORTS_PER_SOL));
-      const tradeSol = this.config.scanAmountSol;
+      // Dynamic sizing: 5% of capital, capped at risk manager max (0.5 SOL)
+      const maxFromCapital = this.config.capitalSol * 0.05;
+      const maxFromRisk = 0.5; // MAX_SINGLE_TRADE_SOL in riskManager
+      const tradeSol = Math.min(maxFromCapital, maxFromRisk, 0.5);
+      const inputLamports = BigInt(Math.round(tradeSol * LAMPORTS_PER_SOL));
 
       // Risk gate (sync, <1ms) — check BEFORE building TX
       const riskCheck = this.riskManager.canTrade(tradeSol, 50_000n);
