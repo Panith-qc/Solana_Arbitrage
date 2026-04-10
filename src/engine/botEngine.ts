@@ -913,19 +913,6 @@ export class BotEngine {
    * don't have raw instruction building.
    */
   private async handleSpreadDetected(spread: SpreadEvent): Promise<void> {
-    // DEBUG: trace pipeline — remove after verifying hot path works
-    engineLog.info(
-      {
-        token: spread.tokenSymbol,
-        spreadBps: spread.spreadBps.toFixed(1),
-        buyPool: spread.buyPoolAddress.slice(0, 8),
-        sellPool: spread.sellPoolAddress.slice(0, 8),
-        buyPrice: spread.buyPrice,
-        sellPrice: spread.sellPrice,
-      },
-      `SPREAD CHECK: ${spread.tokenSymbol} buy=${spread.buyPrice.toFixed(8)} sell=${spread.sellPrice.toFixed(8)} spread=${spread.spreadBps.toFixed(1)}bps`,
-    );
-
     if (this.status !== 'running') return;
 
     // Find the token info
@@ -940,52 +927,39 @@ export class BotEngine {
     if (now - lastScan < this.WS_SCAN_COOLDOWN_MS) return;
     this.wsLastScanMs.set(spread.tokenMint, now);
 
-    // Hot path supports any combination of AMM V4 and CLMM pools.
+    // Use pre-validated optimal trade size from executable spread detection
+    const inputLamports = spread.optimalSizeLamports;
+    const tradeSol = Number(inputLamports) / LAMPORTS_PER_SOL;
+
+    // Risk gate (sync, <1ms)
+    const riskCheck = this.riskManager.canTrade(tradeSol, spread.expectedNetProfitLamports);
+    if (!riskCheck.allowed) {
+      engineLog.debug({ reason: riskCheck.reason }, 'HOT PATH: blocked by risk manager');
+      return;
+    }
+
     const buyEntry = ALL_POOL_REGISTRY.find(p => p.poolAddress === spread.buyPoolAddress);
     const sellEntry = ALL_POOL_REGISTRY.find(p => p.poolAddress === spread.sellPoolAddress);
     const bothAmmV4 = buyEntry?.poolType === 'amm-v4' && sellEntry?.poolType === 'amm-v4';
-    const buySupported =
-      buyEntry?.poolType === 'amm-v4' || buyEntry?.poolType === 'clmm' ||
-      buyEntry?.poolType === 'whirlpool' || buyEntry?.poolType === 'cpmm' ||
-      buyEntry?.poolType === 'dlmm' || buyEntry?.poolType === 'damm' ||
-      buyEntry?.poolType === 'pumpswap';
-    const sellSupported =
-      sellEntry?.poolType === 'amm-v4' || sellEntry?.poolType === 'clmm' ||
-      sellEntry?.poolType === 'whirlpool' || sellEntry?.poolType === 'cpmm' ||
-      sellEntry?.poolType === 'dlmm' || sellEntry?.poolType === 'damm' ||
-      sellEntry?.poolType === 'pumpswap';
-    const hotPathSupported = buySupported && sellSupported;
-    const isMixed = hotPathSupported && !bothAmmV4;
+    const isMixed = !bothAmmV4;
 
     const blockhash = getCachedBlockhash();
-    if (hotPathSupported && blockhash && this.connectionManager.hasWallet()) {
-      // ═══ HOT PATH: Direct swap, no simulation ═══
-      // Dynamic sizing: 5% of capital, capped at risk manager max (0.5 SOL)
-      const maxFromCapital = this.config.capitalSol * 0.05;
-      const maxFromRisk = 0.5; // MAX_SINGLE_TRADE_SOL in riskManager
-      const tradeSol = Math.min(maxFromCapital, maxFromRisk, 0.5);
-      const inputLamports = BigInt(Math.round(tradeSol * LAMPORTS_PER_SOL));
-
-      // Risk gate (sync, <1ms) — check BEFORE building TX
-      const riskCheck = this.riskManager.canTrade(tradeSol, 50_000n);
-      if (!riskCheck.allowed) {
-        engineLog.debug({ reason: riskCheck.reason }, 'HOT PATH: blocked by risk manager');
-        return;
-      }
-
+    if (blockhash && this.connectionManager.hasWallet()) {
       const hotStart = Date.now();
 
       engineLog.info(
         {
-          token: poolEntry.tokenSymbol,
-          spreadBps: spread.spreadBps.toFixed(1),
+          token: spread.tokenSymbol,
+          midSpreadBps: spread.spreadBps.toFixed(1),
+          execSpreadBps: spread.executableSpreadBps.toFixed(1),
+          optimalSol: tradeSol.toFixed(3),
+          expectedProfit: spread.expectedNetProfitLamports.toString(),
           buyPool: spread.buyPoolAddress.slice(0, 8),
           buyDex: buyEntry?.poolType,
           sellPool: spread.sellPoolAddress.slice(0, 8),
           sellDex: sellEntry?.poolType,
-          mixed: isMixed,
         },
-        `HOT PATH: ${poolEntry.tokenSymbol} ${spread.spreadBps.toFixed(1)}bps — building ${isMixed ? 'mixed AMM/CLMM' : 'AMM-AMM'} swap`,
+        `HOT PATH: ${spread.tokenSymbol} exec=${spread.executableSpreadBps.toFixed(1)}bps size=${tradeSol.toFixed(3)}SOL profit=${spread.expectedNetProfitLamports} — building ${isMixed ? 'mixed' : 'AMM-AMM'} swap`,
       );
 
       try {
@@ -1085,12 +1059,12 @@ export class BotEngine {
       }
     }
 
-    // ═══ WARM PATH FALLBACK: Jupiter scan for CLMM pools or hot path failure ═══
+    // ═══ WARM PATH FALLBACK: hot path failed to build TX ═══
     engineLog.info(
       {
         token: poolEntry.tokenSymbol,
         spreadBps: spread.spreadBps.toFixed(1),
-        reason: hotPathSupported ? 'hot path failed' : 'unsupported DEX combination',
+        reason: 'hot path build failed',
       },
       `WARM PATH: ${poolEntry.tokenSymbol} — triggering Jupiter scan`,
     );

@@ -81,7 +81,7 @@ export interface MixedHotPathResult {
   tipLamports: bigint;
 }
 
-type Resolved =
+export type Resolved =
   | { kind: 'amm'; pool: CachedAmmPool; tokenMint: PublicKey; isSolQuote: boolean }
   | { kind: 'clmm'; pool: CachedClmmPool; tokenMint: PublicKey }
   | { kind: 'whirlpool'; pool: CachedWhirlpoolPool; tokenMint: PublicKey }
@@ -90,7 +90,7 @@ type Resolved =
   | { kind: 'damm'; pool: CachedDammPool; tokenMint: PublicKey }
   | { kind: 'pumpswap'; pool: CachedPumpSwapPool; tokenMint: PublicKey };
 
-function resolvePool(addr: string): Resolved | null {
+export function resolvePool(addr: string): Resolved | null {
   const amm = getCachedAmmPool(addr);
   if (amm) {
     const isSolQuote = amm.quoteMint.equals(NATIVE_MINT) || amm.quoteMint.toString() === SOL_MINT;
@@ -138,7 +138,7 @@ function resolvePool(addr: string): Resolved | null {
 /**
  * Quote SOL -> token (buy leg) for either pool kind. Returns 0n on failure.
  */
-function quoteBuy(r: Resolved, solIn: bigint): bigint {
+export function quoteBuy(r: Resolved, solIn: bigint): bigint {
   if (r.kind === 'amm') {
     const reserveIn = r.isSolQuote ? r.pool.quoteReserve : r.pool.baseReserve;
     const reserveOut = r.isSolQuote ? r.pool.baseReserve : r.pool.quoteReserve;
@@ -171,7 +171,7 @@ function quoteBuy(r: Resolved, solIn: bigint): bigint {
 /**
  * Quote token -> SOL (sell leg) for either pool kind. Returns 0n on failure.
  */
-function quoteSell(r: Resolved, tokenIn: bigint): bigint {
+export function quoteSell(r: Resolved, tokenIn: bigint): bigint {
   if (r.kind === 'amm') {
     const reserveIn = r.isSolQuote ? r.pool.baseReserve : r.pool.quoteReserve;
     const reserveOut = r.isSolQuote ? r.pool.quoteReserve : r.pool.baseReserve;

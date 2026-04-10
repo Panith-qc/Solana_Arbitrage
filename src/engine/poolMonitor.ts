@@ -5,7 +5,7 @@
 
 import { PublicKey, AccountInfo, Context } from '@solana/web3.js';
 import { dataLog } from './logger.js';
-import { BotConfig, TOKEN_DECIMALS, SOL_MINT } from './config.js';
+import { BotConfig, TOKEN_DECIMALS, SOL_MINT, LAMPORTS_PER_SOL } from './config.js';
 import { ConnectionManager } from './connectionManager.js';
 import { updatePool as updatePriceBook } from './priceBook.js';
 import { getCachedWhirlpoolPool } from './whirlpoolSwapBuilder.js';
@@ -13,6 +13,7 @@ import { getCachedCpmmPool, cpmmSolPerToken } from './cpmmSwapBuilder.js';
 import { getCachedDlmmPool, dlmmSolPerToken } from './dlmmSwapBuilder.js';
 import { getCachedDammPool, dammSolPerToken } from './dammSwapBuilder.js';
 import { getCachedPumpSwapPool, pumpSwapSolPerToken } from './pumpSwapBuilder.js';
+import { resolvePool, quoteBuy, quoteSell } from './hotPathBuilder.js';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -60,10 +61,11 @@ export interface PoolConfig {
 /** Callback type for pool update events */
 export type PoolUpdateCallback = (update: PoolUpdate) => void;
 
-/** Cross-pool spread event — detected entirely in memory, no RPC calls */
+/** Cross-pool spread event — executable spread verified with swap math */
 export interface SpreadEvent {
   tokenMint: string;
   tokenSymbol: string;
+  /** Mid-price spread in bps (indicative only) */
   spreadBps: number;
   buyPoolAddress: string;
   sellPoolAddress: string;
@@ -71,6 +73,12 @@ export interface SpreadEvent {
   sellPrice: number;
   timestamp: number;
   slot: number;
+  /** Optimal trade size in lamports (maximises net profit) */
+  optimalSizeLamports: bigint;
+  /** Net profit at optimal size AFTER fees + tip (lamports) */
+  expectedNetProfitLamports: bigint;
+  /** Actual spread in bps accounting for price impact at optimal size */
+  executableSpreadBps: number;
 }
 
 /** Callback type for spread detection events */
@@ -1419,66 +1427,141 @@ export class PoolMonitor {
     return this.ammV4SolPerToken(poolAddress, reserveA, reserveB);
   }
 
+  // ── Executable spread detection constants ──────────────────────
+  // Same fee model as hotPathBuilder.ts buildMixedHotPathTransaction:
+  //   baseFee = 5_000 (signature) + 10_000 (compute)
+  //   tip = clamp(grossProfit * 40%, 1_000, 200_000)
+  private static readonly BASE_FEE = 15_000n;
+  private static readonly TRADE_SIZES: bigint[] = [
+    500_000_000n,   // 0.5  SOL
+    250_000_000n,   // 0.25 SOL
+    100_000_000n,   // 0.1  SOL
+    50_000_000n,    // 0.05 SOL
+    25_000_000n,    // 0.025 SOL
+    10_000_000n,    // 0.01 SOL
+  ];
+
   /**
-   * After a pool update, check if there's a cross-pool spread for the same token.
-   * Compares the updated pool's price against ALL other cached pools for the same token.
-   * If spread > threshold, emits a spread event (no Jupiter call needed for detection).
+   * Compute net profit for a buy→sell arbitrage at a given SOL input size.
+   * Uses the SAME quote math as hotPathBuilder (quoteBuy + quoteSell).
+   * Returns net profit in lamports AFTER fees and tip, or 0n if unprofitable.
+   */
+  private static quoteNetProfit(
+    buyResolved: ReturnType<typeof resolvePool>,
+    sellResolved: ReturnType<typeof resolvePool>,
+    solIn: bigint,
+  ): bigint {
+    if (!buyResolved || !sellResolved) return 0n;
+    const tokenOut = quoteBuy(buyResolved, solIn);
+    if (tokenOut === 0n) return 0n;
+    // 0.5% safety margin — same as hotPathBuilder
+    const sellAmountIn = (tokenOut * 995n) / 1000n;
+    const solBack = quoteSell(sellResolved, sellAmountIn);
+    if (solBack === 0n) return 0n;
+    const grossProfit = solBack - solIn;
+    if (grossProfit <= 0n) return 0n;
+    // Dynamic tip: clamp(40%, 1k, 200k) — mirrors hotPathBuilder
+    const rawTip = (grossProfit * 40n) / 100n;
+    const tip = rawTip < 1_000n ? 1_000n : rawTip > 200_000n ? 200_000n : rawTip;
+    return grossProfit - PoolMonitor.BASE_FEE - tip;
+  }
+
+  /**
+   * After a pool update, check if there's a PROFITABLE cross-pool arbitrage
+   * for the same token. Uses the SAME swap math as the hot path builder
+   * (quoteBuy + quoteSell) to verify executable profitability at multiple
+   * trade sizes. Only emits when net profit > 0 after fees + tip.
+   *
+   * Performance: ~6 sizes × 2 quote calls = 12 in-memory calculations (<10ms).
    */
   private detectCrossPoolSpread(updatedPool: PoolUpdate): void {
     if (this.spreadCallbacks.size === 0) return;
 
-    // Find all other pools with the same tokenB (the non-SOL token)
     const updatedConfig = this.poolConfigs.get(updatedPool.poolAddress);
     if (!updatedConfig) return;
 
+    // Mid-price for logging (indicative only — not used for profitability)
     const updatedPrice = this.calculatePrice(updatedPool.reserveA, updatedPool.reserveB, updatedPool.poolAddress);
     if (updatedPrice <= 0) return;
 
-    // Compare against all other cached pools for the same token
     for (const [address, cached] of this.poolCache) {
       if (address === updatedPool.poolAddress) continue;
 
       const otherConfig = this.poolConfigs.get(address);
       if (!otherConfig) continue;
-
-      // Same token pair? (tokenB is the non-SOL token)
       if (otherConfig.tokenB !== updatedConfig.tokenB) continue;
-
-      // Check staleness — other pool must have been updated recently
       if (Date.now() - cached.cachedAt > 10_000) continue;
 
       const otherPrice = this.calculatePrice(cached.update.reserveA, cached.update.reserveB, address);
       if (otherPrice <= 0) continue;
 
-      // Calculate spread in bps: (highPrice - lowPrice) / lowPrice * 10000
+      // Mid-price spread (indicative — for logging only)
       const highPrice = Math.max(updatedPrice, otherPrice);
       const lowPrice = Math.min(updatedPrice, otherPrice);
-      const spreadBps = ((highPrice - lowPrice) / lowPrice) * 10_000;
+      const midSpreadBps = ((highPrice - lowPrice) / lowPrice) * 10_000;
 
-      // Only emit if spread is meaningful (> 3 bps to cover fees)
-      if (spreadBps >= 3) {
-        // Determine direction: buy from cheaper pool, sell to expensive pool
-        const buyPool = updatedPrice < otherPrice ? updatedPool.poolAddress : address;
-        const sellPool = updatedPrice < otherPrice ? address : updatedPool.poolAddress;
+      // Quick filter: skip if mid-price spread < 1 bps (no chance of profit)
+      if (midSpreadBps < 1) continue;
 
-        const spreadEvent: SpreadEvent = {
-          tokenMint: updatedConfig.tokenB,
-          tokenSymbol: updatedConfig.label?.split('/')[0] ?? updatedConfig.tokenB.slice(0, 8),
-          spreadBps,
-          buyPoolAddress: buyPool,
-          sellPoolAddress: sellPool,
-          buyPrice: Math.min(updatedPrice, otherPrice),
-          sellPrice: Math.max(updatedPrice, otherPrice),
-          timestamp: Date.now(),
-          slot: updatedPool.slot,
-        };
+      // Determine direction: buy from cheaper pool, sell to expensive pool
+      const buyAddr = updatedPrice < otherPrice ? updatedPool.poolAddress : address;
+      const sellAddr = updatedPrice < otherPrice ? address : updatedPool.poolAddress;
 
-        for (const [, cb] of this.spreadCallbacks) {
-          try {
-            cb(spreadEvent);
-          } catch (err) {
-            dataLog.error({ err }, 'Spread callback error');
-          }
+      // Resolve pools for executable quoting
+      const buyR = resolvePool(buyAddr);
+      const sellR = resolvePool(sellAddr);
+      if (!buyR || !sellR) continue;
+
+      // Find optimal trade size: try each size, pick highest net profit
+      let bestProfit = 0n;
+      let bestSize = 0n;
+      for (const size of PoolMonitor.TRADE_SIZES) {
+        const net = PoolMonitor.quoteNetProfit(buyR, sellR, size);
+        if (net > bestProfit) {
+          bestProfit = net;
+          bestSize = size;
+        }
+      }
+
+      // Only emit REAL executable opportunities
+      if (bestProfit <= 0n || bestSize === 0n) continue;
+
+      const execSpreadBps = Number(bestProfit * 10_000n / bestSize);
+      const tokenSymbol = updatedConfig.label?.split('/')[0] ?? updatedConfig.tokenB.slice(0, 8);
+
+      dataLog.info(
+        {
+          token: tokenSymbol,
+          midSpreadBps: midSpreadBps.toFixed(1),
+          execSpreadBps: execSpreadBps.toFixed(1),
+          optimalSol: (Number(bestSize) / LAMPORTS_PER_SOL).toFixed(3),
+          netProfitLamports: bestProfit.toString(),
+          buyPool: buyAddr.slice(0, 8),
+          sellPool: sellAddr.slice(0, 8),
+        },
+        `EXECUTABLE SPREAD: ${tokenSymbol} mid=${midSpreadBps.toFixed(1)}bps exec=${execSpreadBps.toFixed(1)}bps size=${(Number(bestSize) / LAMPORTS_PER_SOL).toFixed(3)} profit=${bestProfit}`,
+      );
+
+      const spreadEvent: SpreadEvent = {
+        tokenMint: updatedConfig.tokenB,
+        tokenSymbol,
+        spreadBps: midSpreadBps,
+        buyPoolAddress: buyAddr,
+        sellPoolAddress: sellAddr,
+        buyPrice: Math.min(updatedPrice, otherPrice),
+        sellPrice: Math.max(updatedPrice, otherPrice),
+        timestamp: Date.now(),
+        slot: updatedPool.slot,
+        optimalSizeLamports: bestSize,
+        expectedNetProfitLamports: bestProfit,
+        executableSpreadBps: execSpreadBps,
+      };
+
+      for (const [, cb] of this.spreadCallbacks) {
+        try {
+          cb(spreadEvent);
+        } catch (err) {
+          dataLog.error({ err }, 'Spread callback error');
         }
       }
     }
